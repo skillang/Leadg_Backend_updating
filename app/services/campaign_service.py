@@ -70,6 +70,7 @@ class CampaignService:
                 "send_to_all": campaign_data.send_to_all,
                 "stage_ids": campaign_data.stage_ids,
                 "source_ids": campaign_data.source_ids,
+                "category_ids": campaign_data.category_ids,
                 
                 # Settings
                 "use_custom_dates": campaign_data.use_custom_dates,

@@ -132,7 +132,7 @@ class BulkWhatsAppService:
                 "error_message": None,
                 
                 # Audit fields (SAME as email)
-                "created_by": current_user.get("user_id"),
+                "created_by": str(current_user.get("_id")),
                 "created_by_name": f"{current_user.get('first_name', '')} {current_user.get('last_name', '')}".strip() or current_user.get('email', 'Unknown'),
                 "created_at": datetime.utcnow(),
                 "started_at": None,

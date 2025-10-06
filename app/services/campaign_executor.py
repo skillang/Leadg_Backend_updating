@@ -94,46 +94,62 @@ class CampaignExecutor:
             }
     
     async def _find_matching_leads(self, campaign: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Find leads that match campaign criteria with combination logic"""
+        """Find leads that match campaign criteria with proper AND/OR logic"""
         try:
-            query = {}
+            # Step 1: Build base filter query
+            base_query = {}
             
             if campaign["send_to_all"]:
                 logger.info("Campaign set to send_to_all")
+                # base_query remains empty for send_to_all
             else:
+                # Convert IDs to names
                 stage_names = []
                 source_names = []
+                category_names = []
                 
-                # Convert IDs to names
                 if campaign.get("stage_ids"):
                     stage_names = await self._convert_stage_ids_to_names(campaign["stage_ids"])
+                    logger.info(f"Stage names: {stage_names}")
                 
                 if campaign.get("source_ids"):
                     source_names = await self._convert_source_ids_to_names(campaign["source_ids"])
+                    logger.info(f"Source names: {source_names}")
                 
-                # Build query based on what's selected
-                if stage_names and source_names:
-                    # Both selected: Create all combinations (stage1+source1, stage1+source2, etc.)
-                    combinations = []
-                    for stage in stage_names:
-                        for source in source_names:
-                            combinations.append({
-                                "$and": [
-                                    {"stage": stage},
-                                    {"source": source}
-                                ]
-                            })
-                    query["$or"] = combinations
-                    
-                elif stage_names:
-                    # Only stages selected
-                    query["stage"] = {"$in": stage_names}
-                    
-                elif source_names:
-                    # Only sources selected
-                    query["source"] = {"$in": source_names}
+                if campaign.get("category_ids"):
+                    category_names = await self._convert_category_ids_to_names(campaign["category_ids"])
+                    logger.info(f"Category names: {category_names}")
+                
+                # Build filter conditions
+                conditions = []
+                
+                if stage_names:
+                    if len(stage_names) == 1:
+                        conditions.append({"stage": stage_names[0]})
+                    else:
+                        conditions.append({"stage": {"$in": stage_names}})
+                
+                if source_names:
+                    if len(source_names) == 1:
+                        conditions.append({"source": source_names[0]})
+                    else:
+                        conditions.append({"source": {"$in": source_names}})
+                
+                if category_names:
+                    if len(category_names) == 1:
+                        conditions.append({"category": category_names[0]})
+                    else:
+                        conditions.append({"category": {"$in": category_names}})
+                
+                # Combine conditions with AND logic
+                if len(conditions) == 1:
+                    base_query = conditions[0]
+                elif len(conditions) > 1:
+                    base_query = {"$and": conditions}
             
-            # Add contact info requirement
+            # Step 2: Add contact info requirement
+            contact_conditions = []
+            
             if campaign["campaign_type"] == "whatsapp":
                 contact_filter = {
                     "$or": [
@@ -141,32 +157,49 @@ class CampaignExecutor:
                         {"phone_number": {"$exists": True, "$ne": "", "$ne": None}}
                     ]
                 }
-                if "$or" in query:
-                    query = {"$and": [{"$or": query["$or"]}, contact_filter]}
-                else:
-                    query.update(contact_filter)
+                contact_conditions.append(contact_filter)
                     
             elif campaign["campaign_type"] == "email":
-                query["email"] = {"$exists": True, "$ne": "", "$ne": None}
+                contact_conditions.append({"email": {"$exists": True, "$ne": "", "$ne": None}})
             
-            # Exclude already enrolled leads
+            # Step 3: Combine base query with contact filter
+            final_query = {}
+            
+            if base_query and contact_conditions:
+                # Both base query and contact filter exist
+                final_query = {"$and": [base_query] + contact_conditions}
+            elif base_query:
+                # Only base query
+                final_query = base_query
+            elif contact_conditions:
+                # Only contact filter (send_to_all case)
+                final_query = contact_conditions[0] if len(contact_conditions) == 1 else {"$and": contact_conditions}
+            
+            # Step 4: Exclude already enrolled leads
             already_enrolled = await self.db[self.enrollment_collection].find(
                 {"campaign_id": campaign["campaign_id"], "job_type": "enrollment"},
                 {"lead_id": 1}
             ).to_list(None)
             
             enrolled_lead_ids = [doc["lead_id"] for doc in already_enrolled]
+            
             if enrolled_lead_ids:
-                query["lead_id"] = {"$nin": enrolled_lead_ids}
+                if final_query:
+                    final_query = {"$and": [final_query, {"lead_id": {"$nin": enrolled_lead_ids}}]}
+                else:
+                    final_query = {"lead_id": {"$nin": enrolled_lead_ids}}
             
-            logger.info(f"Lead query: {query}")
+            logger.info(f"Final lead query: {final_query}")
             
-            leads = await self.db.leads.find(query).to_list(None)
+            # Step 5: Execute query
+            leads = await self.db.leads.find(final_query).to_list(None)
+            logger.info(f"Found {len(leads)} matching leads")
             return leads
             
         except Exception as e:
             logger.error(f"Error finding matching leads: {str(e)}")
             return []
+    
     async def _convert_stage_ids_to_names(self, stage_ids: List[str]) -> List[str]:
         """Convert stage ObjectIds to stage names"""
         try:
@@ -198,6 +231,25 @@ class CampaignExecutor:
             logger.error(f"Error converting source IDs to names: {str(e)}")
             return []
     
+
+    async def _convert_category_ids_to_names(self, category_ids: List[str]) -> List[str]:
+        """Convert category ObjectIds to category names"""
+        try:
+            logger.info(f"Converting category IDs: {category_ids}")
+            category_object_ids = [ObjectId(cid) for cid in category_ids]
+            logger.info(f"ObjectIds created: {category_object_ids}")
+            
+            categories = await self.db.lead_categories.find(
+                {"_id": {"$in": category_object_ids}}
+            ).to_list(None)
+            
+            logger.info(f"Found categories: {categories}")
+            result = [category["name"] for category in categories]
+            logger.info(f"Converted to names: {result}")
+            return result
+        except Exception as e:
+            logger.error(f"Error converting category IDs to names: {str(e)}")
+            return []
     async def _enroll_single_lead(
         self,
         campaign: Dict[str, Any],
@@ -226,6 +278,7 @@ class CampaignExecutor:
                 "enrolled_at": datetime.utcnow(),
                 "enrolled_with_stage": lead.get("stage"),
                 "enrolled_with_source": lead.get("source"),
+                "enrolled_with_category": lead.get("category"),
                 
                 "messages_sent": 0,
                 "current_sequence": 0,
@@ -361,7 +414,8 @@ class CampaignExecutor:
     self,
     lead_id: str,
     new_stage: Optional[str] = None,
-    new_source: Optional[str] = None
+    new_source: Optional[str] = None,
+    new_category: Optional[str] = None
 ) -> None:
         """
         Check if lead still matches campaign criteria after stage/source change
@@ -383,8 +437,9 @@ class CampaignExecutor:
             # Use provided values or get from lead document
             current_stage = new_stage or lead.get("stage")
             current_source = new_source or lead.get("source")
+            current_category = new_category or lead.get("category") 
             
-            logger.info(f"Lead {lead_id} current stage: {current_stage}, source: {current_source}")
+            logger.info(f"Lead {lead_id} current stage: {current_stage}, source: {current_source}, category: {current_category}")  
             
             # Get all active enrollments for this lead
             enrollments = await self.db[self.enrollment_collection].find({
@@ -408,7 +463,8 @@ class CampaignExecutor:
                 still_matches = await self._check_criteria_match(
                     campaign,
                     current_stage,
-                    current_source
+                    current_source,
+                    current_category
                 )
                 
                 logger.info(f"Campaign {campaign['campaign_id']} match result: {still_matches}")
@@ -425,7 +481,9 @@ class CampaignExecutor:
     self,
     campaign: Dict[str, Any],
     current_stage: Optional[str],  # Stage NAME from lead
-    current_source: Optional[str]  # Source NAME from lead
+    current_source: Optional[str],
+    current_category: Optional[str] = None
+  # Source NAME from lead
 ) -> bool:
         """
         Check if lead still matches campaign criteria
@@ -446,6 +504,7 @@ class CampaignExecutor:
             # Get required stage and source names from campaign
             required_stages = []
             required_sources = []
+            required_categories = []
             
             if campaign.get("stage_ids"):
                 required_stages = await self._convert_stage_ids_to_names(campaign["stage_ids"])
@@ -454,30 +513,38 @@ class CampaignExecutor:
             if campaign.get("source_ids"):
                 required_sources = await self._convert_source_ids_to_names(campaign["source_ids"])
                 logger.info(f"Required sources: {required_sources}, Current source: {current_source}")
+            if campaign.get("category_ids"):  # ✅ NEW BLOCK
+                required_categories = await self._convert_category_ids_to_names(campaign["category_ids"])
+                logger.info(f"Required categories: {required_categories}, Current category: {current_category}")
             
             # Check based on what's configured in campaign
-            if required_stages and required_sources:
-                # Both stage AND source must match
+            matches = []
+            
+            if required_stages:
                 stage_match = current_stage in required_stages
+                matches.append(stage_match)
+                logger.info(f"Stage match: {stage_match}")
+            
+            if required_sources:
                 source_match = current_source in required_sources
-                logger.info(f"Stage match: {stage_match}, Source match: {source_match}")
-                return stage_match and source_match
+                matches.append(source_match)
+                logger.info(f"Source match: {source_match}")
             
-            elif required_stages:
-                # Only stage needs to match
-                stage_match = current_stage in required_stages
-                logger.info(f"Stage only match: {stage_match}")
-                return stage_match
+            if required_categories:  # ✅ NEW BLOCK
+                category_match = current_category in required_categories
+                matches.append(category_match)
+                logger.info(f"Category match: {category_match}")
             
-            elif required_sources:
-                # Only source needs to match
-                source_match = current_source in required_sources
-                logger.info(f"Source only match: {source_match}")
-                return source_match
+            # All specified criteria must match (AND logic)
+            if not matches:
+                # No criteria specified - should not happen but return True
+                logger.warning("No stage, source, or category criteria in campaign")
+                return True
             
-            # No criteria specified - should not happen but return True
-            logger.warning("No stage or source criteria in campaign")
-            return True
+            # Return True only if ALL matches are True
+            result = all(matches)
+            logger.info(f"Overall match result: {result} (all of {matches})")
+            return result
             
         except Exception as e:
             logger.error(f"Error checking criteria match: {str(e)}")

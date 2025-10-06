@@ -44,9 +44,11 @@ class AutomationCampaign(BaseModel):
     campaign_type: CampaignType = Field(..., description="Campaign type (whatsapp or email)")
     
     # Lead filtering
+    # Lead filtering
     send_to_all: bool = Field(default=False, description="Send to all leads if true")
     stage_ids: List[str] = Field(default=[], description="Stage IDs to filter leads")
     source_ids: List[str] = Field(default=[], description="Source IDs to filter leads")
+    category_ids: List[str] = Field(default=[], description="Category IDs to filter leads")  # ✅ NEW LINE
     
     # Scheduling configuration
     use_custom_dates: bool = Field(default=False, description="Use specific dates instead of auto-schedule")
@@ -117,6 +119,7 @@ class CampaignCreateRequest(BaseModel):
     send_to_all: bool = False
     stage_ids: List[str] = []
     source_ids: List[str] = []
+    category_ids: List[str] = []
     use_custom_dates: bool = False
     campaign_duration_days: Optional[int] = None
     message_limit: int = Field(..., ge=2)
