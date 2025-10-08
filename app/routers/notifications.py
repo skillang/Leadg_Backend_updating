@@ -22,15 +22,20 @@ from ..schemas.whatsapp_chat import (
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["WhatsApp Notifications"])
 
+# ============================================================================
+# UNIFIED NOTIFICATION ENDPOINT (ALL TYPES) - WITH UNIVERSAL PAGINATION
+# ============================================================================
+
 @router.get("/unified")
 async def get_unified_notifications(
     notification_type: Optional[str] = Query(None, description="Filter: whatsapp|task|lead|all"),
-    limit: int = Query(50, ge=1, le=100, description="Number of notifications to return"),
+    page: int = Query(1, ge=1, description="Page number (1-based)"),
+    limit: int = Query(20, ge=1, le=100, description="Items per page"),
     current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
     🆕 UNIFIED endpoint - aggregates WhatsApp, Task, and Lead notifications in ONE call
-    Returns all notification types the user has access to
+    Returns all notification types the user has access to with universal pagination
     """
     try:
         from bson import ObjectId
@@ -40,7 +45,7 @@ async def get_unified_notifications(
         user_role = current_user.get("role")
         user_id = current_user.get("_id")
         
-        notifications = []
+        all_notifications = []
         
         # ========== 1. WhatsApp Notifications ==========
         if not notification_type or notification_type in ["whatsapp", "all"]:
@@ -60,14 +65,14 @@ async def get_unified_notifications(
             ).to_list(None)
             
             for lead in whatsapp_leads:
-                notifications.append({
+                all_notifications.append({
                     "id": f"whatsapp_{lead['lead_id']}",
                     "type": "whatsapp_unread",
                     "title": f"{lead.get('unread_whatsapp_count', 0)} unread messages",
                     "message": f"WhatsApp messages from {lead.get('name')}",
                     "lead_id": lead["lead_id"],
                     "lead_name": lead.get("name"),
-                    "timestamp": lead.get("last_whatsapp_activity"),
+                    "timestamp": lead.get("last_whatsapp_activity") or datetime.utcnow(),
                     "read": False,
                     "priority": "medium",
                     "metadata": {
@@ -77,11 +82,11 @@ async def get_unified_notifications(
         
         # ========== 2. Task Notifications ==========
         if not notification_type or notification_type in ["task", "all"]:
-            # Get recent tasks assigned to user (last 7 days)
-            week_ago = datetime.utcnow() - timedelta(days=7)
+            # Get recent tasks assigned to user (last 30 days for pagination)
+            month_ago = datetime.utcnow() - timedelta(days=30)
             
             task_query = {
-                "created_at": {"$gte": week_ago},
+                "created_at": {"$gte": month_ago},
                 "status": {"$nin": ["completed", "cancelled"]}
             }
             
@@ -99,7 +104,7 @@ async def get_unified_notifications(
                     "created_at": 1,
                     "task_type": 1
                 }
-            ).sort("created_at", -1).limit(10).to_list(None)
+            ).sort("created_at", -1).to_list(None)
             
             for task in tasks:
                 # Get lead name
@@ -109,7 +114,7 @@ async def get_unified_notifications(
                 )
                 lead_name = lead.get("name") if lead else "Unknown Lead"
                 
-                notifications.append({
+                all_notifications.append({
                     "id": f"task_{str(task['_id'])}",
                     "type": "task_assigned",
                     "title": "Task Assigned",
@@ -117,7 +122,7 @@ async def get_unified_notifications(
                     "lead_id": task.get("lead_id"),
                     "lead_name": lead_name,
                     "task_id": str(task["_id"]),
-                    "timestamp": task.get("created_at"),
+                    "timestamp": task.get("created_at") or datetime.utcnow(),
                     "read": False,
                     "priority": task.get("priority", "medium"),
                     "metadata": {
@@ -129,11 +134,11 @@ async def get_unified_notifications(
         
         # ========== 3. Lead Assignment Notifications ==========
         if not notification_type or notification_type in ["lead", "all"]:
-            # Get recently assigned leads (last 7 days)
-            week_ago = datetime.utcnow() - timedelta(days=7)
+            # Get recently assigned leads (last 30 days for pagination)
+            month_ago = datetime.utcnow() - timedelta(days=30)
             
             lead_query = {
-                "created_at": {"$gte": week_ago}
+                "created_at": {"$gte": month_ago}
             }
             
             if user_role != "admin":
@@ -151,17 +156,17 @@ async def get_unified_notifications(
                     "created_at": 1,
                     "assignment_method": 1
                 }
-            ).sort("created_at", -1).limit(10).to_list(None)
+            ).sort("created_at", -1).to_list(None)
             
             for lead in recent_leads:
-                notifications.append({
+                all_notifications.append({
                     "id": f"lead_{lead['lead_id']}",
                     "type": "lead_assigned",
                     "title": "New Lead Assigned",
                     "message": f"Lead '{lead.get('name')}' has been assigned to you",
                     "lead_id": lead["lead_id"],
                     "lead_name": lead.get("name"),
-                    "timestamp": lead.get("created_at"),
+                    "timestamp": lead.get("created_at") or datetime.utcnow(),
                     "read": False,
                     "priority": "high",
                     "metadata": {
@@ -173,33 +178,48 @@ async def get_unified_notifications(
                     }
                 })
         
-        # ========== Sort and Limit ==========
-        # Sort all notifications by timestamp (newest first)
-        notifications.sort(key=lambda x: x.get("timestamp") or datetime.min, reverse=True)
+        # ========== Sort All Notifications by Timestamp ==========
+        all_notifications.sort(key=lambda x: x.get("timestamp") or datetime.min, reverse=True)
         
-        # Apply limit
-        notifications = notifications[:limit]
+        # ========== Universal Pagination ==========
+        total_count = len(all_notifications)
+        total_pages = (total_count + limit - 1) // limit  # Ceiling division
         
-        # ========== Calculate Unread Count ==========
-        unread_count = len([n for n in notifications if not n.get("read")])
+        # Calculate skip and slice
+        skip = (page - 1) * limit
+        paginated_notifications = all_notifications[skip:skip + limit]
         
-        # ========== Group by Type ==========
+        # ========== Calculate Counts ==========
+        unread_count = len([n for n in paginated_notifications if not n.get("read")])
+        
         notification_counts = {
-            "whatsapp": len([n for n in notifications if n["type"] == "whatsapp_unread"]),
-            "task": len([n for n in notifications if n["type"] == "task_assigned"]),
-            "lead": len([n for n in notifications if n["type"] == "lead_assigned"]),
-            "total": len(notifications)
+            "whatsapp": len([n for n in all_notifications if n["type"] == "whatsapp_unread"]),
+            "task": len([n for n in all_notifications if n["type"] == "task_assigned"]),
+            "lead": len([n for n in all_notifications if n["type"] == "lead_assigned"]),
+            "total": total_count
+        }
+        
+        # ✅ UNIVERSAL PAGINATION PATTERN (Matches PaginationMeta interface)
+        pagination_response = {
+            "total": total_count,              # Total records across all pages
+            "page": page,                      # Current page (1-based)
+            "limit": limit,                    # Items per page
+            "pages": total_pages,              # Total pages
+            "has_next": page < total_pages,    # Boolean: more pages available
+            "has_prev": page > 1               # Boolean: previous pages available
         }
         
         return {
             "success": True,
-            "notifications": notifications,
+            "notifications": paginated_notifications,
+            "pagination": pagination_response,  # ✅ Universal pagination structure
             "unread_count": unread_count,
             "notification_counts": notification_counts,
             "user_role": user_role,
             "user_email": user_email,
             "filters": {
                 "type": notification_type or "all",
+                "page": page,
                 "limit": limit
             },
             "generated_at": datetime.utcnow().isoformat()
@@ -210,7 +230,6 @@ async def get_unified_notifications(
         import traceback
         logger.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Failed to get unified notifications: {str(e)}")
-
 # ============================================================================
 # WHATSAPP NOTIFICATION STATUS ENDPOINTS
 # ============================================================================
