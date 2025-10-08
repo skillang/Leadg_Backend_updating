@@ -123,6 +123,28 @@ class TaskService:
             task_doc["_id"] = str(result.inserted_id)
             
             logger.info(f"Task created successfully: {task_doc['id']}")
+            if task_data.assigned_to and assigned_to_email:
+                try:
+                    from ..services.realtime_service import realtime_manager
+                    
+                    # Create notification for assigned user
+                    notification_data = {
+                        "lead_name": lead.get("name", "Unknown Lead"),
+                        "task_title": task_data.task_title,
+                        "task_type": task_data.task_type,
+                        "priority": task_data.priority,
+                        "due_date": due_date_str,
+                        "lead_id": lead_id,
+                        "task_id": str(result.inserted_id)
+                    }
+                    
+                    authorized_users = [{"email": assigned_to_email, "name": assigned_to_name}]
+                    await realtime_manager.notify_task_assigned(lead_id, notification_data, authorized_users)
+                    
+                    logger.info(f"✅ Task assignment notification sent to {assigned_to_email}")
+                except Exception as notif_error:
+                    logger.warning(f"⚠️ Failed to send task notification: {notif_error}")
+
             
             # 🔥 ENHANCED TIMELINE LOGGING - Following established pattern from notes service
             try:
@@ -344,6 +366,9 @@ class TaskService:
             # Prepare update data and track changes with better formatting
             update_data = {}
             changes = []  # Track what changed for timeline
+            task_reassigned = False  # 🆕 Track if task was reassigned
+            new_assignee_email = None  # 🆕 Store new assignee email
+            new_assignee_name = None  # 🆕 Store new assignee name
             
             # Field mapping for better display names
             field_display_names = {
@@ -410,6 +435,11 @@ class TaskService:
                                             new_name = f"{new_first} {new_last}".strip()
                                         else:
                                             new_name = new_user.get('email', 'Unknown User')
+                                        
+                                        # 🆕 Store for notification
+                                        new_assignee_email = new_user.get('email')
+                                        new_assignee_name = new_name
+                                        task_reassigned = True
                                 except:
                                     new_name = "Unknown User"
                             
@@ -433,6 +463,38 @@ class TaskService:
             # Update task
             result = await db.lead_tasks.update_one({"_id": ObjectId(task_id)}, {"$set": update_data})
             
+            # 🆕 SEND NOTIFICATION IF TASK WAS REASSIGNED
+            if result.modified_count > 0 and task_reassigned and new_assignee_email:
+                try:
+                    from ..services.realtime_service import realtime_manager
+                    
+                    # Get lead details for notification
+                    lead = await db.leads.find_one({"lead_id": current_task["lead_id"]})
+                    lead_name = lead.get("name", "Unknown Lead") if lead else "Unknown Lead"
+                    
+                    notification_data = {
+                        "lead_name": lead_name,
+                        "task_title": current_task.get("task_title"),
+                        "task_type": current_task.get("task_type"),
+                        "priority": current_task.get("priority"),
+                        "due_date": current_task.get("due_date"),
+                        "lead_id": current_task.get("lead_id"),
+                        "task_id": str(current_task["_id"]),
+                        "reassigned": True,
+                        "reassigned_by": user_name
+                    }
+                    
+                    authorized_users = [{"email": new_assignee_email, "name": new_assignee_name}]
+                    await realtime_manager.notify_task_assigned(
+                        current_task.get("lead_id"), 
+                        notification_data, 
+                        authorized_users
+                    )
+                    
+                    logger.info(f"✅ Task reassignment notification sent to {new_assignee_email}")
+                except Exception as notif_error:
+                    logger.warning(f"⚠️ Failed to send task reassignment notification: {notif_error}")
+            
             if result.modified_count > 0 and changes:
                 # 🔥 LOG TASK UPDATE TIMELINE ACTIVITY WITH DETAILED CHANGES
                 try:
@@ -441,7 +503,7 @@ class TaskService:
                     if len(changes) > 5:
                         changes_text += f" (+{len(changes) - 5} more)"
                     
-                    description = f"Task '. Changes: {changes_text}"
+                    description = f"Task '{current_task['task_title']}' updated. Changes: {changes_text}"
                     
                     activity_metadata = {
                         "task_id": str(current_task["_id"]),
@@ -454,7 +516,6 @@ class TaskService:
                     activity_doc = {
                         "lead_id": current_task["lead_id"],
                         "activity_type": "task_updated",
-                        # "title": f"Task Updated: {current_task['task_title']}",
                         "description": description,  # Now includes the changes
                         "created_by": ObjectId(user_id),
                         "created_by_name": user_name,
@@ -475,6 +536,7 @@ class TaskService:
         except Exception as e:
             logger.error(f"Error updating task: {str(e)}")
             return False
+
 
     async def get_lead_tasks(self, lead_id: str, user_id: str, user_role: str, status_filter: Optional[str] = None, page: int = 1, limit: int = 20) -> Dict[str, Any]:
         """Get all tasks for a lead - FIXED ACCESS CONTROL"""

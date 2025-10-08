@@ -297,6 +297,156 @@ class RealtimeNotificationManager:
         except Exception as e:
             logger.error(f"Error marking lead as read: {str(e)}")
     
+
+    async def notify_task_assigned(self, lead_id: str, task_data: Dict[str, Any], authorized_users: List[Dict[str, Any]]):
+        """
+        🆕 NEW: Notify authorized users about task assignment
+        Called by task_service when tasks are created/assigned
+        """
+        try:
+            for user in authorized_users:
+                user_email = user["email"]
+                
+                # Create notification
+                notification = {
+                    "type": "task_assigned",
+                    "lead_id": lead_id,
+                    "lead_name": task_data.get("lead_name", "Unknown Lead"),
+                    "task_title": task_data.get("task_title"),
+                    "task_type": task_data.get("task_type"),
+                    "task_id": task_data.get("task_id"),
+                    "priority": task_data.get("priority", "medium"),
+                    "due_date": task_data.get("due_date"),
+                    "reassigned": task_data.get("reassigned", False),
+                    "reassigned_by": task_data.get("reassigned_by"),
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+                
+                # Save to notification history
+                await self._save_task_notification_to_history(user_email, notification)
+                
+                # Send to all user's connections
+                await self._send_to_user(user_email, notification)
+            
+            logger.info(f"🔔 Task assignment notification sent to {len(authorized_users)} users for lead {lead_id}")
+            
+        except Exception as e:
+            logger.error(f"Error notifying task assignment: {str(e)}")
+
+    async def notify_lead_assigned(self, lead_id: str, lead_data: Dict[str, Any], authorized_users: List[Dict[str, Any]]):
+        """
+        🆕 NEW: Notify authorized users about lead assignment
+        Called by lead_service when leads are created/assigned
+        """
+        try:
+            for user in authorized_users:
+                user_email = user["email"]
+                
+                # Create notification
+                notification = {
+                    "type": "lead_assigned",
+                    "lead_id": lead_id,
+                    "lead_name": lead_data.get("lead_name"),
+                    "lead_email": lead_data.get("lead_email"),
+                    "lead_phone": lead_data.get("lead_phone"),
+                    "category": lead_data.get("category"),
+                    "source": lead_data.get("source"),
+                    "assignment_method": lead_data.get("assignment_method"),
+                    "reassigned": lead_data.get("reassigned", False),
+                    "previous_assignee": lead_data.get("previous_assignee"),
+                    "bulk_creation": lead_data.get("bulk_creation", False),
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+                
+                # Save to notification history
+                await self._save_lead_notification_to_history(user_email, notification)
+                
+                # Send to all user's connections
+                await self._send_to_user(user_email, notification)
+            
+            logger.info(f"🔔 Lead assignment notification sent to {len(authorized_users)} users for lead {lead_id}")
+            
+        except Exception as e:
+            logger.error(f"Error notifying lead assignment: {str(e)}")
+
+    async def _save_task_notification_to_history(self, user_email: str, notification: Dict[str, Any]):
+        """
+        🆕 NEW: Save task notification to history
+        """
+        try:
+            from ..config.database import get_database
+            db = get_database()
+            
+            task_id = notification.get("task_id")
+            if not task_id:
+                task_id = str(uuid.uuid4())
+            
+            history_doc = {
+                "notification_id": f"{user_email}_task_{task_id}",
+                "user_email": user_email,
+                "notification_type": "task_assigned",
+                "lead_id": notification.get("lead_id"),
+                "lead_name": notification.get("lead_name"),
+                "message_preview": f"Task: {notification.get('task_title')}",
+                "task_id": task_id,
+                "task_title": notification.get("task_title"),
+                "task_type": notification.get("task_type"),
+                "priority": notification.get("priority"),
+                "created_at": datetime.utcnow(),
+                "read_at": None,
+                "original_data": notification
+            }
+            
+            # Use upsert to prevent duplicates
+            await db.notification_history.update_one(
+                {"notification_id": history_doc["notification_id"]},
+                {"$setOnInsert": history_doc},
+                upsert=True
+            )
+            
+            logger.debug(f"💾 Task notification saved to history for {user_email}")
+            
+        except Exception as e:
+            logger.error(f"Error saving task notification to history: {str(e)}")
+
+    async def _save_lead_notification_to_history(self, user_email: str, notification: Dict[str, Any]):
+        """
+        🆕 NEW: Save lead notification to history
+        """
+        try:
+            from ..config.database import get_database
+            db = get_database()
+            
+            lead_id = notification.get("lead_id")
+            timestamp = datetime.utcnow().timestamp()
+            
+            history_doc = {
+                "notification_id": f"{user_email}_lead_{lead_id}_{timestamp}",
+                "user_email": user_email,
+                "notification_type": "lead_assigned",
+                "lead_id": lead_id,
+                "lead_name": notification.get("lead_name"),
+                "message_preview": f"New lead assigned: {notification.get('lead_name')}",
+                "lead_email": notification.get("lead_email"),
+                "lead_phone": notification.get("lead_phone"),
+                "category": notification.get("category"),
+                "source": notification.get("source"),
+                "created_at": datetime.utcnow(),
+                "read_at": None,
+                "original_data": notification
+            }
+            
+            # Use upsert to prevent duplicates
+            await db.notification_history.update_one(
+                {"notification_id": history_doc["notification_id"]},
+                {"$setOnInsert": history_doc},
+                upsert=True
+            )
+            
+            logger.debug(f"💾 Lead notification saved to history for {user_email}")
+            
+        except Exception as e:
+            logger.error(f"Error saving lead notification to history: {str(e)}")
     async def _send_to_user(self, user_email: str, notification: Dict[str, Any]):
         """
         Send notification to all of user's active connections

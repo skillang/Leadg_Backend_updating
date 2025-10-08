@@ -22,6 +22,195 @@ from ..schemas.whatsapp_chat import (
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["WhatsApp Notifications"])
 
+@router.get("/unified")
+async def get_unified_notifications(
+    notification_type: Optional[str] = Query(None, description="Filter: whatsapp|task|lead|all"),
+    limit: int = Query(50, ge=1, le=100, description="Number of notifications to return"),
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """
+    🆕 UNIFIED endpoint - aggregates WhatsApp, Task, and Lead notifications in ONE call
+    Returns all notification types the user has access to
+    """
+    try:
+        from bson import ObjectId
+        
+        db = get_database()
+        user_email = current_user.get("email")
+        user_role = current_user.get("role")
+        user_id = current_user.get("_id")
+        
+        notifications = []
+        
+        # ========== 1. WhatsApp Notifications ==========
+        if not notification_type or notification_type in ["whatsapp", "all"]:
+            whatsapp_query = {"whatsapp_has_unread": True}
+            
+            if user_role != "admin":
+                whatsapp_query.update({
+                    "$or": [
+                        {"assigned_to": user_email},
+                        {"co_assignees": user_email}
+                    ]
+                })
+            
+            whatsapp_leads = await db.leads.find(
+                whatsapp_query,
+                {"lead_id": 1, "name": 1, "unread_whatsapp_count": 1, "last_whatsapp_activity": 1}
+            ).to_list(None)
+            
+            for lead in whatsapp_leads:
+                notifications.append({
+                    "id": f"whatsapp_{lead['lead_id']}",
+                    "type": "whatsapp_unread",
+                    "title": f"{lead.get('unread_whatsapp_count', 0)} unread messages",
+                    "message": f"WhatsApp messages from {lead.get('name')}",
+                    "lead_id": lead["lead_id"],
+                    "lead_name": lead.get("name"),
+                    "timestamp": lead.get("last_whatsapp_activity"),
+                    "read": False,
+                    "priority": "medium",
+                    "metadata": {
+                        "unread_count": lead.get("unread_whatsapp_count", 0)
+                    }
+                })
+        
+        # ========== 2. Task Notifications ==========
+        if not notification_type or notification_type in ["task", "all"]:
+            # Get recent tasks assigned to user (last 7 days)
+            week_ago = datetime.utcnow() - timedelta(days=7)
+            
+            task_query = {
+                "created_at": {"$gte": week_ago},
+                "status": {"$nin": ["completed", "cancelled"]}
+            }
+            
+            if user_role != "admin":
+                task_query["assigned_to"] = ObjectId(user_id)
+            
+            tasks = await db.lead_tasks.find(
+                task_query,
+                {
+                    "task_title": 1,
+                    "lead_id": 1,
+                    "lead_object_id": 1,
+                    "priority": 1,
+                    "due_date": 1,
+                    "created_at": 1,
+                    "task_type": 1
+                }
+            ).sort("created_at", -1).limit(10).to_list(None)
+            
+            for task in tasks:
+                # Get lead name
+                lead = await db.leads.find_one(
+                    {"lead_id": task.get("lead_id")},
+                    {"name": 1}
+                )
+                lead_name = lead.get("name") if lead else "Unknown Lead"
+                
+                notifications.append({
+                    "id": f"task_{str(task['_id'])}",
+                    "type": "task_assigned",
+                    "title": "Task Assigned",
+                    "message": f"{task.get('task_title')} for {lead_name}",
+                    "lead_id": task.get("lead_id"),
+                    "lead_name": lead_name,
+                    "task_id": str(task["_id"]),
+                    "timestamp": task.get("created_at"),
+                    "read": False,
+                    "priority": task.get("priority", "medium"),
+                    "metadata": {
+                        "task_title": task.get("task_title"),
+                        "task_type": task.get("task_type"),
+                        "due_date": task.get("due_date")
+                    }
+                })
+        
+        # ========== 3. Lead Assignment Notifications ==========
+        if not notification_type or notification_type in ["lead", "all"]:
+            # Get recently assigned leads (last 7 days)
+            week_ago = datetime.utcnow() - timedelta(days=7)
+            
+            lead_query = {
+                "created_at": {"$gte": week_ago}
+            }
+            
+            if user_role != "admin":
+                lead_query["assigned_to"] = user_email
+            
+            recent_leads = await db.leads.find(
+                lead_query,
+                {
+                    "lead_id": 1,
+                    "name": 1,
+                    "email": 1,
+                    "contact_number": 1,
+                    "category": 1,
+                    "source": 1,
+                    "created_at": 1,
+                    "assignment_method": 1
+                }
+            ).sort("created_at", -1).limit(10).to_list(None)
+            
+            for lead in recent_leads:
+                notifications.append({
+                    "id": f"lead_{lead['lead_id']}",
+                    "type": "lead_assigned",
+                    "title": "New Lead Assigned",
+                    "message": f"Lead '{lead.get('name')}' has been assigned to you",
+                    "lead_id": lead["lead_id"],
+                    "lead_name": lead.get("name"),
+                    "timestamp": lead.get("created_at"),
+                    "read": False,
+                    "priority": "high",
+                    "metadata": {
+                        "lead_email": lead.get("email"),
+                        "lead_phone": lead.get("contact_number"),
+                        "category": lead.get("category"),
+                        "source": lead.get("source"),
+                        "assignment_method": lead.get("assignment_method")
+                    }
+                })
+        
+        # ========== Sort and Limit ==========
+        # Sort all notifications by timestamp (newest first)
+        notifications.sort(key=lambda x: x.get("timestamp") or datetime.min, reverse=True)
+        
+        # Apply limit
+        notifications = notifications[:limit]
+        
+        # ========== Calculate Unread Count ==========
+        unread_count = len([n for n in notifications if not n.get("read")])
+        
+        # ========== Group by Type ==========
+        notification_counts = {
+            "whatsapp": len([n for n in notifications if n["type"] == "whatsapp_unread"]),
+            "task": len([n for n in notifications if n["type"] == "task_assigned"]),
+            "lead": len([n for n in notifications if n["type"] == "lead_assigned"]),
+            "total": len(notifications)
+        }
+        
+        return {
+            "success": True,
+            "notifications": notifications,
+            "unread_count": unread_count,
+            "notification_counts": notification_counts,
+            "user_role": user_role,
+            "user_email": user_email,
+            "filters": {
+                "type": notification_type or "all",
+                "limit": limit
+            },
+            "generated_at": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error getting unified notifications: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Failed to get unified notifications: {str(e)}")
+
 # ============================================================================
 # WHATSAPP NOTIFICATION STATUS ENDPOINTS
 # ============================================================================

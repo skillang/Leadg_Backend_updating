@@ -264,7 +264,7 @@ class LeadService:
 ) -> Dict[str, Any]:
         """
         🔄 UPDATED: Lead creation now uses category-source combination ID generation
-        WITH timeline activity logging
+        WITH timeline activity logging AND notifications
         """
         try:
             db = self.get_db()
@@ -420,6 +420,28 @@ class LeadService:
                 if assigned_to:
                     await user_lead_array_service.add_lead_to_user_array(assigned_to, lead_id)
                 
+                # 🆕 NEW: Step 9.5: Send notification for lead assignment
+                if assigned_to and assigned_to_name:
+                    try:
+                        from ..services.realtime_service import realtime_manager
+                        
+                        notification_data = {
+                            "lead_name": basic_info.name,
+                            "lead_email": basic_info.email,
+                            "lead_phone": basic_info.contact_number,
+                            "category": basic_info.category,
+                            "source": validated_source,
+                            "lead_id": lead_id,
+                            "assignment_method": assignment_method
+                        }
+                        
+                        authorized_users = [{"email": assigned_to, "name": assigned_to_name}]
+                        await realtime_manager.notify_lead_assigned(lead_id, notification_data, authorized_users)
+                        
+                        logger.info(f"✅ Lead assignment notification sent to {assigned_to}")
+                    except Exception as notif_error:
+                        logger.warning(f"⚠️ Failed to send lead assignment notification: {notif_error}")
+                
                 # Step 10: Timeline Activity Logging
                 try:
                     # Get creator name from database
@@ -515,6 +537,8 @@ class LeadService:
                 "message": f"Failed to create lead: {str(e)}"
             }
 
+    # ============================================================================
+
     async def create_lead_with_selective_assignment(
     self, 
     basic_info, 
@@ -526,7 +550,7 @@ class LeadService:
 ) -> Dict[str, Any]:
         """
         🔄 UPDATED: Create lead with selective round robin assignment using new ID format
-        WITH timeline activity logging
+        WITH timeline activity logging AND notifications
         """
         db = self.get_db()
         
@@ -681,6 +705,29 @@ class LeadService:
                 if assigned_to:
                     await user_lead_array_service.add_lead_to_user_array(assigned_to, lead_id)
                 
+                # 🆕 NEW: Step 8.5: Send notification for lead assignment
+                if assigned_to and assigned_to_name:
+                    try:
+                        from ..services.realtime_service import realtime_manager
+                        
+                        notification_data = {
+                            "lead_name": basic_info.name,
+                            "lead_email": basic_info.email,
+                            "lead_phone": basic_info.contact_number,
+                            "category": basic_info.category,
+                            "source": validated_source,
+                            "lead_id": lead_id,
+                            "assignment_method": assignment_method,
+                            "selected_users_pool": selected_user_emails
+                        }
+                        
+                        authorized_users = [{"email": assigned_to, "name": assigned_to_name}]
+                        await realtime_manager.notify_lead_assigned(lead_id, notification_data, authorized_users)
+                        
+                        logger.info(f"✅ Lead assignment notification sent to {assigned_to}")
+                    except Exception as notif_error:
+                        logger.warning(f"⚠️ Failed to send lead assignment notification: {notif_error}")
+                
                 # Step 9: Timeline Activity Logging
                 try:
                     # Get creator name from database
@@ -766,7 +813,8 @@ class LeadService:
         except Exception as e:
             logger.error(f"Error creating lead with selective assignment: {str(e)}")
             return {"success": False, "error": str(e)}
-    
+
+
     async def bulk_create_leads_with_selective_assignment(
     self,
     leads_data: List[Dict[str, Any]],
@@ -776,7 +824,7 @@ class LeadService:
 ) -> Dict[str, Any]:
         """
         🔧 FIXED: Bulk create leads with REAL-TIME duplicate detection
-        WITH timeline activity logging for each lead
+        WITH timeline activity logging AND notifications for each lead
         """
         db = self.get_db()
         
@@ -960,6 +1008,30 @@ class LeadService:
                         if assigned_to:
                             await user_lead_array_service.add_lead_to_user_array(assigned_to, lead_id)
                         
+                        # 🆕 NEW: Send notification for bulk lead assignment
+                        if assigned_to and assigned_to_name:
+                            try:
+                                from ..services.realtime_service import realtime_manager
+                                
+                                notification_data = {
+                                    "lead_name": lead_data.get("name", ""),
+                                    "lead_email": lead_data.get("email", ""),
+                                    "lead_phone": lead_data.get("contact_number", ""),
+                                    "category": lead_data.get("category", "General"),
+                                    "source": validated_source,
+                                    "lead_id": lead_id,
+                                    "assignment_method": method,
+                                    "bulk_creation": True,
+                                    "bulk_index": i
+                                }
+                                
+                                authorized_users = [{"email": assigned_to, "name": assigned_to_name}]
+                                await realtime_manager.notify_lead_assigned(lead_id, notification_data, authorized_users)
+                                
+                                logger.info(f"✅ Bulk lead assignment notification sent to {assigned_to} for lead {lead_id}")
+                            except Exception as notif_error:
+                                logger.warning(f"⚠️ Failed to send bulk lead assignment notification: {notif_error}")
+                        
                         # Timeline Activity Logging
                         try:
                             # Check if activity already exists to prevent duplicates
@@ -1084,7 +1156,7 @@ class LeadService:
                 "failed_count": len(leads_data),
                 "duplicates_skipped": 0
             }
-        
+
     async def get_lead_id_format_statistics(self) -> Dict[str, Any]:
         """Get statistics about lead ID formats and combinations"""
         try:
@@ -2222,24 +2294,5 @@ class LeadService:
             "unread_whatsapp_count": lead_doc.get("unread_whatsapp_count", 0)
         }
 
-# ============================================================================
-# 🔄 UPDATE LEAD CREATION: Initialize WhatsApp fields
-# ============================================================================
 
-# ADD these fields to your lead creation in create_lead_comprehensive method
-# Find this section in your existing method and add the WhatsApp fields:
-
-# Around line where you create lead_doc, add these fields:
-"""
-# 🆕 NEW: Initialize WhatsApp fields
-"last_whatsapp_activity": None,
-"last_whatsapp_message": None,
-"whatsapp_message_count": 0,
-"unread_whatsapp_count": 0,
-"""
-
-# Same addition needed in:
-# - create_lead_with_selective_assignment method
-# - bulk_create_leads_with_selective_assignment method
-# Global service instance
 lead_service = LeadService()
