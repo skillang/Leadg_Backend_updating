@@ -382,7 +382,7 @@ class EmailService:
             logger.info(f"Email {email_doc.email_id} scheduled for UTC: {scheduled_utc} (original IST: {scheduled_ist})")
             
             # Log scheduling activities
-            await self._log_email_scheduling_activities(email_doc)
+            await self._log_scheduled_email_activities_at_schedule_time(email_doc)
             
             return {
                 "success": True,
@@ -402,6 +402,67 @@ class EmailService:
                 "error": str(e)
             }
     
+    async def _log_scheduled_email_activities_at_schedule_time(self, email_doc: EmailDocument):
+        """Log activity when email is scheduled (before it's sent)"""
+        try:
+            activities = []
+            
+            if email_doc.email_type == "single":
+                # Single lead scheduling activity
+                lead_id = email_doc.lead_id
+                if lead_id:
+                    template_display = await self._get_template_display_name(email_doc.template_key)
+                    
+                    activity = {
+                        "_id": ObjectId(),
+                        "lead_id": lead_id,
+                        "activity_type": "email_scheduled",
+                        "description": f"Email scheduled using template '{template_display}' for {email_doc.scheduled_time.strftime('%Y-%m-%d %H:%M')} IST",
+                        "metadata": {
+                            "email_id": email_doc.email_id,
+                            "template_key": email_doc.template_key,
+                            "template_name": template_display,
+                            "sender_email": email_doc.sender_email,
+                            "scheduled_time": email_doc.scheduled_time,
+                            "scheduled": True
+                        },
+                        "created_by": ObjectId(email_doc.created_by),
+                        "created_by_name": email_doc.created_by_name,
+                        "created_at": datetime.utcnow()
+                    }
+                    activities.append(activity)
+            else:
+                # Bulk email scheduling activities
+                for lead_id in email_doc.lead_ids:
+                    template_display = await self._get_template_display_name(email_doc.template_key)
+                    
+                    activity = {
+                        "_id": ObjectId(),
+                        "lead_id": lead_id,
+                        "activity_type": "bulk_email_scheduled",
+                        "description": f"Bulk email scheduled using template '{template_display}' for {email_doc.scheduled_time.strftime('%Y-%m-%d %H:%M')} IST",
+                        "metadata": {
+                            "email_id": email_doc.email_id,
+                            "template_key": email_doc.template_key,
+                            "template_name": template_display,
+                            "sender_email": email_doc.sender_email,
+                            "scheduled_time": email_doc.scheduled_time,
+                            "total_recipients": email_doc.total_recipients,
+                            "scheduled": True
+                        },
+                        "created_by": ObjectId(email_doc.created_by),
+                        "created_by_name": email_doc.created_by_name,
+                        "created_at": datetime.utcnow()
+                    }
+                    activities.append(activity)
+            
+            # Insert all activities
+            if activities:
+                await self.db.lead_activities.insert_many(activities)
+                logger.info(f"Logged {len(activities)} email scheduling activities")
+                
+        except Exception as e:
+            logger.error(f"Error logging email scheduling activities: {e}")
     async def _send_single_email_via_zepto(self, email_doc: EmailDocument) -> Dict[str, Any]:
         """Send single email via ZeptoMail"""
         recipient = email_doc.recipients[0]
