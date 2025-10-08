@@ -95,7 +95,7 @@ async def get_email_templates(
     except Exception as e:
         logger.error(f"Error fetching email templates: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch email templates: {str(e)}"
         )
 
@@ -171,7 +171,7 @@ async def send_email_to_lead(
         
         if not result["success"]:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=http_status.HTTP_400_BAD_REQUEST,
                 detail=result["error"]
             )
         
@@ -219,7 +219,7 @@ async def send_bulk_email(
         
         if not result["success"]:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=http_status.HTTP_400_BAD_REQUEST,
                 detail=result["error"]
             )
         
@@ -465,13 +465,13 @@ async def cancel_scheduled_email(
         # Check if email is cancellable
         if email.get("status") != "pending":
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=http_status.HTTP_400_BAD_REQUEST,
                 detail=f"Cannot cancel email with status '{email.get('status')}'. Only pending emails can be cancelled."
             )
         
         if not email.get("is_scheduled"):
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=http_status.HTTP_400_BAD_REQUEST,
                 detail="Email is not scheduled and cannot be cancelled"
             )
         
