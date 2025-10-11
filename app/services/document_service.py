@@ -382,27 +382,35 @@ class DocumentService:
     # ========================================
     
     async def _check_lead_access(self, lead_id: str, current_user: Dict[str, Any]) -> Dict[str, Any]:
-        """Check if user has access to the lead (following established pattern)"""
+        """Check if user has access to the lead - FIXED for co-assignees"""
         # Get lead
         lead = await self.db.leads.find_one({"lead_id": lead_id})
         if not lead:
             raise HTTPException(status_code=404, detail="Lead not found")
         
-        # Check permissions (following established pattern from task_service.py)
+        # Check permissions
         user_role = current_user.get("role", "user")
-        user_email = current_user.get("email")  # Use email for comparison
+        user_email = current_user.get("email")
         
+        # ✅ FIXED: Check BOTH assigned_to AND co_assignees
         if user_role != "admin":
-            # Regular users can only access leads assigned to them
             lead_assigned_to = str(lead.get("assigned_to", ""))
-            if lead_assigned_to != user_email:  # Compare email to email
+            lead_co_assignees = lead.get("co_assignees", [])  # 🆕 ADDED
+            
+            # Check if user has access (primary assignee or co-assignee)
+            has_lead_access = (
+                lead_assigned_to == user_email or 
+                user_email in lead_co_assignees
+            )
+            
+            if not has_lead_access:
                 raise HTTPException(
                     status_code=403, 
                     detail="Not authorized to access documents for this lead"
                 )
         
         return lead
-    
+
     async def _get_user_name(self, user_id: ObjectId) -> str:
         """Get user display name (following established pattern)"""
         try:

@@ -277,6 +277,23 @@ class TaskService:
             result = await db.lead_tasks.update_one({"_id": ObjectId(task_id)}, {"$set": update_data})
             
             if result.modified_count > 0:
+                # 🆕 NEW: Auto-remove task notification when completed
+                try:
+                    result = await db.notification_history.update_many(  # ← Changed from update_one
+                        {
+                            "task_id": str(task_id),
+                            "notification_type": "task_assigned",
+                            "read_at": None  # Only update unread notifications
+                        },
+                        {
+                            "$set": {"read_at": datetime.utcnow()}
+                        }
+                    )
+                    logger.info(f"✅ Task notification auto-removed for completed task {task_id} ({result.modified_count} notifications updated)")
+                except Exception as notif_error:
+                    logger.warning(f"⚠️ Failed to auto-remove task notification: {notif_error}")
+
+                
                 # 🔥 LOG TASK COMPLETION TIMELINE ACTIVITY
                 try:
                     description = f"Task '{current_task['task_title']}' completed by {user_name}"

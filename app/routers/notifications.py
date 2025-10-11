@@ -34,8 +34,8 @@ async def get_unified_notifications(
     current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
-    🆕 UNIFIED endpoint - aggregates WhatsApp, Task, and Lead notifications in ONE call
-    Returns all notification types the user has access to with universal pagination
+    🔄 UPDATED: UNIFIED endpoint - aggregates WhatsApp, Task, and Lead notifications
+    Now filters out read notifications (read_at IS NOT NULL)
     """
     try:
         from bson import ObjectId
@@ -47,7 +47,7 @@ async def get_unified_notifications(
         
         all_notifications = []
         
-        # ========== 1. WhatsApp Notifications ==========
+        # ========== 1. WhatsApp Notifications (UNCHANGED) ==========
         if not notification_type or notification_type in ["whatsapp", "all"]:
             whatsapp_query = {"whatsapp_has_unread": True}
             
@@ -80,101 +80,97 @@ async def get_unified_notifications(
                     }
                 })
         
-        # ========== 2. Task Notifications ==========
+        # ========== 2. Task Notifications (🆕 UPDATED: Filter by read_at) ==========
         if not notification_type or notification_type in ["task", "all"]:
-            # Get recent tasks assigned to user (last 30 days for pagination)
-            month_ago = datetime.utcnow() - timedelta(days=30)
-            
+            # 🆕 NEW: Query notification_history instead of lead_tasks
             task_query = {
-                "created_at": {"$gte": month_ago},
-                "status": {"$nin": ["completed", "cancelled"]}
+                "user_email": user_email,
+                "notification_type": "task_assigned",
+                "read_at": None  # 🔥 FILTER: Only unread notifications
             }
             
-            if user_role != "admin":
-                task_query["assigned_to"] = ObjectId(user_id)
-            
-            tasks = await db.lead_tasks.find(
+            task_notifications = await db.notification_history.find(
                 task_query,
                 {
-                    "task_title": 1,
+                    "notification_id": 1,
                     "lead_id": 1,
-                    "lead_object_id": 1,
+                    "lead_name": 1,
+                    "task_id": 1,
+                    "task_title": 1,
+                    "task_type": 1,
                     "priority": 1,
-                    "due_date": 1,
                     "created_at": 1,
-                    "task_type": 1
+                    "original_data": 1
                 }
             ).sort("created_at", -1).to_list(None)
             
-            for task in tasks:
-                # Get lead name
-                lead = await db.leads.find_one(
-                    {"lead_id": task.get("lead_id")},
-                    {"name": 1}
-                )
-                lead_name = lead.get("name") if lead else "Unknown Lead"
+            for task_notif in task_notifications:
+                original_data = task_notif.get("original_data", {})
                 
                 all_notifications.append({
-                    "id": f"task_{str(task['_id'])}",
+                    "id": f"task_{task_notif['notification_id']}",
                     "type": "task_assigned",
                     "title": "Task Assigned",
-                    "message": f"{task.get('task_title')} for {lead_name}",
-                    "lead_id": task.get("lead_id"),
-                    "lead_name": lead_name,
-                    "task_id": str(task["_id"]),
-                    "timestamp": task.get("created_at") or datetime.utcnow(),
-                    "read": False,
-                    "priority": task.get("priority", "medium"),
+                    "message": f"{task_notif.get('task_title', 'New Task')} for {task_notif.get('lead_name', 'Unknown Lead')}",
+                    "lead_id": task_notif.get("lead_id"),
+                    "lead_name": task_notif.get("lead_name"),
+                    "task_id": task_notif.get("task_id"),
+                    "timestamp": task_notif.get("created_at") or datetime.utcnow(),
+                    "read": False,  # Always false since we filtered read_at = None
+                    "priority": task_notif.get("priority", "medium"),
                     "metadata": {
-                        "task_title": task.get("task_title"),
-                        "task_type": task.get("task_type"),
-                        "due_date": task.get("due_date")
+                        "task_title": task_notif.get("task_title"),
+                        "task_type": task_notif.get("task_type"),
+                        "due_date": original_data.get("due_date"),
+                        "reassigned": original_data.get("reassigned", False)
                     }
                 })
         
-        # ========== 3. Lead Assignment Notifications ==========
+        # ========== 3. Lead Assignment Notifications (🆕 UPDATED: Filter by read_at) ==========
         if not notification_type or notification_type in ["lead", "all"]:
-            # Get recently assigned leads (last 30 days for pagination)
-            month_ago = datetime.utcnow() - timedelta(days=30)
-            
+            # 🆕 NEW: Query notification_history instead of leads
             lead_query = {
-                "created_at": {"$gte": month_ago}
+                "user_email": user_email,
+                "notification_type": {"$in": ["lead_assigned", "lead_reassigned"]},
+                "read_at": None  # 🔥 FILTER: Only unread notifications
             }
             
-            if user_role != "admin":
-                lead_query["assigned_to"] = user_email
-            
-            recent_leads = await db.leads.find(
+            lead_notifications = await db.notification_history.find(
                 lead_query,
                 {
+                    "notification_id": 1,
+                    "notification_type": 1,
                     "lead_id": 1,
-                    "name": 1,
-                    "email": 1,
-                    "contact_number": 1,
+                    "lead_name": 1,
+                    "lead_email": 1,
                     "category": 1,
                     "source": 1,
                     "created_at": 1,
-                    "assignment_method": 1
+                    "original_data": 1
                 }
             ).sort("created_at", -1).to_list(None)
             
-            for lead in recent_leads:
+            for lead_notif in lead_notifications:
+                original_data = lead_notif.get("original_data", {})
+                is_reassignment = lead_notif.get("notification_type") == "lead_reassigned"
+                
                 all_notifications.append({
-                    "id": f"lead_{lead['lead_id']}",
-                    "type": "lead_assigned",
-                    "title": "New Lead Assigned",
-                    "message": f"Lead '{lead.get('name')}' has been assigned to you",
-                    "lead_id": lead["lead_id"],
-                    "lead_name": lead.get("name"),
-                    "timestamp": lead.get("created_at") or datetime.utcnow(),
-                    "read": False,
+                    "id": f"lead_{lead_notif['notification_id']}",
+                    "type": lead_notif.get("notification_type", "lead_assigned"),
+                    "title": "Lead Reassigned" if is_reassignment else "New Lead Assigned",
+                    "message": f"Lead '{lead_notif.get('lead_name')}' has been {'reassigned to' if is_reassignment else 'assigned to'} you",
+                    "lead_id": lead_notif.get("lead_id"),
+                    "lead_name": lead_notif.get("lead_name"),
+                    "timestamp": lead_notif.get("created_at") or datetime.utcnow(),
+                    "read": False,  # Always false since we filtered read_at = None
                     "priority": "high",
                     "metadata": {
-                        "lead_email": lead.get("email"),
-                        "lead_phone": lead.get("contact_number"),
-                        "category": lead.get("category"),
-                        "source": lead.get("source"),
-                        "assignment_method": lead.get("assignment_method")
+                        "lead_email": lead_notif.get("lead_email"),
+                        "lead_phone": original_data.get("lead_phone"),
+                        "category": lead_notif.get("category"),
+                        "source": lead_notif.get("source"),
+                        "reassigned": is_reassignment,
+                        "reassigned_from": original_data.get("reassigned_from")
                     }
                 })
         
@@ -183,36 +179,34 @@ async def get_unified_notifications(
         
         # ========== Universal Pagination ==========
         total_count = len(all_notifications)
-        total_pages = (total_count + limit - 1) // limit  # Ceiling division
+        total_pages = (total_count + limit - 1) // limit
         
-        # Calculate skip and slice
         skip = (page - 1) * limit
         paginated_notifications = all_notifications[skip:skip + limit]
         
         # ========== Calculate Counts ==========
-        unread_count = len([n for n in paginated_notifications if not n.get("read")])
+        unread_count = len(paginated_notifications)  # All are unread now
         
         notification_counts = {
             "whatsapp": len([n for n in all_notifications if n["type"] == "whatsapp_unread"]),
             "task": len([n for n in all_notifications if n["type"] == "task_assigned"]),
-            "lead": len([n for n in all_notifications if n["type"] == "lead_assigned"]),
+            "lead": len([n for n in all_notifications if n["type"] in ["lead_assigned", "lead_reassigned"]]),
             "total": total_count
         }
         
-        # ✅ UNIVERSAL PAGINATION PATTERN (Matches PaginationMeta interface)
         pagination_response = {
-            "total": total_count,              # Total records across all pages
-            "page": page,                      # Current page (1-based)
-            "limit": limit,                    # Items per page
-            "pages": total_pages,              # Total pages
-            "has_next": page < total_pages,    # Boolean: more pages available
-            "has_prev": page > 1               # Boolean: previous pages available
+            "total": total_count,
+            "page": page,
+            "limit": limit,
+            "pages": total_pages,
+            "has_next": page < total_pages,
+            "has_prev": page > 1
         }
         
         return {
             "success": True,
             "notifications": paginated_notifications,
-            "pagination": pagination_response,  # ✅ Universal pagination structure
+            "pagination": pagination_response,
             "unread_count": unread_count,
             "notification_counts": notification_counts,
             "user_role": user_role,
@@ -230,6 +224,107 @@ async def get_unified_notifications(
         import traceback
         logger.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Failed to get unified notifications: {str(e)}")
+    
+
+@router.post("/mark-read/{notification_id}")
+async def mark_notification_as_read(
+    notification_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """
+    🆕 NEW: Mark a task or lead notification as read
+    Updates the read_at timestamp in notification_history
+    """
+    try:
+        db = get_database()
+        user_email = current_user.get("email")
+        
+        logger.info(f"📖 Marking notification {notification_id} as read for {user_email}")
+        
+        # Update notification_history
+        result = await db.notification_history.update_one(
+            {
+                "notification_id": notification_id,
+                "user_email": user_email,  # Security: user can only mark their own notifications
+                "read_at": None  # Only update if not already read
+            },
+            {
+                "$set": {
+                    "read_at": datetime.utcnow()
+                }
+            }
+        )
+        
+        if result.matched_count == 0:
+            raise HTTPException(
+                status_code=404,
+                detail="Notification not found or already marked as read"
+            )
+        
+        logger.info(f"✅ Notification {notification_id} marked as read")
+        
+        return {
+            "success": True,
+            "notification_id": notification_id,
+            "marked_at": datetime.utcnow().isoformat(),
+            "message": "Notification marked as read successfully"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error marking notification as read: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to mark notification as read: {str(e)}"
+        )
+
+
+@router.post("/bulk-mark-read")
+async def bulk_mark_notifications_as_read(
+    notification_ids: List[str],
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """
+    🆕 NEW: Mark multiple notifications as read at once
+    Useful for "Mark all as read" functionality
+    """
+    try:
+        db = get_database()
+        user_email = current_user.get("email")
+        
+        logger.info(f"📖 Bulk marking {len(notification_ids)} notifications as read for {user_email}")
+        
+        # Update multiple notifications
+        result = await db.notification_history.update_many(
+            {
+                "notification_id": {"$in": notification_ids},
+                "user_email": user_email,  # Security: user can only mark their own notifications
+                "read_at": None  # Only update if not already read
+            },
+            {
+                "$set": {
+                    "read_at": datetime.utcnow()
+                }
+            }
+        )
+        
+        logger.info(f"✅ Marked {result.modified_count} notifications as read")
+        
+        return {
+            "success": True,
+            "marked_count": result.modified_count,
+            "requested_count": len(notification_ids),
+            "marked_at": datetime.utcnow().isoformat(),
+            "message": f"Successfully marked {result.modified_count} notifications as read"
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error bulk marking notifications as read: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to bulk mark notifications as read: {str(e)}"
+        )
 # ============================================================================
 # WHATSAPP NOTIFICATION STATUS ENDPOINTS
 # ============================================================================
@@ -1004,6 +1099,8 @@ async def get_notification_history(
             logger.info(f"🔒 User access - filtering by user_email: {user_email}")
         else:
             logger.info(f"👑 Admin access - showing all notifications")
+        query["read_at"] = {"$ne": None}  # 🔥 FILTER: Only show read notifications
+        logger.info(f"📖 History filter: Only showing read notifications")
         # Date range filter
         if date_from or date_to:
             date_filter = {}

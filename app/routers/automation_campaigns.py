@@ -10,7 +10,9 @@ from app.models.automation_campaign import (
     CampaignCreateRequest,
     CampaignResponse,
     CampaignListItem,
-    CampaignStatsResponse
+    CampaignStatsResponse,
+     CampaignPreviewRequest,  
+    CampaignPreviewResponse  
 )
 from app.services.campaign_service import campaign_service
 from app.services.campaign_executor import campaign_executor
@@ -489,4 +491,218 @@ async def get_enrolled_leads(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get enrolled leads: {str(e)}"
+        )
+    
+
+# ============================================================================
+# 🆕 NEW: CAMPAIGN PREVIEW ENDPOINT
+# ============================================================================
+
+@router.post("/preview", response_model=CampaignPreviewResponse)
+async def preview_campaign(
+    preview_data: CampaignPreviewRequest,
+    current_user: Dict[str, Any] = Depends(get_admin_user)
+):
+    """
+    Preview campaign before creation (Admin only)
+    
+    - Shows lead count breakdown by source, category, stage
+    - Campaign schedule preview
+    """
+    try:
+        from bson import ObjectId
+        
+        logger.info(f"Campaign preview requested by {current_user.get('email')}")
+        db = get_database()
+        
+        # ============================================================================
+        # STEP 1: Build lead filter query
+        # ============================================================================
+        lead_filter = {}
+        
+        # 🔥 FIX: Source filtering - using 'sources' collection
+        if preview_data.source_ids:
+            try:
+                source_object_ids = [ObjectId(sid) for sid in preview_data.source_ids]
+                
+                # Use 'sources' collection instead of 'lead_sources'
+                sources = await db.sources.find({"_id": {"$in": source_object_ids}}).to_list(None)
+                
+                if not sources:
+                    logger.warning(f"No sources found for IDs: {preview_data.source_ids}")
+                    return CampaignPreviewResponse(
+                        summary={
+                            "total_leads": 0,
+                            "breakdown_by_category": {},
+                            "breakdown_by_source": {},
+                            "breakdown_by_stage": {}
+                        },
+                        campaign_schedule={
+                            "duration_days": preview_data.campaign_duration_days,
+                            "messages_per_lead": preview_data.message_limit,
+                            "total_messages": 0,
+                            "leads_targeted": 0
+                        }
+                    )
+                
+                source_names = [s["name"] for s in sources]
+                logger.info(f"✅ Found sources: {source_names}")
+                lead_filter["source"] = {"$in": source_names}
+                
+            except Exception as e:
+                logger.error(f"Error processing source_ids: {str(e)}")
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid source_ids format: {str(e)}"
+                )
+        
+        # 🔥 FIX: Category filtering - using 'lead_categories' collection
+        if preview_data.category_ids:
+            try:
+                category_object_ids = [ObjectId(cid) for cid in preview_data.category_ids]
+                
+                # Use 'lead_categories' collection
+                categories = await db.lead_categories.find({"_id": {"$in": category_object_ids}}).to_list(None)
+                
+                if not categories:
+                    logger.warning(f"No categories found for IDs: {preview_data.category_ids}")
+                    return CampaignPreviewResponse(
+                        summary={
+                            "total_leads": 0,
+                            "breakdown_by_category": {},
+                            "breakdown_by_source": {},
+                            "breakdown_by_stage": {}
+                        },
+                        campaign_schedule={
+                            "duration_days": preview_data.campaign_duration_days,
+                            "messages_per_lead": preview_data.message_limit,
+                            "total_messages": 0,
+                            "leads_targeted": 0
+                        }
+                    )
+                
+                category_names = [c["name"] for c in categories]
+                logger.info(f"✅ Found categories: {category_names}")
+                lead_filter["category"] = {"$in": category_names}
+                
+            except Exception as e:
+                logger.error(f"Error processing category_ids: {str(e)}")
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid category_ids format: {str(e)}"
+                )
+        
+        # 🔥 FIX: Stage filtering - using 'lead_stages' collection
+        if preview_data.stage_ids:
+            try:
+                stage_object_ids = [ObjectId(sid) for sid in preview_data.stage_ids]
+                
+                # Use 'lead_stages' collection
+                stages = await db.lead_stages.find({"_id": {"$in": stage_object_ids}}).to_list(None)
+                
+                if not stages:
+                    logger.warning(f"No stages found for IDs: {preview_data.stage_ids}")
+                    return CampaignPreviewResponse(
+                        summary={
+                            "total_leads": 0,
+                            "breakdown_by_category": {},
+                            "breakdown_by_source": {},
+                            "breakdown_by_stage": {}
+                        },
+                        campaign_schedule={
+                            "duration_days": preview_data.campaign_duration_days,
+                            "messages_per_lead": preview_data.message_limit,
+                            "total_messages": 0,
+                            "leads_targeted": 0
+                        }
+                    )
+                
+                stage_names = [s["name"] for s in stages]
+                logger.info(f"✅ Found stages: {stage_names}")
+                lead_filter["stage"] = {"$in": stage_names}
+                
+            except Exception as e:
+                logger.error(f"Error processing stage_ids: {str(e)}")
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid stage_ids format: {str(e)}"
+                )
+        
+        # 🔥 IMPORTANT: Log the final filter
+        logger.info(f"📋 Final lead_filter: {lead_filter}")
+        
+        # ============================================================================
+        # STEP 2: Get total leads count
+        # ============================================================================
+        total_leads = await db.leads.count_documents(lead_filter)
+        logger.info(f"✅ Total leads matching filter: {total_leads}")
+        
+        # ============================================================================
+        # STEP 3: Breakdown by category
+        # ============================================================================
+        category_pipeline = [
+            {"$match": lead_filter},
+            {"$group": {"_id": "$category", "count": {"$sum": 1}}}
+        ]
+        category_breakdown = {}
+        async for doc in db.leads.aggregate(category_pipeline):
+            if doc["_id"]:  # Skip null categories
+                category_breakdown[doc["_id"]] = doc["count"]
+        
+        # ============================================================================
+        # STEP 4: Breakdown by source
+        # ============================================================================
+        source_pipeline = [
+            {"$match": lead_filter},
+            {"$group": {"_id": "$source", "count": {"$sum": 1}}}
+        ]
+        source_breakdown = {}
+        async for doc in db.leads.aggregate(source_pipeline):
+            if doc["_id"]:  # Skip null sources
+                source_breakdown[doc["_id"]] = doc["count"]
+        
+        # ============================================================================
+        # STEP 5: Breakdown by stage
+        # ============================================================================
+        stage_pipeline = [
+            {"$match": lead_filter},
+            {"$group": {"_id": "$stage", "count": {"$sum": 1}}}
+        ]
+        stage_breakdown = {}
+        async for doc in db.leads.aggregate(stage_pipeline):
+            if doc["_id"]:  # Skip null stages
+                stage_breakdown[doc["_id"]] = doc["count"]
+        
+        # ============================================================================
+        # STEP 6: Campaign schedule calculation
+        # ============================================================================
+        total_messages = total_leads * preview_data.message_limit
+        
+        campaign_schedule = {
+            "duration_days": preview_data.campaign_duration_days,
+            "messages_per_lead": preview_data.message_limit,
+            "total_messages": total_messages,
+            "leads_targeted": total_leads
+        }
+        
+        # ============================================================================
+        # STEP 7: Build response
+        # ============================================================================
+        return CampaignPreviewResponse(
+            summary={
+                "total_leads": total_leads,
+                "breakdown_by_category": category_breakdown,
+                "breakdown_by_source": source_breakdown,
+                "breakdown_by_stage": stage_breakdown
+            },
+            campaign_schedule=campaign_schedule
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error previewing campaign: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to preview campaign: {str(e)}"
         )

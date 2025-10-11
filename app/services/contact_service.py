@@ -498,12 +498,14 @@ class ContactService:
                     detail=f"Contact with phone '{phone}' already exists for this lead"
                 )
 
+    
+    
     async def _validate_linked_leads(self, linked_leads: List[str], current_user: Dict[str, Any]) -> List[str]:
         """Validate linked leads and return only accessible ones"""
         if not linked_leads:
             return []
         
-        db = get_database()  # Get database connection when needed
+        db = get_database()
         user_role = current_user.get("role", "user")
         user_email = current_user.get("email", "")
         accessible_leads = []
@@ -515,7 +517,7 @@ class ContactService:
                     # Admin can link any existing lead
                     lead = await db.leads.find_one({"lead_id": lead_id})
                 else:
-                    # Regular user can only link leads assigned to them
+                    # ❌ PROBLEM: Regular user can only link leads assigned to them (primary only)
                     lead = await db.leads.find_one({
                         "lead_id": lead_id,
                         "assigned_to": user_email
@@ -531,7 +533,6 @@ class ContactService:
                 continue
         
         return accessible_leads
-
     def _generate_linking_warning(self, requested_leads: List[str], accessible_leads: List[str]) -> Optional[str]:
         """Generate warning message if some leads couldn't be linked"""
         if not requested_leads:
@@ -543,9 +544,10 @@ class ContactService:
         
         return None
 
+    # Lines 560-594 - FIXED: Checks BOTH assigned_to AND co_assignees
     async def _check_lead_access(self, lead_id: str, current_user: Dict[str, Any]) -> Dict[str, Any]:
         """Check if user has access to the lead"""
-        db = get_database()  # Get database connection when needed
+        db = get_database()
         
         # Get lead
         lead = await db.leads.find_one({"lead_id": lead_id})
@@ -560,10 +562,20 @@ class ContactService:
         print(f"   User Role: {user_role}")
         print(f"   User Email: {user_email}")
         print(f"   Lead Assigned To: {lead.get('assigned_to')}")
+        print(f"   Lead Co-assignees: {lead.get('co_assignees', [])}")  # 🆕 ADDED
         
+        # ✅ FIXED: Check BOTH assigned_to AND co_assignees
         if user_role != "admin":
             lead_assigned_to = lead.get("assigned_to", "")
-            if lead_assigned_to != user_email:
+            lead_co_assignees = lead.get("co_assignees", [])  # 🆕 ADDED
+            
+            # Check if user has access (primary or co-assignee)
+            has_lead_access = (
+                lead_assigned_to == user_email or 
+                user_email in lead_co_assignees
+            )
+            
+            if not has_lead_access:
                 raise HTTPException(
                     status_code=403, 
                     detail=f"Not authorized to access lead {lead_id}"
@@ -571,7 +583,6 @@ class ContactService:
         
         print(f"✅ Permission granted for lead {lead_id}")
         return lead
-
     async def _handle_primary_contact_change(self, lead_id: str):
         """Handle primary contact designation - remove primary from others"""
         db = get_database()  # Get database connection when needed

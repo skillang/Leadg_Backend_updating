@@ -163,3 +163,18 @@ class CampaignStatsResponse(BaseModel):
     total_messages_sent: int
     total_messages_pending: int
     total_messages_failed: int
+
+class CampaignPreviewRequest(BaseModel):
+    """Request model for campaign preview"""
+    source_ids: List[str] = []
+    category_ids: List[str] = []
+    stage_ids: List[str] = []
+    campaign_duration_days: int = Field(..., ge=1, description="Duration in days")
+    message_limit: int = Field(..., ge=2, description="Number of messages per lead")
+
+
+class CampaignPreviewResponse(BaseModel):
+    """Response model for campaign preview"""
+    summary: Dict[str, Any]
+    campaign_schedule: Dict[str, Any]
+    

@@ -455,6 +455,38 @@ def format_time_display(dt: datetime) -> str:
 
 async def check_lead_access(lead_id: str, current_user: dict):
     """
+    Check if user has access to this lead - FIXED for co-assignees
+    """
+    db = get_database()
+    
+    # Get lead
+    lead = await db.leads.find_one({"lead_id": lead_id})
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    
+    # Check permissions
+    user_role = current_user.get("role", "user")
+    user_email = current_user.get("email") or str(current_user.get("user_id") or current_user.get("_id"))
+    
+    # ✅ FIXED: Check BOTH assigned_to AND co_assignees
+    if user_role != "admin":
+        lead_assigned_to = lead.get("assigned_to", "")
+        lead_co_assignees = lead.get("co_assignees", [])  # 🆕 ADDED
+        
+        # Check if user has access (primary assignee or co-assignee)
+        has_lead_access = (
+            lead_assigned_to == user_email or 
+            user_email in lead_co_assignees
+        )
+        
+        if not has_lead_access:
+            raise HTTPException(
+                status_code=403, 
+                detail="Not authorized to access this lead"
+            )
+    
+    return lead
+    """
     Check if user has access to this lead
     """
     db = get_database()

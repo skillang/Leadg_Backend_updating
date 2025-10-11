@@ -255,6 +255,7 @@ class NoteService:
                     return None
             
             # Step 4: Check lead access control (user can only see notes for assigned leads)
+
             if user_role != "admin":
                 try:
                     lead = await db.leads.find_one({
@@ -262,15 +263,24 @@ class NoteService:
                     })
                     if lead:
                         lead_assigned_to = str(lead.get("assigned_to", ""))
+                        lead_co_assignees = lead.get("co_assignees", [])  # 🆕 ADDED
+                        
                         # Get user info to check email
                         user_info = await db.users.find_one({"_id": ObjectId(user_id)})
                         user_email = user_info.get("email", "") if user_info else ""
                         
                         logger.info(f"Lead assigned to: {lead_assigned_to}")
+                        logger.info(f"Lead co-assignees: {lead_co_assignees}")  # 🆕 ADDED
                         logger.info(f"User email: {user_email}")
                         
-                        if lead_assigned_to != user_email:
-                            logger.warning(f"❌ Lead access denied - Lead assigned to: {lead_assigned_to}, User email: {user_email}")
+                        # ✅ FIXED: Check BOTH assigned_to AND co_assignees
+                        has_lead_access = (
+                            lead_assigned_to == user_email or 
+                            user_email in lead_co_assignees
+                        )
+                        
+                        if not has_lead_access:
+                            logger.warning(f"❌ Lead access denied - User: {user_email}, Assigned to: {lead_assigned_to}, Co-assignees: {lead_co_assignees}")
                             return None
                     else:
                         logger.warning(f"❌ Lead not found for note")

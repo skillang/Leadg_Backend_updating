@@ -1839,7 +1839,6 @@ async def update_lead_universal(
                         update_request["_automation_activity"] = automation_activity
         
         # 🆕 NEW: Check campaign criteria when stage or source changes
-        
         new_source = update_request.get("source")
         current_source = lead.get("source")
         source_changed = new_source and new_source != current_source
@@ -1869,12 +1868,11 @@ async def update_lead_universal(
                 # Pass ObjectIds to campaign executor
                 await campaign_executor.check_lead_criteria_change(
                     lead_id=lead_id,
-                    new_stage_id=new_stage_id,  # 🔥 Changed from new_stage
-                    new_source_id=new_source_id  # 🔥 Changed from new_source
+                    new_stage_id=new_stage_id,
+                    new_source_id=new_source_id
                 )
             except Exception as campaign_error:
                 logger.error(f"Campaign criteria check failed: {str(campaign_error)}")
-        # Don't fail the update if campaign check fails                # Don't fail the update if campaign check fails
         
         logger.info(f"📋 Found lead {lead_id}, currently assigned to: {lead.get('assigned_to')}")
         
@@ -1973,6 +1971,35 @@ async def update_lead_universal(
         
         logger.info(f"✅ Lead {lead_id} updated in database successfully")
         
+        # 🆕 NEW: Send lead reassignment notification
+        if assignment_changed and new_assignee:
+            try:
+                from ..services.realtime_service import realtime_manager
+                
+                # Get new assignee details
+                new_user = await db.users.find_one({"email": new_assignee})
+                new_user_name = f"{new_user.get('first_name', '')} {new_user.get('last_name', '')}".strip()
+                if not new_user_name:
+                    new_user_name = new_assignee
+                
+                notification_data = {
+                    "lead_name": lead.get("name"),
+                    "lead_email": lead.get("email"),
+                    "lead_phone": lead.get("contact_number"),
+                    "category": lead.get("category"),
+                    "source": lead.get("source"),
+                    "lead_id": lead_id,
+                    "reassigned_from": old_assignee,
+                    "reassigned": True
+                }
+                
+                authorized_users = [{"email": new_assignee, "name": new_user_name}]
+                await realtime_manager.notify_lead_reassigned(lead_id, notification_data, authorized_users)
+                
+                logger.info(f"✅ Lead reassignment notification sent to {new_assignee}")
+            except Exception as notif_error:
+                logger.warning(f"⚠️ Failed to send reassignment notification: {notif_error}")
+        
         # Enhanced user array updates for multi-assignment
         assignment_sync_error = None
         if assignment_changed:
@@ -2068,7 +2095,8 @@ async def update_lead_universal(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to update lead"
         )
-        
+
+
 # ============================================================================
 # DELETE ENDPOINT WITH MULTI-ASSIGNMENT CLEANUP
 # ============================================================================

@@ -118,17 +118,20 @@ async def get_lead_tasks(
     """
     Get all tasks for a specific lead
     - Admins see all tasks for the lead
-    - Users see only tasks assigned to them or created by them
+    - Users see tasks for leads they have access to (primary + co-assignee)
     """
     try:
         logger.info(f"Getting tasks for lead {lead_id} by user {current_user.get('email')}")
         
-        # Verify user has access to this lead
+        # ✅ FIXED: Verify user has access to this lead (PRIMARY OR CO-ASSIGNEE)
         if current_user["role"] != "admin":
-            db = get_database()  # ✅ Removed await
+            db = get_database()
             lead = await db.leads.find_one({
-                "lead_id": lead_id,  # ✅ Use lead_id string
-                "assigned_to": current_user["email"]  # ✅ Use email
+                "lead_id": lead_id,
+                "$or": [
+                    {"assigned_to": current_user["email"]},
+                    {"co_assignees": current_user["email"]}  # 🆕 ADDED
+                ]
             })
             if not lead:
                 logger.warning(f"User {current_user['email']} tried to access unauthorized lead {lead_id}")
@@ -169,7 +172,7 @@ async def get_lead_tasks(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to retrieve tasks: {str(e)}"
         )
-
+    
 @router.get("/leads/{lead_id}/tasks/stats", response_model=TaskStatsResponse)
 @convert_dates_to_ist()
 async def get_lead_task_stats(
@@ -183,12 +186,15 @@ async def get_lead_task_stats(
     try:
         logger.info(f"Getting task stats for lead {lead_id} by user {current_user.get('email')}")
         
-        # Verify user has access to this lead
+        # ✅ FIXED: Verify user has access to this lead (PRIMARY OR CO-ASSIGNEE)
         if current_user["role"] != "admin":
-            db = get_database()  # ✅ Removed await
+            db = get_database()
             lead = await db.leads.find_one({
-                "lead_id": lead_id,  # ✅ Use lead_id string
-                "assigned_to": current_user["email"]  # ✅ Use email
+                "lead_id": lead_id,
+                "$or": [
+                    {"assigned_to": current_user["email"]},
+                    {"co_assignees": current_user["email"]}  # 🆕 ADDED
+                ]
             })
             if not lead:
                 logger.warning(f"User {current_user['email']} tried to access unauthorized lead {lead_id}")
@@ -215,7 +221,7 @@ async def get_lead_task_stats(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to retrieve task statistics: {str(e)}"
         )
-
+    
 @router.get("/{task_id}")
 @convert_task_dates()
 async def get_task(

@@ -211,6 +211,13 @@ class LeadAssignmentService:
                 user_name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip() or user_email
                 user_names[user_email] = user_name
             
+            # 🆕 NEW: Get lead details for notifications
+            lead = await db.leads.find_one({"lead_id": lead_id})
+            if not lead:
+                return {"success": False, "message": "Lead not found"}
+            
+            lead_name = lead.get("name", "Unknown Lead")
+            
             # Create assignment history entries for each user
             assignment_entries = []
             for user_email in valid_user_emails:
@@ -254,6 +261,94 @@ class LeadAssignmentService:
                 
                 logger.info(f"Lead {lead_id} assigned to multiple users: {valid_user_emails}")
                 
+                # 🔥 UPDATED: Send notifications (prevents admin duplicates)
+                try:
+                    from ..services.realtime_service import realtime_manager
+                    
+                    notification_data = {
+                        "lead_name": lead_name,
+                        "lead_email": lead.get("email"),
+                        "lead_phone": lead.get("contact_number"),
+                        "category": lead.get("category"),
+                        "source": lead.get("source"),
+                        "assignment_method": "multi_user_manual",
+                        "co_assigned": True,
+                        "primary_assignee": primary_assignee,
+                        "co_assignees": co_assignees,
+                        "total_assignees": len(valid_user_emails)
+                    }
+                    
+                    # 🔥 STEP 1: Send to assigned users ONLY (no admin duplication)
+                    for user_email in valid_user_emails:
+                        authorized_users = [{"email": user_email, "name": user_names[user_email]}]
+                        await realtime_manager.notify_lead_assigned(lead_id, notification_data, authorized_users)
+                    
+                    logger.info(f"✅ Multi-assignment notifications sent to {len(valid_user_emails)} users for lead {lead_id}")
+                    
+                    # 🔥 STEP 2: Send to admins SEPARATELY (directly save to DB to avoid duplication)
+                    admin_users = await db.users.find(
+                        {"role": "admin", "is_active": True},
+                        {"email": 1, "first_name": 1, "last_name": 1}
+                    ).to_list(None)
+                    
+                    admin_notification_count = 0
+                    timestamp = datetime.utcnow().timestamp()
+                    
+                    for admin in admin_users:
+                        admin_email = admin["email"]
+                        # Skip if admin is already in the assigned users
+                        if admin_email not in valid_user_emails:
+                            admin_name = f"{admin.get('first_name', '')} {admin.get('last_name', '')}".strip() or admin_email
+                            
+                            # Create admin-specific notification data
+                            admin_notification_data = {
+                                **notification_data,
+                                "assigned_users": valid_user_emails,
+                                "admin_view": True
+                            }
+                            
+                            # 🔥 Save DIRECTLY to notification_history (bypass _save_lead_notification_to_history)
+                            history_doc = {
+                                "notification_id": f"{admin_email}_lead_{lead_id}_{timestamp}",
+                                "user_email": admin_email,
+                                "notification_type": "lead_assigned",
+                                "lead_id": lead_id,
+                                "lead_name": lead_name,
+                                "message_preview": f"New lead assigned: {lead_name}",
+                                "lead_email": lead.get("email"),
+                                "lead_phone": lead.get("contact_number"),
+                                "category": lead.get("category"),
+                                "source": lead.get("source"),
+                                "created_at": datetime.utcnow(),
+                                "read_at": None,
+                                "original_data": admin_notification_data
+                            }
+                            
+                            await db.notification_history.update_one(
+                                {"notification_id": history_doc["notification_id"]},
+                                {"$setOnInsert": history_doc},
+                                upsert=True
+                            )
+                            
+                            # Send real-time notification via SSE
+                            await realtime_manager._send_to_user(admin_email, {
+                                "type": "lead_assigned",
+                                "lead_id": lead_id,
+                                "lead_name": lead_name,
+                                "timestamp": datetime.utcnow().isoformat(),
+                                **admin_notification_data
+                            })
+                            
+                            admin_notification_count += 1
+                    
+                    logger.info(f"✅ Admin notifications sent to {admin_notification_count} admins for multi-assignment of lead {lead_id}")
+                    
+                except Exception as notif_error:
+                    logger.warning(f"⚠️ Failed to send multi-assignment notifications: {notif_error}")
+                    import traceback
+                    logger.warning(f"Notification error traceback: {traceback.format_exc()}")
+                    # Don't fail the assignment if notification fails
+                
                 return {
                     "success": True,
                     "message": f"Lead assigned to {len(valid_user_emails)} users successfully",
@@ -267,8 +362,9 @@ class LeadAssignmentService:
             
         except Exception as e:
             logger.error(f"Error in multi-user assignment: {str(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return {"success": False, "message": f"Assignment failed: {str(e)}"}
-    
     async def remove_user_from_multi_assignment(self, lead_id: str, user_email: str, removed_by: str, reason: str = "Removed from assignment") -> bool:
         """
         Remove a user from a multi-user assignment

@@ -230,7 +230,7 @@ async def get_my_documents(
 ):
     """
     Get all documents uploaded by current user across all their assigned leads
-    - User sees documents from all leads assigned to them
+    - User sees documents from all leads assigned to them (primary + co-assignees)
     - Useful for checking approval status
     """
     try:
@@ -244,21 +244,30 @@ async def get_my_documents(
             # Admin sees all documents
             pass
         else:
-            # Regular users see documents from leads assigned to them
-            # First get all leads assigned to this user
+            # ✅ FIXED: Regular users see documents from leads they have access to (primary + co-assignee)
+            # Get all leads where user is primary assignee OR co-assignee
             user_leads = []
-            async for lead in document_service.db.leads.find({"assigned_to": user_email}):
+            async for lead in document_service.db.leads.find({
+                "$or": [
+                    {"assigned_to": user_email},
+                    {"co_assignees": user_email}  # 🆕 ADDED co-assignees check
+                ]
+            }):
                 user_leads.append(lead["lead_id"])
             
             if not user_leads:
                 # User has no assigned leads
-                return DocumentListResponse(
-                    documents=[],
-                    total_count=0,
-                    page=page,
-                    limit=limit,
-                    total_pages=0
-                )
+                return {
+                    "documents": [],
+                    "pagination": {
+                        "page": page,
+                        "limit": limit,
+                        "total": 0,
+                        "pages": 0,
+                        "has_next": False,
+                        "has_prev": False
+                    }
+                }
             
             query["lead_id"] = {"$in": user_leads}
         
@@ -334,7 +343,6 @@ async def get_my_documents(
     except Exception as e:
         logger.error(f"Error getting user documents: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
-
 @router.get("/my-notifications")
 async def get_my_document_notifications(
     current_user: Dict[str, Any] = Depends(get_current_user)

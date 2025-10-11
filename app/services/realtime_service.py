@@ -369,9 +369,99 @@ class RealtimeNotificationManager:
         except Exception as e:
             logger.error(f"Error notifying lead assignment: {str(e)}")
 
+
+    async def notify_lead_reassigned(self, lead_id: str, lead_data: Dict[str, Any], authorized_users: List[Dict[str, Any]]):
+        """
+        🆕 NEW: Notify authorized users about lead reassignment
+        Called by leads router when admin reassigns a lead to a different user
+        """
+        try:
+            for user in authorized_users:
+                user_email = user["email"]
+                
+                # Create notification
+                notification = {
+                    "type": "lead_reassigned",
+                    "lead_id": lead_id,
+                    "lead_name": lead_data.get("lead_name"),
+                    "lead_email": lead_data.get("lead_email"),
+                    "lead_phone": lead_data.get("lead_phone"),
+                    "category": lead_data.get("category"),
+                    "source": lead_data.get("source"),
+                    "reassigned_from": lead_data.get("reassigned_from"),
+                    "reassigned": True,
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+                
+                # Save to notification history
+                await self._save_lead_reassignment_notification_to_history(user_email, notification)
+                
+                # Send to all user's connections
+                await self._send_to_user(user_email, notification)
+            
+            logger.info(f"🔔 Lead reassignment notification sent to {len(authorized_users)} users for lead {lead_id}")
+            
+        except Exception as e:
+            logger.error(f"Error notifying lead reassignment: {str(e)}")
+
+    async def _save_lead_reassignment_notification_to_history(self, user_email: str, notification: Dict[str, Any]):
+        """
+        🔄 UPDATED: Save lead reassignment notification to history (now includes admins)
+        """
+        try:
+            from ..config.database import get_database
+            db = get_database()
+            
+            lead_id = notification.get("lead_id")
+            timestamp = datetime.utcnow().timestamp()
+            
+            # 🆕 NEW: Also save for all active admins
+            recipients = [user_email]  # Original assigned user
+            
+            admin_users = await db.users.find(
+                {"role": "admin", "is_active": True},
+                {"email": 1}
+            ).to_list(None)
+            
+            admin_emails = [admin["email"] for admin in admin_users]
+            recipients.extend(admin_emails)
+            
+            # Remove duplicates
+            recipients = list(set(recipients))
+            
+            # Save for each recipient
+            for recipient_email in recipients:
+                history_doc = {
+                    "notification_id": f"{recipient_email}_reassign_{lead_id}_{timestamp}",
+                    "user_email": recipient_email,
+                    "notification_type": "lead_reassigned",
+                    "lead_id": lead_id,
+                    "lead_name": notification.get("lead_name"),
+                    "message_preview": f"Lead reassigned: {notification.get('lead_name')}",
+                    "lead_email": notification.get("lead_email"),
+                    "lead_phone": notification.get("lead_phone"),
+                    "category": notification.get("category"),
+                    "source": notification.get("source"),
+                    "reassigned_from": notification.get("reassigned_from"),
+                    "created_at": datetime.utcnow(),
+                    "read_at": None,
+                    "original_data": notification
+                }
+                
+                # Use upsert to prevent duplicates
+                await db.notification_history.update_one(
+                    {"notification_id": history_doc["notification_id"]},
+                    {"$setOnInsert": history_doc},
+                    upsert=True
+                )
+            
+            logger.debug(f"💾 Lead reassignment notification saved to history for {len(recipients)} recipients (assignee + admins)")
+            
+        except Exception as e:
+            logger.error(f"Error saving lead reassignment notification to history: {str(e)}")
     async def _save_task_notification_to_history(self, user_email: str, notification: Dict[str, Any]):
         """
-        🆕 NEW: Save task notification to history
+        🔄 UPDATED: Save task notification to history (now includes admins)
         """
         try:
             from ..config.database import get_database
@@ -381,37 +471,56 @@ class RealtimeNotificationManager:
             if not task_id:
                 task_id = str(uuid.uuid4())
             
-            history_doc = {
-                "notification_id": f"{user_email}_task_{task_id}",
-                "user_email": user_email,
-                "notification_type": "task_assigned",
-                "lead_id": notification.get("lead_id"),
-                "lead_name": notification.get("lead_name"),
-                "message_preview": f"Task: {notification.get('task_title')}",
-                "task_id": task_id,
-                "task_title": notification.get("task_title"),
-                "task_type": notification.get("task_type"),
-                "priority": notification.get("priority"),
-                "created_at": datetime.utcnow(),
-                "read_at": None,
-                "original_data": notification
-            }
+            # 🆕 NEW: Also save for all active admins
+            recipients = [user_email]  # Original assigned user
             
-            # Use upsert to prevent duplicates
-            await db.notification_history.update_one(
-                {"notification_id": history_doc["notification_id"]},
-                {"$setOnInsert": history_doc},
-                upsert=True
-            )
+            admin_users = await db.users.find(
+                {"role": "admin", "is_active": True},
+                {"email": 1}
+            ).to_list(None)
             
-            logger.debug(f"💾 Task notification saved to history for {user_email}")
+            admin_emails = [admin["email"] for admin in admin_users]
+            recipients.extend(admin_emails)
+            
+            # Remove duplicates
+            recipients = list(set(recipients))
+            
+            # Save for each recipient
+            for recipient_email in recipients:
+                history_doc = {
+                    "notification_id": f"{recipient_email}_task_{task_id}_{datetime.utcnow().timestamp()}",
+                    "user_email": recipient_email,
+                    "notification_type": "task_assigned",
+                    "lead_id": notification.get("lead_id"),
+                    "lead_name": notification.get("lead_name"),
+                    "message_preview": f"Task: {notification.get('task_title')}",
+                    "task_id": task_id,
+                    "task_title": notification.get("task_title"),
+                    "task_type": notification.get("task_type"),
+                    "priority": notification.get("priority"),
+                    "created_at": datetime.utcnow(),
+                    "read_at": None,
+                    "original_data": notification
+                }
+                
+                # Use upsert to prevent duplicates
+                await db.notification_history.update_one(
+                    {"notification_id": history_doc["notification_id"]},
+                    {"$setOnInsert": history_doc},
+                    upsert=True
+                )
+            
+            logger.debug(f"💾 Task notification saved to history for {len(recipients)} recipients (assignee + admins)")
             
         except Exception as e:
             logger.error(f"Error saving task notification to history: {str(e)}")
 
+
+
+
     async def _save_lead_notification_to_history(self, user_email: str, notification: Dict[str, Any]):
         """
-        🆕 NEW: Save lead notification to history
+        Save lead notification - skips admin duplication if flag is set
         """
         try:
             from ..config.database import get_database
@@ -420,6 +529,10 @@ class RealtimeNotificationManager:
             lead_id = notification.get("lead_id")
             timestamp = datetime.utcnow().timestamp()
             
+            # 🆕 Check if we should skip admin saves (to prevent duplicates)
+            skip_admin_save = notification.get("_skip_admin_save", False)
+            
+            # Save for the specified user
             history_doc = {
                 "notification_id": f"{user_email}_lead_{lead_id}_{timestamp}",
                 "user_email": user_email,
@@ -436,17 +549,37 @@ class RealtimeNotificationManager:
                 "original_data": notification
             }
             
-            # Use upsert to prevent duplicates
             await db.notification_history.update_one(
                 {"notification_id": history_doc["notification_id"]},
                 {"$setOnInsert": history_doc},
                 upsert=True
             )
             
-            logger.debug(f"💾 Lead notification saved to history for {user_email}")
+            # 🆕 Only add admin notifications if flag is NOT set
+            if not skip_admin_save:
+                admin_users = await db.users.find(
+                    {"role": "admin", "is_active": True},
+                    {"email": 1}
+                ).to_list(None)
+                
+                for admin in admin_users:
+                    admin_email = admin["email"]
+                    if admin_email != user_email:  # Don't duplicate if user is admin
+                        admin_doc = {
+                            **history_doc,
+                            "notification_id": f"{admin_email}_lead_{lead_id}_{timestamp}",
+                            "user_email": admin_email
+                        }
+                        await db.notification_history.update_one(
+                            {"notification_id": admin_doc["notification_id"]},
+                            {"$setOnInsert": admin_doc},
+                            upsert=True
+                        )
+            
+            logger.debug(f"💾 Lead notification saved for {user_email}")
             
         except Exception as e:
-            logger.error(f"Error saving lead notification to history: {str(e)}")
+            logger.error(f"Error saving lead notification: {str(e)}")
     async def _send_to_user(self, user_email: str, notification: Dict[str, Any]):
         """
         Send notification to all of user's active connections
@@ -510,7 +643,7 @@ class RealtimeNotificationManager:
     
     async def _save_notification_to_history(self, lead_id: str, notification_data: Dict[str, Any]):
         """
-        Save notification to history only for users assigned to the lead
+        Save notification to history for users assigned to the lead AND for admin
         """
         try:
             from ..config.database import get_database
@@ -526,19 +659,30 @@ class RealtimeNotificationManager:
                 logger.warning(f"Lead {lead_id} not found for notification history")
                 return
                 
-            # Get assigned users only
+            # Get assigned users
             assigned_users = []
             if lead.get("assigned_to"):
                 assigned_users.append(lead["assigned_to"])
             if lead.get("co_assignees"):
                 assigned_users.extend(lead["co_assignees"])
             
-            if not assigned_users:
-                logger.warning(f"No assigned users found for lead {lead_id}")
+            # 🆕 NEW: Add all admin users to notification recipients
+            admin_users = await db.users.find(
+                {"role": "admin", "is_active": True},
+                {"email": 1}
+            ).to_list(None)
+            
+            admin_emails = [admin["email"] for admin in admin_users]
+            
+            # Combine assigned users and admins (remove duplicates)
+            all_recipients = list(set(assigned_users + admin_emails))
+            
+            if not all_recipients:
+                logger.warning(f"No recipients found for lead {lead_id}")
                 return
             
-            # Save notification for each assigned user
-            for user_email in assigned_users:
+            # Save notification for each recipient (assigned users + admins)
+            for user_email in all_recipients:
                 message_id = notification_data.get("message_id")
                 if not message_id:
                     message_id = str(uuid.uuid4())
@@ -564,12 +708,11 @@ class RealtimeNotificationManager:
                     upsert=True
                 )
                 
-            logger.debug(f"💾 Notification saved to history for {len(assigned_users)} assigned users")
+            logger.debug(f"💾 Notification saved to history for {len(all_recipients)} recipients (assigned users + admins)")
             
         except Exception as e:
             logger.error(f"Error saving notification to history: {str(e)}")
-            # Don't fail the notification if history save fails
-        
+        # Don't fail the notification if history save fails
     # ============================================================================
     # MONITORING AND STATISTICS
     # ============================================================================
