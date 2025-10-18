@@ -273,21 +273,57 @@ class TaskService:
             result = await db.lead_tasks.update_one({"_id": ObjectId(task_id)}, {"$set": update_data})
             
             if result.modified_count > 0:
-                # 🆕 NEW: Auto-remove task notification when completed
+                # 🔥 FIXED: Auto-remove task notification when completed (mark as read for ALL users including admins)
                 try:
-                    result = await db.notification_history.update_many(  # ← Changed from update_one
-                        {
-                            "task_id": str(task_id),
-                            "notification_type": "task_assigned",
-                            "read_at": None  # Only update unread notifications
-                        },
-                        {
-                            "$set": {"read_at": datetime.utcnow()}
-                        }
-                    )
-                    logger.info(f"✅ Task notification auto-removed for completed task {task_id} ({result.modified_count} notifications updated)")
+                    # Get the notification to find all users who can see it
+                    notification = await db.notification_history.find_one({
+                        "task_id": str(task_id),
+                        "notification_type": "task_assigned"
+                    })
+                    
+                    if notification:
+                        # Get users from visible_to_users array
+                        visible_users = notification.get("visible_to_users", [])
+                        
+                        # Get admin emails if visible_to_admins is True
+                        admin_emails = []
+                        if notification.get("visible_to_admins", False):
+                            admin_users = await db.users.find(
+                                {"role": "admin", "is_active": True},
+                                {"email": 1}
+                            ).to_list(None)
+                            admin_emails = [admin["email"] for admin in admin_users]
+                        
+                        # Combine all users who need to see this as read (remove duplicates)
+                        all_users_to_mark = list(set(visible_users + admin_emails))
+                        
+                        # Build read_by update for all users
+                        read_by_updates = {}
+                        for user in all_users_to_mark:
+                            read_by_updates[f"read_by.{user}"] = datetime.utcnow()
+                        
+                        # Also set legacy read_at for backward compatibility
+                        read_by_updates["read_at"] = datetime.utcnow()
+                        
+                        # Update the notification
+                        update_result = await db.notification_history.update_one(
+                            {
+                                "task_id": str(task_id),
+                                "notification_type": "task_assigned"
+                            },
+                            {
+                                "$set": read_by_updates
+                            }
+                        )
+                        
+                        logger.info(f"✅ Task notification auto-removed for completed task {task_id} - marked as read for {len(all_users_to_mark)} users")
+                    else:
+                        logger.warning(f"⚠️ No notification found for task {task_id}")
+                        
                 except Exception as notif_error:
                     logger.warning(f"⚠️ Failed to auto-remove task notification: {notif_error}")
+                    import traceback
+                    logger.error(f"Traceback: {traceback.format_exc()}")
 
                 
                 # 🔥 LOG TASK COMPLETION TIMELINE ACTIVITY
@@ -328,7 +364,6 @@ class TaskService:
         except Exception as e:
             logger.error(f"Error completing task: {str(e)}")
             return False
-
     async def update_task(self, task_id: str, task_data: TaskUpdate, user_id: str, user_role: str) -> bool:
         """Update a task and log timeline activity - FIXED ACCESS CONTROL WITH DETAILED CHANGES"""
         try:

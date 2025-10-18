@@ -170,10 +170,17 @@ class LeadAssignmentService:
     # 🆕 NEW: MULTI-USER ASSIGNMENT METHODS
     # ============================================================================
     
-    async def assign_lead_to_multiple_users(self, lead_id: str, user_emails: List[str], assigned_by: str, reason: str = "Multi-user assignment") -> Dict[str, Any]:
+    async def assign_lead_to_multiple_users(
+    self, 
+    lead_id: str, 
+    user_emails: List[str], 
+    assigned_by: str, 
+    reason: str = "Multi-user assignment"
+) -> Dict[str, Any]:
         """
-        🔄 UPDATED: Assign a lead to multiple users with unified notification
-        Now creates ONE notification visible to all assigned users + admins
+        🔄 UPDATED: Assign a lead to multiple users with smart notification
+        - If lead is ALREADY assigned: Only notify NEW co-assignees + admins
+        - If lead is UNASSIGNED: Notify all users + admins
         """
         db = self.get_db()
         
@@ -181,38 +188,61 @@ class LeadAssignmentService:
             if not user_emails:
                 return {"success": False, "message": "No users provided for assignment"}
             
-            # Validate all users exist and are active
-            valid_users = await db.users.find(
-                {"email": {"$in": user_emails}, "is_active": True},
-                {"email": 1, "first_name": 1, "last_name": 1}
-            ).to_list(None)
-            
-            valid_user_emails = [user["email"] for user in valid_users]
-            invalid_users = set(user_emails) - set(valid_user_emails)
-            
-            if invalid_users:
-                logger.warning(f"Invalid/inactive users in assignment: {invalid_users}")
-            
-            if not valid_user_emails:
-                return {"success": False, "message": "No valid active users found"}
-            
-            # Get user names for assignment history
-            user_names = {}
-            for user in valid_users:
-                user_email = user["email"]
-                user_name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip() or user_email
-                user_names[user_email] = user_name
-            
-            # Get lead details for notifications
+            # Get current lead state
             lead = await db.leads.find_one({"lead_id": lead_id})
             if not lead:
-                return {"success": False, "message": "Lead not found"}
+                return {"success": False, "message": f"Lead {lead_id} not found"}
             
             lead_name = lead.get("name", "Unknown Lead")
             
-            # Create assignment history entries for each user
+            # 🔥 NEW: Track old assignment to detect NEW co-assignees
+            old_assigned_to = lead.get("assigned_to")
+            old_co_assignees = lead.get("co_assignees", [])
+            old_all_assignees = []
+            if old_assigned_to:
+                old_all_assignees.append(old_assigned_to)
+            old_all_assignees.extend(old_co_assignees)
+            
+            logger.info(f"📋 Old assignment - Primary: {old_assigned_to}, Co-assignees: {old_co_assignees}")
+            logger.info(f"📋 New assignment request: {user_emails}")
+            
+            # Validate users exist
+            valid_user_emails = []
+            invalid_users = set()
+            user_names = {}
+            
+            for email in user_emails:
+                user = await db.users.find_one(
+                    {"email": email, "is_active": True},
+                    {"email": 1, "first_name": 1, "last_name": 1}
+                )
+                if user:
+                    valid_user_emails.append(email)
+                    user_names[email] = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip()
+                else:
+                    invalid_users.add(email)
+            
+            if not valid_user_emails:
+                return {
+                    "success": False,
+                    "message": "No valid users found for assignment",
+                    "invalid_users": list(invalid_users)
+                }
+            
+            # Determine primary and co-assignees
+            primary_assignee = valid_user_emails[0]
+            co_assignees = valid_user_emails[1:] if len(valid_user_emails) > 1 else []
+            
+            # 🔥 NEW: Identify ONLY the newly added users
+            new_assignees = [email for email in valid_user_emails if email not in old_all_assignees]
+            
+            logger.info(f"🆕 NEW assignees to notify: {new_assignees}")
+            logger.info(f"📊 Total assignees: {len(valid_user_emails)}, New: {len(new_assignees)}")
+            
+            # Create assignment history entries
             assignment_entries = []
             for user_email in valid_user_emails:
+                is_primary = user_email == primary_assignee
                 assignment_entries.append({
                     "assigned_to": user_email,
                     "assigned_to_name": user_names[user_email],
@@ -220,14 +250,11 @@ class LeadAssignmentService:
                     "assignment_method": "multi_user_manual",
                     "assigned_at": datetime.utcnow(),
                     "reason": reason,
-                    "is_multi_assignment": True,
-                    "co_assignees": [email for email in valid_user_emails if email != user_email]
+                    "is_primary": is_primary,
+                    "is_co_assignee": not is_primary
                 })
             
-            # Update lead document with multiple assignees
-            primary_assignee = valid_user_emails[0]  # First user is primary
-            co_assignees = valid_user_emails[1:] if len(valid_user_emails) > 1 else []
-            
+            # Update lead document
             result = await db.leads.update_one(
                 {"lead_id": lead_id},
                 {
@@ -253,9 +280,23 @@ class LeadAssignmentService:
                 
                 logger.info(f"Lead {lead_id} assigned to multiple users: {valid_user_emails}")
                 
-                # 🔥 NEW: Send unified notification (ONE notification for all users + admins)
+                # 🔥 SMART NOTIFICATION: Only notify NEW assignees + admins
                 try:
                     from ..services.realtime_service import realtime_manager
+                    
+                    # Determine who to notify
+                    if new_assignees:
+                        # Case 1: Adding co-assignees to existing assignment
+                        # Only notify the NEW people + admins
+                        users_to_notify = new_assignees
+                        notification_message = "co_assignee_added"
+                        logger.info(f"🔔 Co-assignee addition: Notifying only NEW assignees: {new_assignees}")
+                    else:
+                        # Case 2: Initial assignment or reassignment of everyone
+                        # Notify all assignees
+                        users_to_notify = valid_user_emails
+                        notification_message = "initial_assignment"
+                        logger.info(f"🔔 Initial/full assignment: Notifying all assignees: {valid_user_emails}")
                     
                     notification_data = {
                         "lead_name": lead_name,
@@ -267,19 +308,21 @@ class LeadAssignmentService:
                         "co_assigned": True,
                         "primary_assignee": primary_assignee,
                         "co_assignees": co_assignees,
-                        "total_assignees": len(valid_user_emails)
+                        "total_assignees": len(valid_user_emails),
+                        "new_assignees": new_assignees,  # 🔥 NEW: Track who's new
+                        "is_addition": len(new_assignees) > 0 and len(old_all_assignees) > 0  # 🔥 NEW: Flag as addition
                     }
                     
-                    # Create list of authorized users with their names
+                    # Create list of authorized users with their names (ONLY new assignees)
                     authorized_users = [
                         {"email": user_email, "name": user_names[user_email]} 
-                        for user_email in valid_user_emails
+                        for user_email in users_to_notify
                     ]
                     
-                    # Call unified notification (creates ONE notification for all)
+                    # Call unified notification (creates ONE notification for new assignees + admins)
                     await realtime_manager.notify_lead_assigned(lead_id, notification_data, authorized_users)
                     
-                    logger.info(f"✅ Unified notification created for multi-assignment of lead {lead_id} to {len(valid_user_emails)} users")
+                    logger.info(f"✅ Unified notification created for {len(users_to_notify)} NEW assignees + admins")
                     
                 except Exception as notif_error:
                     logger.warning(f"⚠️ Failed to send multi-assignment notifications: {notif_error}")
@@ -293,7 +336,9 @@ class LeadAssignmentService:
                     "assigned_users": valid_user_emails,
                     "invalid_users": list(invalid_users) if invalid_users else [],
                     "primary_assignee": primary_assignee,
-                    "co_assignees": co_assignees
+                    "co_assignees": co_assignees,
+                    "new_assignees": new_assignees,  # 🔥 NEW: Return who was newly added
+                    "notification_sent_to": users_to_notify  # 🔥 NEW: Show who was notified
                 }
             
             return {"success": False, "message": "Failed to update lead assignment"}
