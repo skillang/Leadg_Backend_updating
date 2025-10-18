@@ -298,6 +298,59 @@ class RealtimeNotificationManager:
             logger.error(f"Error marking lead as read: {str(e)}")
     
 
+    async def _send_to_user(self, user_email: str, notification: Dict[str, Any]):
+        """
+        Send notification to all active connections for a specific user
+        Internal method used by notify_* methods
+        """
+        try:
+            if user_email not in self.user_connections:
+                logger.debug(f"No active connections for user {user_email}, skipping notification")
+                return
+            
+            # Get all active queues for this user
+            user_queues = self.user_connections.get(user_email, set())
+            
+            if not user_queues:
+                logger.debug(f"No queues found for user {user_email}")
+                return
+            
+            # Send notification to all user's connections
+            disconnected_queues = set()
+            
+            for queue in user_queues:
+                try:
+                    # Non-blocking put with timeout
+                    await asyncio.wait_for(queue.put(notification), timeout=1.0)
+                    logger.debug(f"📤 Notification sent to {user_email} via queue {id(queue)}")
+                except asyncio.TimeoutError:
+                    logger.warning(f"⚠️ Queue timeout for {user_email}, marking for removal")
+                    disconnected_queues.add(queue)
+                except asyncio.QueueFull:
+                    logger.warning(f"⚠️ Queue full for {user_email}, dropping notification")
+                    disconnected_queues.add(queue)
+                except Exception as e:
+                    logger.error(f"❌ Error sending to queue for {user_email}: {str(e)}")
+                    disconnected_queues.add(queue)
+            
+            # Clean up disconnected queues
+            if disconnected_queues:
+                for queue in disconnected_queues:
+                    self.user_connections[user_email].discard(queue)
+                
+                logger.info(f"🧹 Removed {len(disconnected_queues)} stale connections for {user_email}")
+                
+                # Clean up user if no connections left
+                if not self.user_connections[user_email]:
+                    del self.user_connections[user_email]
+                    if user_email in self.user_unread_leads:
+                        del self.user_unread_leads[user_email]
+            
+            logger.info(f"✅ Notification delivered to {len(user_queues) - len(disconnected_queues)} connections for {user_email}")
+            
+        except Exception as e:
+            logger.error(f"❌ Error in _send_to_user for {user_email}: {str(e)}")
+    
     async def notify_task_assigned(self, lead_id: str, task_data: Dict[str, Any], authorized_users: List[Dict[str, Any]]):
         """
         🔄 UPDATED: Notify authorized users about task assignment
@@ -310,6 +363,7 @@ class RealtimeNotificationManager:
             # Create unified notification (single record for all users + admins)
             await self._create_unified_notification(
                 notification_type="task_assigned",
+                user_email=user_emails[0] if user_emails else None,
                 lead_id=lead_id,
                 notification_data={
                     "lead_name": task_data.get("lead_name", "Unknown Lead"),
@@ -321,7 +375,8 @@ class RealtimeNotificationManager:
                     "reassigned": task_data.get("reassigned", False),
                     "reassigned_by": task_data.get("reassigned_by")
                 },
-                assigned_users=user_emails,
+                authorized_users=[{"email": email, "name": ""} for email in user_emails],  # ✅ Correct
+                task_id=task_data.get("task_id"),  
                 include_admins=True
             )
             
@@ -399,6 +454,7 @@ class RealtimeNotificationManager:
             # Create unified notification (single record for all users + admins)
             await self._create_unified_notification(
                 notification_type="lead_reassigned",
+                user_email=user_emails[0] if user_emails else None,
                 lead_id=lead_id,
                 notification_data={
                     "lead_name": lead_data.get("lead_name"),
@@ -409,7 +465,7 @@ class RealtimeNotificationManager:
                     "reassigned_from": lead_data.get("reassigned_from"),
                     "reassigned": True
                 },
-                assigned_users=user_emails,
+                authorized_users=[{"email": email, "name": user["name"]} for email, user in zip(user_emails, authorized_users)],  # ✅ Correct
                 include_admins=True
             )
             
