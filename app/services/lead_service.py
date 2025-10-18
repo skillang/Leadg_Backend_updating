@@ -255,7 +255,6 @@ class LeadService:
     # ============================================================================
     # 🔄 UPDATED: ENHANCED LEAD CREATION WITH NEW ID GENERATION
     # ============================================================================
-    
     async def create_lead_comprehensive(
     self,
     lead_data: LeadCreateComprehensive,
@@ -263,8 +262,7 @@ class LeadService:
     force_create: bool = False
 ) -> Dict[str, Any]:
         """
-        🔄 UPDATED: Lead creation now uses category-source combination ID generation
-        WITH timeline activity logging AND notifications
+        🔄 UPDATED: Lead creation with unified notification (ONE notification for assigned user + admins)
         """
         try:
             db = self.get_db()
@@ -332,17 +330,14 @@ class LeadService:
             assigned_to_name = None
 
             if assigned_to == "unassigned":
-                # Admin explicitly wants no assignment
                 assigned_to = None
                 assigned_to_name = None
                 assignment_method = "unassigned"
                 logger.info("Lead explicitly set to unassigned by admin")
             elif assigned_to and assigned_to != "unassigned":
-                # Manual assignment to specific user
                 assignment_method = "manual"
                 logger.info(f"Manual assignment to: {assigned_to}")
             else:
-                # Auto-assign using round-robin
                 assigned_to = await lead_assignment_service.get_next_assignee_round_robin()
                 assignment_method = "round_robin"
                 logger.info(f"Auto-assigned to: {assigned_to}")
@@ -355,38 +350,34 @@ class LeadService:
                     if not assigned_to_name:
                         assigned_to_name = assignee.get('email', 'Unknown')
             
-            # Step 7: Create lead document with validated dynamic fields
+            # Step 7: Create lead document
             lead_doc = {
                 "lead_id": lead_id,
                 "status": getattr(status_and_tags, 'status', 'New'),
                 "name": basic_info.name,
                 "email": basic_info.email.lower(),
                 "contact_number": basic_info.contact_number,
-                "phone_number": basic_info.contact_number,  # Legacy field
-                "source": validated_source,  # 🔄 UPDATED: Use validated source
+                "phone_number": basic_info.contact_number,
+                "source": validated_source,
                 "category": basic_info.category,
-                "course_level": validated_course_level,  # 🔄 UPDATED: Use validated course level
+                "course_level": validated_course_level,
                 "date_of_birth": basic_info.date_of_birth,
-                "call_stats": CallStatsModel.create_default().model_dump(),  # 🆕 NEW
+                "call_stats": CallStatsModel.create_default().model_dump(),
                 
-                # Add the new optional fields
                 "age": basic_info.age,
                 "experience": basic_info.experience,
                 "nationality": basic_info.nationality,
                 "current_location": basic_info.current_location,
                 
-                # Status and tags
                 "stage": getattr(status_and_tags, 'stage', 'Pending'),
                 "lead_score": getattr(status_and_tags, 'lead_score', 0),
                 "priority": "medium",
                 "tags": getattr(status_and_tags, 'tags', []),
                 
-                # Assignment
                 "assigned_to": assigned_to,
                 "assigned_to_name": assigned_to_name,
                 "assignment_method": assignment_method,
                 
-                # Multi-assignment fields
                 "co_assignees": [],
                 "co_assignees_names": [],
                 "is_multi_assigned": False,
@@ -405,7 +396,6 @@ class LeadService:
                     }
                 ],
                 
-                # Additional info
                 "notes": getattr(additional_info, 'notes', ''),
                 "created_by": created_by,
                 "created_at": datetime.utcnow(),
@@ -420,7 +410,7 @@ class LeadService:
                 if assigned_to:
                     await user_lead_array_service.add_lead_to_user_array(assigned_to, lead_id)
                 
-                # 🆕 NEW: Step 9.5: Send notification for lead assignment
+                # 🔥 UPDATED: Step 9.5: Send unified notification (ONE notification for user + admins)
                 if assigned_to and assigned_to_name:
                     try:
                         from ..services.realtime_service import realtime_manager
@@ -431,20 +421,20 @@ class LeadService:
                             "lead_phone": basic_info.contact_number,
                             "category": basic_info.category,
                             "source": validated_source,
-                            "lead_id": lead_id,
                             "assignment_method": assignment_method
                         }
                         
                         authorized_users = [{"email": assigned_to, "name": assigned_to_name}]
+                        
+                        # This ONE call creates notification for assigned user + admins automatically
                         await realtime_manager.notify_lead_assigned(lead_id, notification_data, authorized_users)
                         
-                        logger.info(f"✅ Lead assignment notification sent to {assigned_to}")
+                        logger.info(f"✅ Unified lead assignment notification created for {assigned_to}")
                     except Exception as notif_error:
                         logger.warning(f"⚠️ Failed to send lead assignment notification: {notif_error}")
                 
-                # Step 10: Timeline Activity Logging
+                # Step 10: Timeline Activity Logging (unchanged)
                 try:
-                    # Get creator name from database
                     creator = await db.users.find_one({"_id": ObjectId(created_by)})
                     created_by_name = "Unknown User"
                     if creator:
@@ -455,20 +445,17 @@ class LeadService:
                         else:
                             created_by_name = creator.get('email', 'Unknown User')
                     
-                    # Check if activity already exists to prevent duplicates
                     existing_activity = await db.lead_activities.find_one({
                         "lead_id": lead_id,
                         "activity_type": "lead_created"
                     })
                     
                     if not existing_activity:
-                        # Build description based on assignment
                         if assigned_to and assigned_to_name:
                             description = f"Lead created by {created_by_name} and assigned to {assigned_to_name}"
                         else:
                             description = f"Lead created by {created_by_name} (unassigned)"
                         
-                        # Create timeline activity document
                         activity_doc = {
                             "lead_id": lead_id,
                             "activity_type": "lead_created",
@@ -489,11 +476,8 @@ class LeadService:
                             }
                         }
                         
-                        # Insert timeline activity
                         await db.lead_activities.insert_one(activity_doc)
                         logger.info(f"✅ Timeline 'lead_created' logged for {lead_id} by {created_by_name}")
-                    else:
-                        logger.info(f"⚠️ Timeline activity already exists for lead {lead_id}")
                         
                 except Exception as activity_error:
                     logger.warning(f"⚠️ Failed to log timeline activity for {lead_id}: {activity_error}")
@@ -535,22 +519,20 @@ class LeadService:
             return {
                 "success": False,
                 "message": f"Failed to create lead: {str(e)}"
-            }
-
-    # ============================================================================
-
+            }   
+# ============================================================================
     async def create_lead_with_selective_assignment(
-    self, 
-    basic_info, 
-    status_and_tags, 
-    assignment_info, 
-    additional_info,
-    created_by: str,
-    selected_user_emails: Optional[List[str]] = None
-) -> Dict[str, Any]:
+        self, 
+        basic_info, 
+        status_and_tags, 
+        assignment_info, 
+        additional_info,
+        created_by: str,
+        selected_user_emails: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
         """
-        🔄 UPDATED: Create lead with selective round robin assignment using new ID format
-        WITH timeline activity logging AND notifications
+        🔄 UPDATED: Create lead with selective round robin assignment using unified notification
+        WITH timeline activity logging AND ONE notification for assigned user + admins
         """
         db = self.get_db()
         
@@ -565,7 +547,6 @@ class LeadService:
                 }
             
             # Step 1: Check for duplicates
-        
             duplicate_check = await self.check_duplicate_lead(
                 email=basic_info.email,
                 contact_number=getattr(basic_info, 'contact_number', None)
@@ -608,17 +589,14 @@ class LeadService:
             assigned_to_name = None
 
             if assigned_to == "unassigned":
-                # Admin explicitly wants no assignment
                 assigned_to = None
                 assigned_to_name = None
                 assignment_method = "unassigned"
                 logger.info("Lead explicitly set to unassigned by admin")
             elif assigned_to and assigned_to != "unassigned":
-                # Manual assignment to specific user
                 assignment_method = "manual"
                 logger.info(f"Manual assignment to: {assigned_to}")
             else:
-                # Auto-assign using round-robin
                 if selected_user_emails:
                     assigned_to = await lead_assignment_service.get_next_assignee_selective_round_robin(
                         selected_user_emails
@@ -705,7 +683,7 @@ class LeadService:
                 if assigned_to:
                     await user_lead_array_service.add_lead_to_user_array(assigned_to, lead_id)
                 
-                # 🆕 NEW: Step 8.5: Send notification for lead assignment
+                # 🔥 UPDATED: Step 8.5: Send unified notification (ONE for assigned user + admins)
                 if assigned_to and assigned_to_name:
                     try:
                         from ..services.realtime_service import realtime_manager
@@ -716,21 +694,21 @@ class LeadService:
                             "lead_phone": basic_info.contact_number,
                             "category": basic_info.category,
                             "source": validated_source,
-                            "lead_id": lead_id,
                             "assignment_method": assignment_method,
                             "selected_users_pool": selected_user_emails
                         }
                         
                         authorized_users = [{"email": assigned_to, "name": assigned_to_name}]
+                        
+                        # ONE call creates notification for assigned user + admins automatically
                         await realtime_manager.notify_lead_assigned(lead_id, notification_data, authorized_users)
                         
-                        logger.info(f"✅ Lead assignment notification sent to {assigned_to}")
+                        logger.info(f"✅ Unified lead assignment notification created for {assigned_to}")
                     except Exception as notif_error:
                         logger.warning(f"⚠️ Failed to send lead assignment notification: {notif_error}")
                 
                 # Step 9: Timeline Activity Logging
                 try:
-                    # Get creator name from database
                     creator = await db.users.find_one({"_id": ObjectId(created_by)})
                     created_by_name = "Unknown User"
                     if creator:
@@ -741,20 +719,17 @@ class LeadService:
                         else:
                             created_by_name = creator.get('email', 'Unknown User')
                     
-                    # Check if activity already exists to prevent duplicates
                     existing_activity = await db.lead_activities.find_one({
                         "lead_id": lead_id,
                         "activity_type": "lead_created"
                     })
                     
                     if not existing_activity:
-                        # Build description based on assignment
                         if assigned_to and assigned_to_name:
                             description = f"Lead created by {created_by_name} and assigned to {assigned_to_name}"
                         else:
                             description = f"Lead created by {created_by_name} (unassigned)"
                         
-                        # Create timeline activity document
                         activity_doc = {
                             "lead_id": lead_id,
                             "activity_type": "lead_created",
@@ -773,7 +748,6 @@ class LeadService:
                             }
                         }
                         
-                        # Insert timeline activity
                         await db.lead_activities.insert_one(activity_doc)
                         logger.info(f"✅ Timeline 'lead_created' logged for {lead_id} by {created_by_name}")
                     else:
@@ -813,8 +787,6 @@ class LeadService:
         except Exception as e:
             logger.error(f"Error creating lead with selective assignment: {str(e)}")
             return {"success": False, "error": str(e)}
-
-
     async def bulk_create_leads_with_selective_assignment(
     self,
     leads_data: List[Dict[str, Any]],
@@ -823,8 +795,8 @@ class LeadService:
     selected_user_emails: Optional[List[str]] = None
 ) -> Dict[str, Any]:
         """
-        🔧 FIXED: Bulk create leads with REAL-TIME duplicate detection
-        WITH timeline activity logging AND notifications for each lead
+        🔄 UPDATED: Bulk create leads with unified notifications
+        WITH timeline activity logging AND ONE notification per lead (assigned user + admins)
         """
         db = self.get_db()
         
@@ -1008,7 +980,7 @@ class LeadService:
                         if assigned_to:
                             await user_lead_array_service.add_lead_to_user_array(assigned_to, lead_id)
                         
-                        # 🆕 NEW: Send notification for bulk lead assignment
+                        # 🔥 UPDATED: Send unified notification for bulk lead assignment
                         if assigned_to and assigned_to_name:
                             try:
                                 from ..services.realtime_service import realtime_manager
@@ -1019,35 +991,33 @@ class LeadService:
                                     "lead_phone": lead_data.get("contact_number", ""),
                                     "category": lead_data.get("category", "General"),
                                     "source": validated_source,
-                                    "lead_id": lead_id,
                                     "assignment_method": method,
                                     "bulk_creation": True,
                                     "bulk_index": i
                                 }
                                 
                                 authorized_users = [{"email": assigned_to, "name": assigned_to_name}]
+                                
+                                # ONE call creates notification for assigned user + admins automatically
                                 await realtime_manager.notify_lead_assigned(lead_id, notification_data, authorized_users)
                                 
-                                logger.info(f"✅ Bulk lead assignment notification sent to {assigned_to} for lead {lead_id}")
+                                logger.info(f"✅ Unified bulk lead notification created for {assigned_to} (lead {lead_id})")
                             except Exception as notif_error:
                                 logger.warning(f"⚠️ Failed to send bulk lead assignment notification: {notif_error}")
                         
                         # Timeline Activity Logging
                         try:
-                            # Check if activity already exists to prevent duplicates
                             existing_activity = await db.lead_activities.find_one({
                                 "lead_id": lead_id,
                                 "activity_type": "lead_created"
                             })
                             
                             if not existing_activity:
-                                # Build description based on assignment
                                 if assigned_to and assigned_to_name:
                                     description = f"Lead created by {created_by_name} and assigned to {assigned_to_name} (Bulk upload)"
                                 else:
                                     description = f"Lead created by {created_by_name} (Bulk upload, unassigned)"
                                 
-                                # Create timeline activity document
                                 activity_doc = {
                                     "lead_id": lead_id,
                                     "activity_type": "lead_created",
@@ -1070,7 +1040,6 @@ class LeadService:
                                     }
                                 }
                                 
-                                # Insert timeline activity
                                 await db.lead_activities.insert_one(activity_doc)
                                 logger.info(f"✅ Timeline 'lead_created' logged for bulk lead {lead_id} by {created_by_name}")
                             
@@ -1156,7 +1125,6 @@ class LeadService:
                 "failed_count": len(leads_data),
                 "duplicates_skipped": 0
             }
-
     async def get_lead_id_format_statistics(self) -> Dict[str, Any]:
         """Get statistics about lead ID formats and combinations"""
         try:

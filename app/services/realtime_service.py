@@ -300,14 +300,35 @@ class RealtimeNotificationManager:
 
     async def notify_task_assigned(self, lead_id: str, task_data: Dict[str, Any], authorized_users: List[Dict[str, Any]]):
         """
-        🆕 NEW: Notify authorized users about task assignment
-        Called by task_service when tasks are created/assigned
+        🔄 UPDATED: Notify authorized users about task assignment
+        Now creates ONE unified notification instead of separate ones
         """
         try:
+            # Extract user emails from authorized_users
+            user_emails = [user["email"] for user in authorized_users]
+            
+            # Create unified notification (single record for all users + admins)
+            await self._create_unified_notification(
+                notification_type="task_assigned",
+                lead_id=lead_id,
+                notification_data={
+                    "lead_name": task_data.get("lead_name", "Unknown Lead"),
+                    "task_title": task_data.get("task_title"),
+                    "task_type": task_data.get("task_type"),
+                    "task_id": task_data.get("task_id"),
+                    "priority": task_data.get("priority", "medium"),
+                    "due_date": task_data.get("due_date"),
+                    "reassigned": task_data.get("reassigned", False),
+                    "reassigned_by": task_data.get("reassigned_by")
+                },
+                assigned_users=user_emails,
+                include_admins=True
+            )
+            
+            # Send real-time notification to connected users
             for user in authorized_users:
                 user_email = user["email"]
                 
-                # Create notification
                 notification = {
                     "type": "task_assigned",
                     "lead_id": lead_id,
@@ -322,10 +343,6 @@ class RealtimeNotificationManager:
                     "timestamp": datetime.utcnow().isoformat()
                 }
                 
-                # Save to notification history
-                await self._save_task_notification_to_history(user_email, notification)
-                
-                # Send to all user's connections
                 await self._send_to_user(user_email, notification)
             
             logger.info(f"🔔 Task assignment notification sent to {len(authorized_users)} users for lead {lead_id}")
@@ -372,14 +389,34 @@ class RealtimeNotificationManager:
 
     async def notify_lead_reassigned(self, lead_id: str, lead_data: Dict[str, Any], authorized_users: List[Dict[str, Any]]):
         """
-        🆕 NEW: Notify authorized users about lead reassignment
-        Called by leads router when admin reassigns a lead to a different user
+        🔄 UPDATED: Notify authorized users about lead reassignment
+        Now creates ONE unified notification instead of separate ones
         """
         try:
+            # Extract user emails from authorized_users
+            user_emails = [user["email"] for user in authorized_users]
+            
+            # Create unified notification (single record for all users + admins)
+            await self._create_unified_notification(
+                notification_type="lead_reassigned",
+                lead_id=lead_id,
+                notification_data={
+                    "lead_name": lead_data.get("lead_name"),
+                    "lead_email": lead_data.get("lead_email"),
+                    "lead_phone": lead_data.get("lead_phone"),
+                    "category": lead_data.get("category"),
+                    "source": lead_data.get("source"),
+                    "reassigned_from": lead_data.get("reassigned_from"),
+                    "reassigned": True
+                },
+                assigned_users=user_emails,
+                include_admins=True
+            )
+            
+            # Send real-time notification to connected users
             for user in authorized_users:
                 user_email = user["email"]
                 
-                # Create notification
                 notification = {
                     "type": "lead_reassigned",
                     "lead_id": lead_id,
@@ -393,10 +430,6 @@ class RealtimeNotificationManager:
                     "timestamp": datetime.utcnow().isoformat()
                 }
                 
-                # Save to notification history
-                await self._save_lead_reassignment_notification_to_history(user_email, notification)
-                
-                # Send to all user's connections
                 await self._send_to_user(user_email, notification)
             
             logger.info(f"🔔 Lead reassignment notification sent to {len(authorized_users)} users for lead {lead_id}")
@@ -404,441 +437,134 @@ class RealtimeNotificationManager:
         except Exception as e:
             logger.error(f"Error notifying lead reassignment: {str(e)}")
 
-    async def _save_lead_reassignment_notification_to_history(self, user_email: str, notification: Dict[str, Any]):
+
+    async def _create_unified_notification(
+        self, 
+        notification_type: str,
+        user_email: str,  # 🔥 ADD THIS
+        lead_id: str,
+        notification_data: Dict[str, Any],
+        authorized_users: List[Dict[str, str]],  # 🔥 RENAME FROM assigned_users
+        task_id: Optional[str] = None,  # 🔥 ADD THIS
+        include_admins: bool = True
+    ) -> None:
         """
-        🔄 UPDATED: Save lead reassignment notification to history (now includes admins)
+        🆕 UPDATED: Create a single unified notification for multiple users
+        Eliminates duplicate notifications by creating ONE record visible to all relevant users
+        
+        Args:
+            notification_type: Type of notification (lead_assigned, task_assigned, etc.)
+            user_email: Primary user email (assigned user)
+            lead_id: Lead ID associated with the notification
+            notification_data: Data payload for the notification
+            authorized_users: List of user dicts with email/name who can see this notification
+            task_id: Optional task ID for task notifications
+            include_admins: Whether to include admin users in the notification
         """
         try:
             from ..config.database import get_database
+            from datetime import datetime
+            import uuid
+            
             db = get_database()
             
-            lead_id = notification.get("lead_id")
-            timestamp = datetime.utcnow().timestamp()
+            # Generate unique notification ID
+            notification_id = str(uuid.uuid4())
             
-            # 🆕 NEW: Also save for all active admins
-            recipients = [user_email]  # Original assigned user
+            # Step 1: Collect all target users from authorized_users
+            visible_to_users = [user["email"] for user in authorized_users]
             
-            admin_users = await db.users.find(
-                {"role": "admin", "is_active": True},
-                {"email": 1}
-            ).to_list(None)
-            
-            admin_emails = [admin["email"] for admin in admin_users]
-            recipients.extend(admin_emails)
-            
-            # Remove duplicates
-            recipients = list(set(recipients))
-            
-            # Save for each recipient
-            for recipient_email in recipients:
-                history_doc = {
-                    "notification_id": f"{recipient_email}_reassign_{lead_id}_{timestamp}",
-                    "user_email": recipient_email,
-                    "notification_type": "lead_reassigned",
-                    "lead_id": lead_id,
-                    "lead_name": notification.get("lead_name"),
-                    "message_preview": f"Lead reassigned: {notification.get('lead_name')}",
-                    "lead_email": notification.get("lead_email"),
-                    "lead_phone": notification.get("lead_phone"),
-                    "category": notification.get("category"),
-                    "source": notification.get("source"),
-                    "reassigned_from": notification.get("reassigned_from"),
-                    "created_at": datetime.utcnow(),
-                    "read_at": None,
-                    "original_data": notification
-                }
-                
-                # Use upsert to prevent duplicates
-                await db.notification_history.update_one(
-                    {"notification_id": history_doc["notification_id"]},
-                    {"$setOnInsert": history_doc},
-                    upsert=True
-                )
-            
-            logger.debug(f"💾 Lead reassignment notification saved to history for {len(recipients)} recipients (assignee + admins)")
-            
-        except Exception as e:
-            logger.error(f"Error saving lead reassignment notification to history: {str(e)}")
-    async def _save_task_notification_to_history(self, user_email: str, notification: Dict[str, Any]):
-        """
-        🔄 UPDATED: Save task notification to history (now includes admins)
-        """
-        try:
-            from ..config.database import get_database
-            db = get_database()
-            
-            task_id = notification.get("task_id")
-            if not task_id:
-                task_id = str(uuid.uuid4())
-            
-            # 🆕 NEW: Also save for all active admins
-            recipients = [user_email]  # Original assigned user
-            
-            admin_users = await db.users.find(
-                {"role": "admin", "is_active": True},
-                {"email": 1}
-            ).to_list(None)
-            
-            admin_emails = [admin["email"] for admin in admin_users]
-            recipients.extend(admin_emails)
-            
-            # Remove duplicates
-            recipients = list(set(recipients))
-            
-            # Save for each recipient
-            for recipient_email in recipients:
-                history_doc = {
-                    "notification_id": f"{recipient_email}_task_{task_id}_{datetime.utcnow().timestamp()}",
-                    "user_email": recipient_email,
-                    "notification_type": "task_assigned",
-                    "lead_id": notification.get("lead_id"),
-                    "lead_name": notification.get("lead_name"),
-                    "message_preview": f"Task: {notification.get('task_title')}",
-                    "task_id": task_id,
-                    "task_title": notification.get("task_title"),
-                    "task_type": notification.get("task_type"),
-                    "priority": notification.get("priority"),
-                    "created_at": datetime.utcnow(),
-                    "read_at": None,
-                    "original_data": notification
-                }
-                
-                # Use upsert to prevent duplicates
-                await db.notification_history.update_one(
-                    {"notification_id": history_doc["notification_id"]},
-                    {"$setOnInsert": history_doc},
-                    upsert=True
-                )
-            
-            logger.debug(f"💾 Task notification saved to history for {len(recipients)} recipients (assignee + admins)")
-            
-        except Exception as e:
-            logger.error(f"Error saving task notification to history: {str(e)}")
-
-
-
-
-    async def _save_lead_notification_to_history(self, user_email: str, notification: Dict[str, Any]):
-        """
-        Save lead notification - skips admin duplication if flag is set
-        """
-        try:
-            from ..config.database import get_database
-            db = get_database()
-            
-            lead_id = notification.get("lead_id")
-            timestamp = datetime.utcnow().timestamp()
-            
-            # 🆕 Check if we should skip admin saves (to prevent duplicates)
-            skip_admin_save = notification.get("_skip_admin_save", False)
-            
-            # Save for the specified user
-            history_doc = {
-                "notification_id": f"{user_email}_lead_{lead_id}_{timestamp}",
-                "user_email": user_email,
-                "notification_type": "lead_assigned",
-                "lead_id": lead_id,
-                "lead_name": notification.get("lead_name"),
-                "message_preview": f"New lead assigned: {notification.get('lead_name')}",
-                "lead_email": notification.get("lead_email"),
-                "lead_phone": notification.get("lead_phone"),
-                "category": notification.get("category"),
-                "source": notification.get("source"),
-                "created_at": datetime.utcnow(),
-                "read_at": None,
-                "original_data": notification
-            }
-            
-            await db.notification_history.update_one(
-                {"notification_id": history_doc["notification_id"]},
-                {"$setOnInsert": history_doc},
-                upsert=True
-            )
-            
-            # 🆕 Only add admin notifications if flag is NOT set
-            if not skip_admin_save:
+            # Step 2: Add admin users if requested
+            admin_emails = []
+            if include_admins:
                 admin_users = await db.users.find(
                     {"role": "admin", "is_active": True},
                     {"email": 1}
                 ).to_list(None)
-                
-                for admin in admin_users:
-                    admin_email = admin["email"]
-                    if admin_email != user_email:  # Don't duplicate if user is admin
-                        admin_doc = {
-                            **history_doc,
-                            "notification_id": f"{admin_email}_lead_{lead_id}_{timestamp}",
-                            "user_email": admin_email
-                        }
-                        await db.notification_history.update_one(
-                            {"notification_id": admin_doc["notification_id"]},
-                            {"$setOnInsert": admin_doc},
-                            upsert=True
-                        )
+                admin_emails = [admin["email"] for admin in admin_users]
             
-            logger.debug(f"💾 Lead notification saved for {user_email}")
+            # Step 3: Combine all users and remove duplicates
+            all_target_users = list(set(visible_to_users + admin_emails))
             
-        except Exception as e:
-            logger.error(f"Error saving lead notification: {str(e)}")
-    async def _send_to_user(self, user_email: str, notification: Dict[str, Any]):
-        """
-        Send notification to all of user's active connections
-        Handles connection failures gracefully
-        """
-        if user_email not in self.user_connections:
-            return
-        
-        failed_connections = set()
-        
-        # Send to all user's connections
-        for queue in self.user_connections[user_email].copy():
-            try:
-                # Add timestamp if not present
-                if "timestamp" not in notification:
-                    notification["timestamp"] = datetime.utcnow().isoformat()
-                
-                # Try to send notification
-                await asyncio.wait_for(queue.put(notification), timeout=1.0)
-                
-                # Update last activity for this connection
-                self._update_connection_activity(user_email, queue)
-                
-            except asyncio.TimeoutError:
-                # Queue is full or unresponsive, mark for removal
-                failed_connections.add(queue)
-                logger.warning(f"⚠️ Connection timeout for user {user_email}, removing stale connection")
-                
-            except Exception as e:
-                # Connection is broken, mark for removal
-                failed_connections.add(queue)
-                logger.warning(f"⚠️ Failed to send notification to {user_email}: {str(e)}")
-        
-        # Remove failed connections
-        for queue in failed_connections:
-            await self.disconnect_user(user_email, queue)
-    
-    def _update_connection_activity(self, user_email: str, queue: asyncio.Queue):
-        """Update last activity timestamp for connection"""
-        try:
-            queue_id = id(queue)
-            for metadata in self.connection_metadata.get(user_email, {}).values():
-                if metadata.get("queue_id") == queue_id:
-                    metadata["last_activity"] = datetime.utcnow()
-                    break
-        except Exception as e:
-            logger.debug(f"Error updating connection activity: {str(e)}")
-
-    def _update_connection_activity(self, user_email: str, queue: asyncio.Queue):
-        """Update last activity timestamp for connection"""
-        try:
-            queue_id = id(queue)
-            for metadata in self.connection_metadata.get(user_email, {}).values():
-                if metadata.get("queue_id") == queue_id:
-                    metadata["last_activity"] = datetime.utcnow()
-                    break
-        except Exception as e:
-            logger.debug(f"Error updating connection activity: {str(e)}")
-
-    # 🆕 ADD THIS NEW METHOD HERE:
-    
-    async def _save_notification_to_history(self, lead_id: str, notification_data: Dict[str, Any]):
-        """
-        Save notification to history for users assigned to the lead AND for admin
-        """
-        try:
-            from ..config.database import get_database
-            db = get_database()
-            
-            # Get the lead to find assigned users
-            lead = await db.leads.find_one(
-                {"lead_id": lead_id},
-                {"assigned_to": 1, "co_assignees": 1}
-            )
-            
-            if not lead:
-                logger.warning(f"Lead {lead_id} not found for notification history")
-                return
-                
-            # Get assigned users
-            assigned_users = []
-            if lead.get("assigned_to"):
-                assigned_users.append(lead["assigned_to"])
-            if lead.get("co_assignees"):
-                assigned_users.extend(lead["co_assignees"])
-            
-            # 🆕 NEW: Add all admin users to notification recipients
-            admin_users = await db.users.find(
-                {"role": "admin", "is_active": True},
-                {"email": 1}
-            ).to_list(None)
-            
-            admin_emails = [admin["email"] for admin in admin_users]
-            
-            # Combine assigned users and admins (remove duplicates)
-            all_recipients = list(set(assigned_users + admin_emails))
-            
-            if not all_recipients:
-                logger.warning(f"No recipients found for lead {lead_id}")
+            if not all_target_users:
+                logger.warning(f"No target users found for {notification_type} notification")
                 return
             
-            # Save notification for each recipient (assigned users + admins)
-            for user_email in all_recipients:
-                message_id = notification_data.get("message_id")
-                if not message_id:
-                    message_id = str(uuid.uuid4())
+            # Step 4: Determine message preview based on notification type
+            message_preview = ""
+            if notification_type == "lead_assigned":
+                message_preview = f"New lead assigned: {notification_data.get('lead_name', 'Unknown')}"
+            elif notification_type == "lead_reassigned":
+                message_preview = f"Lead reassigned: {notification_data.get('lead_name', 'Unknown')}"
+            elif notification_type == "task_assigned":
+                message_preview = f"Task: {notification_data.get('task_title', 'New Task')}"
+            elif notification_type == "whatsapp_unread":
+                message_preview = notification_data.get("message_preview", "New message")
+            
+            # Step 5: Create the unified notification document
+            unified_doc = {
+                "notification_id": notification_id,
+                "notification_type": notification_type,
+                "user_email": user_email,  # Primary assigned user
+                "lead_id": lead_id,
+                "lead_name": notification_data.get("lead_name"),
+                "message_preview": message_preview,
+                
+                # 🔥 Multi-user visibility
+                "visible_to_users": visible_to_users,  # Array of emails who can see it
+                "visible_to_admins": include_admins,   # Flag for admin visibility
+                
+                # 🔥 Multi-user read tracking
+                "read_by": {},  # Format: {user_email: timestamp}
+                
+                # Common fields
+                "lead_email": notification_data.get("lead_email"),
+                "lead_phone": notification_data.get("lead_phone"),
+                "category": notification_data.get("category"),
+                "source": notification_data.get("source"),
+                
+                # Task-specific fields (if task notification)
+                "task_id": task_id,
+                "task_title": notification_data.get("task_title"),
+                "task_type": notification_data.get("task_type"),
+                "priority": notification_data.get("priority"),
+                "due_date": notification_data.get("due_date"),
+                
+                # WhatsApp-specific fields
+                "message_id": notification_data.get("message_id"),
+                "direction": notification_data.get("direction"),
+                
+                # Reassignment fields
+                "reassigned": notification_data.get("reassigned", False),
+                "reassigned_from": notification_data.get("reassigned_from"),
+                "previous_assignee": notification_data.get("previous_assignee"),
+                
+                # Timestamps
+                "created_at": datetime.utcnow(),
+                "read_at": None,  # Deprecated, use read_by instead
+                
+                # Original data for reference
+                "original_data": notification_data
+            }
+            
+            # Step 6: Remove None values to keep document clean
+            unified_doc = {k: v for k, v in unified_doc.items() if v is not None}
+            
+            # Step 7: Save to database (single record)
+            result = await db.notification_history.insert_one(unified_doc)
+            
+            logger.info(f"✅ Unified notification created: {notification_id} for {notification_type}, visible to {len(all_target_users)} users")
+            
+            return notification_id
+            
+        except Exception as e:
+            logger.error(f"❌ Error creating unified notification: {str(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return None
 
-                history_doc = {
-                    "notification_id": f"{user_email}_{message_id}",  # Unique per user+message
-                    "user_email": user_email,
-                    "notification_type": notification_data.get("type", "unknown"),
-                    "lead_id": lead_id,
-                    "lead_name": notification_data.get("lead_name"),
-                    "message_preview": notification_data.get("message_preview", ""),
-                    "message_id": message_id,
-                    "direction": notification_data.get("direction"),
-                    "created_at": datetime.utcnow(),
-                    "read_at": None,
-                    "original_data": notification_data
-                }
-                
-                # Use upsert to prevent duplicates
-                await db.notification_history.update_one(
-                    {"notification_id": history_doc["notification_id"]},
-                    {"$setOnInsert": history_doc},
-                    upsert=True
-                )
-                
-            logger.debug(f"💾 Notification saved to history for {len(all_recipients)} recipients (assigned users + admins)")
-            
-        except Exception as e:
-            logger.error(f"Error saving notification to history: {str(e)}")
-        # Don't fail the notification if history save fails
-    # ============================================================================
-    # MONITORING AND STATISTICS
-    # ============================================================================
-    
-    def get_connection_stats(self) -> Dict[str, Any]:
-        """Get real-time connection statistics"""
-        try:
-            total_connections = sum(len(connections) for connections in self.user_connections.values())
-            total_users = len(self.user_connections)
-            total_unread_leads = sum(len(unread) for unread in self.user_unread_leads.values())
-            
-            # Calculate average connections per user
-            avg_connections = total_connections / total_users if total_users > 0 else 0
-            
-            # Get users with most connections
-            top_users = sorted(
-                [(user, len(connections)) for user, connections in self.user_connections.items()],
-                key=lambda x: x[1],
-                reverse=True
-            )[:5]
-            
-            return {
-                "total_connections": total_connections,
-                "total_users": total_users,
-                "total_unread_leads": total_unread_leads,
-                "average_connections_per_user": round(avg_connections, 2),
-                "top_connected_users": [{"user": user, "connections": count} for user, count in top_users],
-                "last_updated": datetime.utcnow().isoformat()
-            }
-            
-        except Exception as e:
-            logger.error(f"Error getting connection stats: {str(e)}")
-            return {"error": str(e)}
-    
-    def get_user_connection_info(self, user_email: str) -> Dict[str, Any]:
-        """Get connection information for specific user"""
-        try:
-            if user_email not in self.user_connections:
-                return {
-                    "connected": False,
-                    "connections": 0,
-                    "unread_leads": []
-                }
-            
-            connections = len(self.user_connections[user_email])
-            unread_leads = list(self.user_unread_leads.get(user_email, set()))
-            
-            # Get connection details
-            connection_details = []
-            for conn_id, metadata in self.connection_metadata.get(user_email, {}).items():
-                connection_details.append({
-                    "connection_id": conn_id,
-                    "connected_at": metadata["connected_at"].isoformat(),
-                    "last_activity": metadata["last_activity"].isoformat(),
-                    "user_agent": metadata.get("user_agent"),
-                    "timezone": metadata.get("timezone", "UTC")
-                })
-            
-            return {
-                "connected": True,
-                "connections": connections,
-                "unread_leads": unread_leads,
-                "unread_count": len(unread_leads),
-                "connection_details": connection_details
-            }
-            
-        except Exception as e:
-            logger.error(f"Error getting user connection info: {str(e)}")
-            return {"error": str(e)}
-    
-    async def broadcast_system_notification(self, notification: Dict[str, Any], target_users: Optional[List[str]] = None):
-        """
-        Broadcast system-wide notification (e.g., maintenance, updates)
-        If target_users is None, sends to all connected users
-        """
-        try:
-            target_user_emails = target_users if target_users else list(self.user_connections.keys())
-            
-            notification.update({
-                "type": "system_notification",
-                "timestamp": datetime.utcnow().isoformat()
-            })
-            
-            for user_email in target_user_emails:
-                await self._send_to_user(user_email, notification)
-            
-            logger.info(f"📢 System notification sent to {len(target_user_emails)} users")
-            
-        except Exception as e:
-            logger.error(f"Error broadcasting system notification: {str(e)}")
-    
-    # ============================================================================
-    # CLEANUP AND SHUTDOWN
-    # ============================================================================
-    
-    async def shutdown(self):
-        """Gracefully shutdown the real-time manager"""
-        try:
-            # Cancel cleanup task
-            if self._cleanup_task and not self._cleanup_task.done():
-                self._cleanup_task.cancel()
-                try:
-                    await self._cleanup_task
-                except asyncio.CancelledError:
-                    pass
-            
-            # Send shutdown notification to all users
-            shutdown_notification = {
-                "type": "system_shutdown",
-                "message": "Server is shutting down, you will be automatically reconnected",
-                "timestamp": datetime.utcnow().isoformat()
-            }
-            
-            for user_email in list(self.user_connections.keys()):
-                await self._send_to_user(user_email, shutdown_notification)
-            
-            # Clear all connections
-            total_connections = sum(len(connections) for connections in self.user_connections.values())
-            self.user_connections.clear()
-            self.user_unread_leads.clear()
-            self.connection_metadata.clear()
-            
-            logger.info(f"🛑 Real-time manager shutdown complete, cleaned up {total_connections} connections")
-            
-        except Exception as e:
-            logger.error(f"Error during real-time manager shutdown: {str(e)}")
+
+
 
 # ============================================================================
 # GLOBAL INSTANCE

@@ -1,4 +1,4 @@
-# app/config/database.py - Enhanced with Multi-Assignment and Selective Round Robin Indexes + WhatsApp Support + Bulk WhatsApp
+# app/config/database.py - Enhanced with Multi-Assignment and Selective Round Robin Indexes + WhatsApp Support + Bulk WhatsApp + UNIFIED NOTIFICATIONS
 
 import motor.motor_asyncio
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
@@ -124,7 +124,9 @@ async def create_indexes():
         await db.leads.create_index("last_whatsapp_activity")  # Sort by WhatsApp activity
         await db.leads.create_index("whatsapp_message_count")  # Filter leads with messages
         await db.leads.create_index("unread_whatsapp_count")  # Find leads with unread messages
+        await db.leads.create_index("whatsapp_has_unread")  # 🔥 NEW: Boolean flag for faster unread queries
         await db.leads.create_index([("assigned_to", 1), ("unread_whatsapp_count", 1)])  # User's unread messages
+        await db.leads.create_index([("assigned_to", 1), ("whatsapp_has_unread", 1)])  # 🔥 NEW: Fast user unread lookup
         await db.leads.create_index([("last_whatsapp_activity", -1), ("assigned_to", 1)])  # Recent WhatsApp activity per user
         await db.leads.create_index([("unread_whatsapp_count", 1), ("last_whatsapp_activity", -1)])  # Unread messages by recent activity
         await db.leads.create_index([("whatsapp_message_count", 1), ("assigned_to", 1)])  # Message count per user
@@ -281,7 +283,7 @@ async def create_indexes():
         logger.info("✅ Campaign Tracking indexes created")
 
         # ============================================================================
-        # 🆕 NEW: NOTIFICATION HISTORY COLLECTION INDEXES
+        # 🔥 UPDATED: NOTIFICATION HISTORY COLLECTION INDEXES (UNIFIED SYSTEM)
         # ============================================================================
         logger.info("📨 Creating Notification History collection indexes...")
         
@@ -289,28 +291,60 @@ async def create_indexes():
         
         # Essential indexes for notification history
         await notification_history_collection.create_index("notification_id", unique=True)  # Unique notification identifier
-        await notification_history_collection.create_index("user_email")  # Query by user
+        await notification_history_collection.create_index("user_email")  # Query by user (assigned user)
         await notification_history_collection.create_index("notification_type")  # Filter by type
         await notification_history_collection.create_index("lead_id")  # Query by lead
+        await notification_history_collection.create_index("task_id")  # Query by task
         await notification_history_collection.create_index("created_at")  # Sort by time
         await notification_history_collection.create_index([("created_at", -1)])  # Recent notifications first
         
-        # Compound indexes for efficient queries
-        await notification_history_collection.create_index([("user_email", 1), ("created_at", -1)])  # User history timeline
+        # 🔥 NEW: Unified notification visibility indexes
+        await notification_history_collection.create_index("visible_to_users")  # Array index for user visibility
+        await notification_history_collection.create_index("visible_to_admins")  # Boolean index for admin visibility
+        await notification_history_collection.create_index([("visible_to_users", 1), ("created_at", -1)])  # User notifications timeline
+        await notification_history_collection.create_index([("visible_to_admins", 1), ("created_at", -1)])  # Admin notifications timeline
+        
+        # 🔥 NEW: Multi-user read tracking indexes
+        await notification_history_collection.create_index("read_by")  # Object field for per-user read status
+        
+        # Compound indexes for efficient unified queries
+        await notification_history_collection.create_index([("user_email", 1), ("created_at", -1)])  # Primary user timeline
         await notification_history_collection.create_index([("user_email", 1), ("notification_type", 1)])  # User notifications by type
+        await notification_history_collection.create_index([("visible_to_users", 1), ("notification_type", 1)])  # Visible notifications by type
         await notification_history_collection.create_index([("lead_id", 1), ("created_at", -1)])  # Lead notification timeline
+        await notification_history_collection.create_index([("task_id", 1), ("created_at", -1)])  # Task notification timeline
         await notification_history_collection.create_index([("user_email", 1), ("lead_id", 1)])  # User notifications for specific lead
+        await notification_history_collection.create_index([("user_email", 1), ("task_id", 1)])  # User notifications for specific task
         
         # Performance indexes for history queries
         await notification_history_collection.create_index([("notification_type", 1), ("created_at", -1)])  # Type-based history
         await notification_history_collection.create_index([("user_email", 1), ("created_at", -1), ("notification_type", 1)])  # Complete user history
         
-        # Read status tracking (for future enhancement)
-        await notification_history_collection.create_index("read_at")  # Filter read/unread
-        await notification_history_collection.create_index([("user_email", 1), ("read_at", 1)])  # User's read status
+        # 🔥 UPDATED: Read status tracking with per-user support
+        await notification_history_collection.create_index("read_at")  # Legacy read tracking (optional)
+        await notification_history_collection.create_index([("user_email", 1), ("read_at", 1)])  # Legacy user read status
         
-        logger.info("✅ Notification History indexes created")
-
+        # 🔥 NEW: Combined visibility and read status indexes for unified notification endpoint
+        await notification_history_collection.create_index([
+            ("visible_to_users", 1),
+            ("notification_type", 1),
+            ("created_at", -1)
+        ])  # Efficient filtering for unified endpoint
+        
+        await notification_history_collection.create_index([
+            ("visible_to_admins", 1),
+            ("notification_type", 1),
+            ("created_at", -1)
+        ])  # Admin-specific unified filtering
+        
+        # 🔥 NEW: Role-based display optimization
+        await notification_history_collection.create_index([
+            ("notification_type", 1),
+            ("visible_to_users", 1),
+            ("visible_to_admins", 1)
+        ])  # Role-based notification queries
+        
+        logger.info("✅ Unified Notification History indexes created")
 
 
 

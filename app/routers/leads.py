@@ -1646,7 +1646,10 @@ async def assign_lead(
     assignment: LeadAssign,
     current_user: Dict[str, Any] = Depends(get_admin_user)
 ):
-    """Assign a lead to a user (Admin only) - Enhanced with multi-assignment cleanup"""
+    """
+    🔄 UPDATED: Assign a lead to a user with unified notification
+    Admin only - uses single notification for assigned user + admins
+    """
     try:
         db = get_database()
         
@@ -1669,7 +1672,7 @@ async def assign_lead(
         current_assignee = lead.get("assigned_to")
         current_co_assignees = lead.get("co_assignees", [])
         
-        # Use the assignment service for consistency
+        # Use the assignment service for consistency (already has unified notification)
         success = await lead_assignment_service.assign_lead_to_user(
             lead_id=lead_id,
             user_email=assignment.assigned_to,
@@ -1701,7 +1704,6 @@ async def assign_lead(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to assign lead"
         )
-
 # ============================================================================
 # UPDATE ENDPOINT WITH MULTI-ASSIGNMENT SUPPORT
 # ============================================================================
@@ -1711,7 +1713,10 @@ async def update_lead_universal(
     update_request: dict,
     current_user: Dict[str, Any] = Depends(get_current_active_user)
 ):
-    """Universal lead update endpoint with enhanced multi-assignment support"""
+    """
+    🔄 UPDATED: Universal lead update endpoint with unified notification system
+    Handles all lead updates including reassignment with ONE notification for assignee + admins
+    """
     try:
         logger.info(f"🔄 Update by {current_user.get('email')} with data: {update_request}")
         
@@ -1971,7 +1976,7 @@ async def update_lead_universal(
         
         logger.info(f"✅ Lead {lead_id} updated in database successfully")
         
-        # 🆕 NEW: Send lead reassignment notification
+        # 🔥 UPDATED: Send unified lead reassignment notification
         if assignment_changed and new_assignee:
             try:
                 from ..services.realtime_service import realtime_manager
@@ -1988,15 +1993,16 @@ async def update_lead_universal(
                     "lead_phone": lead.get("contact_number"),
                     "category": lead.get("category"),
                     "source": lead.get("source"),
-                    "lead_id": lead_id,
                     "reassigned_from": old_assignee,
                     "reassigned": True
                 }
                 
                 authorized_users = [{"email": new_assignee, "name": new_user_name}]
+                
+                # 🔥 ONE call creates notification for new assignee + admins automatically
                 await realtime_manager.notify_lead_reassigned(lead_id, notification_data, authorized_users)
                 
-                logger.info(f"✅ Lead reassignment notification sent to {new_assignee}")
+                logger.info(f"✅ Unified lead reassignment notification created for {new_assignee}")
             except Exception as notif_error:
                 logger.warning(f"⚠️ Failed to send reassignment notification: {notif_error}")
         
@@ -2040,6 +2046,7 @@ async def update_lead_universal(
         automation_activity = update_request.get("_automation_activity")
         if automation_activity:
             activities_to_log.append(automation_activity)
+        
         user_id = current_user.get("_id") or current_user.get("id")
         user_name = f"{current_user.get('first_name', '')} {current_user.get('last_name', '')}".strip()
         if not user_name:
@@ -2095,7 +2102,6 @@ async def update_lead_universal(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to update lead"
         )
-
 
 # ============================================================================
 # DELETE ENDPOINT WITH MULTI-ASSIGNMENT CLEANUP
