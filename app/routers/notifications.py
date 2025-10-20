@@ -345,6 +345,7 @@ async def _fetch_unified_notifications(
 # ============================================================================
 
 @router.get("/unified")
+@convert_notification_dates()
 async def get_unified_notifications_readonly(
     notification_type: Optional[str] = Query(None, description="Filter: whatsapp|task|lead|all"),
     page: int = Query(1, ge=1, description="Page number (1-based)"),
@@ -392,6 +393,7 @@ async def get_unified_notifications_readonly(
 # ============================================================================
 
 @router.post("/unified")
+@convert_notification_dates()
 async def post_unified_notifications_with_actions(
     request: UnifiedNotificationsRequest = None,
     notification_type: Optional[str] = Query(None, description="Filter: whatsapp|task|lead|all"),

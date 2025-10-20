@@ -354,17 +354,24 @@ class RealtimeNotificationManager:
     
     async def notify_task_assigned(self, lead_id: str, task_data: Dict[str, Any], authorized_users: List[Dict[str, Any]]):
         """
-        🔄 UPDATED: Notify authorized users about task assignment
-        Now creates ONE unified notification instead of separate ones
+        Notify authorized users about task assignment
+        Creates ONE unified notification instead of separate ones
+        
+        Args:
+            lead_id: The lead ID
+            task_data: Dictionary containing task information
+            authorized_users: List of users to notify (format: [{"email": "user@example.com", "name": "User Name"}])
         """
         try:
             # Extract user emails from authorized_users
             user_emails = [user["email"] for user in authorized_users]
             
-            # Create unified notification (single record for all users + admins)
+            logger.info(f"🔔 Starting task assignment notification for lead {lead_id}")
+            logger.info(f"👥 Notifying {len(user_emails)} users: {user_emails}")
+            
+            # ✅ FIXED: Create unified notification with correct parameters
             await self._create_unified_notification(
                 notification_type="task_assigned",
-                user_email=user_emails[0] if user_emails else None,
                 lead_id=lead_id,
                 notification_data={
                     "lead_name": task_data.get("lead_name", "Unknown Lead"),
@@ -376,7 +383,7 @@ class RealtimeNotificationManager:
                     "reassigned": task_data.get("reassigned", False),
                     "reassigned_by": task_data.get("reassigned_by")
                 },
-                authorized_users=[{"email": email, "name": ""} for email in user_emails],
+                assigned_users=user_emails,  # ✅ FIXED: Pass list of email strings
                 task_id=task_data.get("task_id"),
                 include_admins=True
             )
@@ -405,25 +412,19 @@ class RealtimeNotificationManager:
             
         except Exception as e:
             logger.error(f"Error notifying task assignment: {str(e)}")
-
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
     async def notify_lead_assigned(self, lead_id: str, lead_data: Dict[str, Any], authorized_users: List[Dict[str, Any]]):
         """
-        🔄 UPDATED: Notify authorized users about lead assignment with unified notification
-        Now creates ONE unified notification for all assigned users + admins
-        
-        Args:
-            lead_id: The lead ID being assigned
-            lead_data: Dictionary containing lead information
-            authorized_users: List of users to notify (format: [{"email": "user@example.com", "name": "User Name"}])
+        Notify authorized users about lead assignment with unified notification
         """
         try:
-            # Extract user emails from authorized_users
             user_emails = [user["email"] for user in authorized_users]
             
             logger.info(f"🔔 Starting lead assignment notification for lead {lead_id}")
             logger.info(f"👥 Notifying {len(user_emails)} users: {user_emails}")
             
-            # 🔥 Create unified notification (single record for all users + admins)
+            # ✅ FIXED: Correct parameters
             await self._create_unified_notification(
                 notification_type="lead_assigned",
                 lead_id=lead_id,
@@ -439,59 +440,50 @@ class RealtimeNotificationManager:
                     "co_assignees": lead_data.get("co_assignees", []),
                     "total_assignees": lead_data.get("total_assignees", len(authorized_users)),
                     "reassigned": lead_data.get("reassigned", False),
-                    "previous_assignee": lead_data.get("previous_assignee"),
-                    "bulk_creation": lead_data.get("bulk_creation", False)
+                    "previous_assignee": lead_data.get("previous_assignee")
                 },
-                assigned_users=user_emails,
+                assigned_users=user_emails,  # ✅ List of email strings
+                task_id=None,
                 include_admins=True
             )
             
-            # 🔥 Send real-time WebSocket notification to connected users
+            # Send real-time notifications
             for user in authorized_users:
                 user_email = user["email"]
-                
-                # Create real-time notification payload
                 notification = {
                     "type": "lead_assigned",
                     "lead_id": lead_id,
                     "lead_name": lead_data.get("lead_name"),
-                    "lead_email": lead_data.get("lead_email"),
-                    "lead_phone": lead_data.get("lead_phone"),
-                    "category": lead_data.get("category"),
-                    "source": lead_data.get("source"),
-                    "assignment_method": lead_data.get("assignment_method"),
-                    "co_assigned": lead_data.get("co_assigned", False),
-                    "primary_assignee": lead_data.get("primary_assignee"),
-                    "co_assignees": lead_data.get("co_assignees", []),
-                    "reassigned": lead_data.get("reassigned", False),
-                    "previous_assignee": lead_data.get("previous_assignee"),
-                    "bulk_creation": lead_data.get("bulk_creation", False),
                     "timestamp": datetime.utcnow().isoformat()
                 }
-                
-                # Send to all user's connections (WebSocket)
                 await self._send_to_user(user_email, notification)
             
-            logger.info(f"✅ Lead assignment notification completed for lead {lead_id}")
-            logger.info(f"🔔 Sent to {len(authorized_users)} users + admins")
+            logger.info(f"🔔 Lead assignment notification sent to {len(authorized_users)} users")
             
         except Exception as e:
-            logger.error(f"❌ Error notifying lead assignment: {str(e)}")
+            logger.error(f"Error notifying lead assignment: {str(e)}")
             import traceback
             logger.error(f"Traceback: {traceback.format_exc()}")
     async def notify_lead_reassigned(self, lead_id: str, lead_data: Dict[str, Any], authorized_users: List[Dict[str, Any]]):
         """
-        🔄 UPDATED: Notify authorized users about lead reassignment
-        Now creates ONE unified notification instead of separate ones
+        🔄 FIXED: Notify authorized users about lead reassignment with unified notification
+        Now creates ONE unified notification for all assigned users + admins
+        
+        Args:
+            lead_id: The lead ID being reassigned
+            lead_data: Dictionary containing lead information
+            authorized_users: List of users to notify (format: [{"email": "user@example.com", "name": "User Name"}])
         """
         try:
             # Extract user emails from authorized_users
             user_emails = [user["email"] for user in authorized_users]
             
-            # Create unified notification (single record for all users + admins)
+            logger.info(f"🔔 Starting lead reassignment notification for lead {lead_id}")
+            logger.info(f"👥 Notifying {len(user_emails)} users: {user_emails}")
+            
+            # ✅ FIXED: Create unified notification with correct parameters (NO user_email parameter!)
             await self._create_unified_notification(
                 notification_type="lead_reassigned",
-                user_email=user_emails[0] if user_emails else None,
                 lead_id=lead_id,
                 notification_data={
                     "lead_name": lead_data.get("lead_name"),
@@ -502,7 +494,8 @@ class RealtimeNotificationManager:
                     "reassigned_from": lead_data.get("reassigned_from"),
                     "reassigned": True
                 },
-                authorized_users=[{"email": email, "name": user["name"]} for email, user in zip(user_emails, authorized_users)],
+                assigned_users=user_emails,  # ✅ FIXED: Correct parameter
+                task_id=None,
                 include_admins=True
             )
             
@@ -529,31 +522,29 @@ class RealtimeNotificationManager:
             
         except Exception as e:
             logger.error(f"Error notifying lead reassignment: {str(e)}")
-
-
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
     async def _create_unified_notification(
-    self, 
-    notification_type: str,
-    lead_id: str,
-    notification_data: Dict[str, Any],
-    assigned_users: List[str],
-    task_id: Optional[str] = None,
-    include_admins: bool = True
-) -> None:
+        self, 
+        notification_type: str,
+        lead_id: str,
+        notification_data: Dict[str, Any],
+        assigned_users: List[str],  # ✅ Keep this as List[str] (emails only)
+        task_id: Optional[str] = None,
+        include_admins: bool = True
+    ) -> Optional[Any]:
         """
-        🆕 UPDATED: Create a single unified notification for multiple users
-        Eliminates duplicate notifications by creating ONE record visible to all relevant users
+        Create a single unified notification for multiple users
         
         Args:
-            notification_type: Type of notification (lead_assigned, lead_reassigned, task_assigned, etc.)
+            notification_type: Type of notification (lead_assigned, task_assigned, etc.)
             lead_id: Lead ID (required)
             notification_data: Dictionary containing notification details
-            assigned_users: List of user emails who are assigned
+            assigned_users: List of user EMAIL STRINGS (e.g., ["user1@email.com", "user2@email.com"])
             task_id: Optional task ID (for task notifications)
             include_admins: Whether to make notification visible to all admins
         """
         try:
-            # 🔥 FIX: Use self.get_db() instead of get_database()
             db = self.get_db()
             
             # Get all admin emails if include_admins is True
@@ -583,19 +574,26 @@ class RealtimeNotificationManager:
                 "category": notification_data.get("category"),
                 "source": notification_data.get("source"),
                 
-                # Assignment information (important for multi-assignment)
+                # ✅ Task-specific fields
+                "task_title": notification_data.get("task_title"),
+                "task_type": notification_data.get("task_type"),
+                "priority": notification_data.get("priority"),
+                "due_date": notification_data.get("due_date"),
+                
+                # Assignment information
                 "assignment_method": notification_data.get("assignment_method"),
                 "co_assigned": notification_data.get("co_assigned", False),
                 "primary_assignee": notification_data.get("primary_assignee"),
                 "co_assignees": notification_data.get("co_assignees", []),
                 "total_assignees": notification_data.get("total_assignees", len(assigned_users)),
                 
-                # Reassignment info (if applicable)
+                # Reassignment info
                 "reassigned": notification_data.get("reassigned", False),
                 "reassigned_from": notification_data.get("reassigned_from"),
+                "reassigned_by": notification_data.get("reassigned_by"),
                 
                 # Visibility control
-                "visible_to_users": assigned_users,  # Users who are assigned to the lead
+                "visible_to_users": assigned_users,  # List of email strings
                 "visible_to_admins": visible_to_admins,
                 "admin_emails": admin_emails,
                 
@@ -625,8 +623,6 @@ class RealtimeNotificationManager:
             import traceback
             logger.error(f"Traceback: {traceback.format_exc()}")
             return None
-
-   
    
     # ============================================================================
     # UTILITY METHODS
