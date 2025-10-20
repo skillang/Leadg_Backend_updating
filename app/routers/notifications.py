@@ -1138,31 +1138,76 @@ async def trigger_system_maintenance(
 @convert_notification_dates()
 async def get_notification_history(
     limit: int = Query(default=10, ge=1, le=100, description="Number of notifications per page"),
-    page: int = Query(default=1, ge=1, description="Page number (1-based)"),  # ✅ Changed from offset to page
+    page: int = Query(default=1, ge=1, description="Page number (1-based)"),
     date_from: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
     date_to: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
     notification_type: Optional[str] = Query(None, description="Filter by notification type"),
     search: Optional[str] = Query(None, description="Search by lead name"),
     current_user: Dict[str, Any] = Depends(get_current_user)
 ):
-   
+    """
+    🔥 FIXED: Get notification history - Shows ALL old WhatsApp + READ new notifications
+    """
     try:
         db = get_database()
         user_email = current_user.get("email", "")
-        logger.info(f"📧 Getting notification history for {user_email} - Page: {page}, Limit: {limit}")
+        user_role = current_user.get("role", "user")
         
-        # Build query filters
-        query = {}
-
-        # Only filter by user_email for non-admin users
-        if current_user.get("role") != "admin":
-            query["user_email"] = user_email
-            logger.info(f"🔒 User access - filtering by user_email: {user_email}")
+        logger.info(f"📧 Getting notification history for {user_email} (Role: {user_role}) - Page: {page}, Limit: {limit}")
+        
+        # 🔥 COMPLETELY NEW QUERY LOGIC
+        
+        # For admins: Show everything
+        if user_role == "admin":
+            query = {
+                "$or": [
+                    # NEW system notifications that admin has read
+                    {
+                        "$and": [
+                            {
+                                "$or": [
+                                    {"visible_to_users": user_email},
+                                    {"visible_to_admins": True}
+                                ]
+                            },
+                            {f"read_by.{user_email}": {"$exists": True}}
+                        ]
+                    },
+                    # OLD system notifications (identified by missing new fields)
+                    {
+                        "$and": [
+                            {"visible_to_users": {"$exists": False}},
+                            {"read_by": {"$exists": False}},
+                            {"notification_type": "new_whatsapp_message"}  # WhatsApp messages
+                        ]
+                    }
+                ]
+            }
+            logger.info(f"👑 Admin access - showing all old WhatsApp + read new notifications")
         else:
-            logger.info(f"👑 Admin access - showing all notifications")
-        query["read_at"] = {"$ne": None}  # 🔥 FILTER: Only show read notifications
-        logger.info(f"📖 History filter: Only showing read notifications")
-        # Date range filter
+            # Regular user: Only their own notifications
+            query = {
+                "$or": [
+                    # NEW system notifications that user has read
+                    {
+                        "$and": [
+                            {"visible_to_users": user_email},
+                            {f"read_by.{user_email}": {"$exists": True}}
+                        ]
+                    },
+                    # OLD system notifications assigned to this user
+                    {
+                        "$and": [
+                            {"user_email": user_email},
+                            {"visible_to_users": {"$exists": False}},
+                            {"read_by": {"$exists": False}}
+                        ]
+                    }
+                ]
+            }
+            logger.info(f"🔒 User access - filtering by user-specific notifications")
+        
+        # Additional filters
         if date_from or date_to:
             date_filter = {}
             
@@ -1176,7 +1221,6 @@ async def get_notification_history(
             
             if date_to:
                 try:
-                    # Add 23:59:59 to include the entire day
                     end_date = datetime.fromisoformat(date_to).replace(hour=23, minute=59, second=59)
                     date_filter["$lte"] = end_date
                     logger.info(f"📅 Date filter to: {end_date}")
@@ -1185,29 +1229,25 @@ async def get_notification_history(
             
             query["created_at"] = date_filter
         
-        # Notification type filter
         if notification_type:
             query["notification_type"] = notification_type
             logger.info(f"🔔 Filtering by type: {notification_type}")
         
-        # Search by lead name filter (case-insensitive)
         if search:
             query["lead_name"] = {"$regex": search, "$options": "i"}
             logger.info(f"🔍 Searching for: {search}")
         
-        logger.info(f"🔍 Final query: {query}")
+        logger.info(f"🔍 Final history query: {query}")
         
-        # Get total count for pagination
+        # Get total count
         total_count = await db.notification_history.count_documents(query)
         logger.info(f"📊 Total notifications found: {total_count}")
         
-        # ✅ Calculate pagination using page-based system (Universal Pattern)
+        # Pagination
         skip = (page - 1) * limit
-        total_pages = (total_count + limit - 1) // limit  # Ceiling division
+        total_pages = (total_count + limit - 1) // limit
         
-        logger.info(f"📄 Pagination - Skip: {skip}, Total Pages: {total_pages}")
-        
-        # Get notifications with pagination
+        # Get notifications
         notifications = await db.notification_history.find(
             query,
             {
@@ -1216,51 +1256,110 @@ async def get_notification_history(
                 "lead_id": 1,
                 "lead_name": 1,
                 "message_preview": 1,
-                "message_id": 1,
-                "direction": 1,
+                "task_id": 1,
+                "task_title": 1,
                 "created_at": 1,
+                "read_by": 1,
                 "read_at": 1,
-                "_id": 0  # Exclude MongoDB _id
+                "visible_to_users": 1,
+                "visible_to_admins": 1,
+                "user_email": 1,
+                "direction": 1,
+                "original_data": 1,
+                "_id": 0
             }
         ).sort("created_at", -1).skip(skip).limit(limit).to_list(None)
         
-        logger.info(f"📋 Retrieved {len(notifications)} notifications")
+        logger.info(f"📋 Retrieved {len(notifications)} notifications (old + new)")
         
-        # Format notifications for response
+        # Format notifications
         formatted_notifications = []
         for notif in notifications:
+            # Detect system type
+            has_new_fields = "read_by" in notif or "visible_to_users" in notif
+            is_old_system = not has_new_fields
+            
+            # Get read timestamp
+            if has_new_fields:
+                read_timestamp = notif.get("read_by", {}).get(user_email)
+                read_status = read_timestamp is not None
+            else:
+                read_timestamp = notif.get("read_at")
+                read_status = read_timestamp is not None if not is_old_system else None
+            
+            original_data = notif.get("original_data", {})
+            visible_to_users = notif.get("visible_to_users", [])
+            notification_type_value = notif.get("notification_type")
+            
+            # Message display logic
+            if has_new_fields and visible_to_users:
+                # NEW system messages
+                if notification_type_value == "task_assigned":
+                    if user_role == "admin" and user_email not in visible_to_users:
+                        assigned_user = visible_to_users[0] if visible_to_users else "Unknown"
+                        message = f"Task '{notif.get('task_title', 'New Task')}' assigned to {assigned_user}"
+                    else:
+                        message = f"You have been assigned: {notif.get('task_title', 'New Task')}"
+                
+                elif notification_type_value in ["lead_assigned", "lead_reassigned"]:
+                    is_reassignment = notification_type_value == "lead_reassigned"
+                    if user_role == "admin" and user_email not in visible_to_users:
+                        assigned_user = visible_to_users[0] if visible_to_users else "Unknown"
+                        message = f"Lead '{notif.get('lead_name')}' {'reassigned' if is_reassignment else 'assigned'} to {assigned_user}"
+                    else:
+                        message = f"Lead '{notif.get('lead_name')}' has been {'reassigned to' if is_reassignment else 'assigned to'} you"
+                else:
+                    message = notif.get("message_preview", "Notification")
+            else:
+                # OLD system messages
+                message = notif.get("message_preview", "Notification")
+                
+                # For old WhatsApp messages, show lead name in message
+                if notification_type_value == "new_whatsapp_message":
+                    lead_name = notif.get("lead_name", "Unknown")
+                    direction = notif.get("direction", "incoming")
+                    if direction == "incoming":
+                        message = f"WhatsApp from {lead_name}: {message}"
+            
             formatted_notifications.append({
                 "id": notif["notification_id"],
-                "type": notif["notification_type"],
+                "type": notification_type_value,
                 "lead_id": notif.get("lead_id"),
                 "lead_name": notif.get("lead_name", "Unknown Lead"),
-                "message": notif.get("message_preview", ""),
-                "message_id": notif.get("message_id"),
-                "direction": notif.get("direction"),
+                "task_id": notif.get("task_id"),
+                "task_title": notif.get("task_title"),
+                "message": message,
                 "timestamp": notif["created_at"],
-                "read": notif.get("read_at") is not None,
-                "read_at": notif["read_at"].isoformat() if notif.get("read_at") else None
+                "read": read_status,
+                "read_at": read_timestamp.isoformat() if read_timestamp else None,
+                "system": "unified" if has_new_fields else "legacy",
+                "metadata": {
+                    "direction": notif.get("direction"),
+                    "assigned_user": notif.get("user_email") if is_old_system else None,
+                    "visible_to_users": visible_to_users if (user_role == "admin" and has_new_fields) else None,
+                    "original_data": original_data
+                }
             })
         
-        # ✅ UNIVERSAL PAGINATION PATTERN (Matches PaginationMeta interface)
+        # Pagination response
         pagination_response = {
-            "total": total_count,           # Total records
-            "page": page,                   # Current page (1-based)
-            "limit": limit,                 # Items per page
-            "pages": total_pages,           # Total pages (consistent naming)
-            "has_next": page < total_pages, # Boolean: more pages available
-            "has_prev": page > 1            # Boolean: previous pages available
+            "total": total_count,
+            "page": page,
+            "limit": limit,
+            "pages": total_pages,
+            "has_next": page < total_pages,
+            "has_prev": page > 1
         }
         
-        logger.info(f"✅ Returning {len(formatted_notifications)} notifications with pagination: {pagination_response}")
+        logger.info(f"✅ Returning {len(formatted_notifications)} notifications (old + new)")
         
         return {
             "success": True,
             "notifications": formatted_notifications,
-            "pagination": pagination_response,  # ✅ Universal pagination structure
+            "pagination": pagination_response,
             "filters": {
-                "page": page,               # Include current page in filters
-                "limit": limit,             # Include current limit in filters
+                "page": page,
+                "limit": limit,
                 "date_from": date_from,
                 "date_to": date_to,
                 "notification_type": notification_type,
@@ -1270,7 +1369,9 @@ async def get_notification_history(
                 "total_notifications": total_count,
                 "current_page_count": len(formatted_notifications),
                 "filtered": bool(date_from or date_to or notification_type or search),
-                "user_email": user_email
+                "user_email": user_email,
+                "user_role": user_role,
+                "supports_legacy": True
             }
         }
         
@@ -1278,11 +1379,9 @@ async def get_notification_history(
         raise
     except Exception as e:
         logger.error(f"❌ Error getting notification history: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Failed to get notification history: {str(e)}")
-
-# ============================================================================
-# WEBHOOK INTEGRATION STATUS
-# ============================================================================
 
 @router.get("/webhook/status")
 @convert_notification_dates()

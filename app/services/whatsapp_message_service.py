@@ -1035,24 +1035,118 @@ class WhatsAppMessageService:
                 statuses.extend(webhook_statuses)
         
         return statuses
-    
     def _extract_message_content(self, message_data: Dict[str, Any], message_type: str) -> str:
-        """Extract content from message based on type"""
+        """
+        🔥 ENHANCED: Extract content from message based on type
+        Properly handles button clicks and interactive messages
+        """
+        
+        # 1. TEXT MESSAGES
         if message_type == "text":
             return message_data.get("text", {}).get("body", "")
+        
+        # 2. IMAGE MESSAGES
         elif message_type == "image":
             caption = message_data.get("image", {}).get("caption", "")
             return f"📷 Image: {caption}" if caption else "📷 Image"
+        
+        # 3. DOCUMENT MESSAGES
         elif message_type == "document":
             filename = message_data.get("document", {}).get("filename", "Unknown file")
             return f"📄 Document: {filename}"
+        
+        # 4. AUDIO MESSAGES
         elif message_type == "audio":
             return "🎵 Audio message"
+        
+        # 5. VIDEO MESSAGES
         elif message_type == "video":
             return "🎥 Video message"
+        
+        # 6. LOCATION MESSAGES
+        elif message_type == "location":
+            location_data = message_data.get("location", {})
+            latitude = location_data.get("latitude", "")
+            longitude = location_data.get("longitude", "")
+            return f"📍 Location: {latitude}, {longitude}"
+        
+        # 7. CONTACT MESSAGES
+        elif message_type == "contact":
+            contacts = message_data.get("contacts", [])
+            if contacts:
+                contact_name = contacts[0].get("name", {}).get("formatted_name", "Unknown")
+                return f"👤 Contact: {contact_name}"
+            return "👤 Contact shared"
+        
+        # 🔥 8. INTERACTIVE MESSAGES (BUTTONS & LISTS)
+        elif message_type == "interactive":
+            interactive_data = message_data.get("interactive", {})
+            interactive_type = interactive_data.get("type", "")
+            
+            # 8a. BUTTON REPLY
+            if interactive_type == "button_reply":
+                button_reply = interactive_data.get("button_reply", {})
+                button_id = button_reply.get("id", "")
+                button_title = button_reply.get("title", "")
+                
+                if button_title:
+                    return f"🔘 Button clicked: \"{button_title}\""
+                else:
+                    return f"🔘 Button clicked: {button_id}"
+            
+            # 8b. LIST REPLY
+            elif interactive_type == "list_reply":
+                list_reply = interactive_data.get("list_reply", {})
+                list_id = list_reply.get("id", "")
+                list_title = list_reply.get("title", "")
+                list_description = list_reply.get("description", "")
+                
+                if list_title and list_description:
+                    return f"📋 Selected: \"{list_title} - {list_description}\""
+                elif list_title:
+                    return f"📋 Selected: \"{list_title}\""
+                else:
+                    return f"📋 Selection: {list_id}"
+            
+            # 8c. NfM REPLY (WhatsApp Flows)
+            elif interactive_type == "nfm_reply":
+                nfm_reply = interactive_data.get("nfm_reply", {})
+                response_json = nfm_reply.get("response_json", "")
+                name = nfm_reply.get("name", "")
+                
+                if name:
+                    return f"📱 Flow response: \"{name}\""
+                else:
+                    return "📱 Flow completed"
+            
+            # 8d. UNKNOWN INTERACTIVE TYPE
+            else:
+                return f"📎 Interactive message: {interactive_type}"
+        
+        # 9. BUTTON MESSAGES (Legacy format - some providers use this)
+        elif message_type == "button":
+            button_data = message_data.get("button", {})
+            button_text = button_data.get("text", "")
+            button_payload = button_data.get("payload", "")
+            
+            if button_text:
+                return f"🔘 Button: \"{button_text}\""
+            else:
+                return f"🔘 Button: {button_payload}"
+        
+        # 10. STICKER MESSAGES
+        elif message_type == "sticker":
+            return "😊 Sticker"
+        
+        # 11. REACTION MESSAGES
+        elif message_type == "reaction":
+            reaction_data = message_data.get("reaction", {})
+            emoji = reaction_data.get("emoji", "👍")
+            return f"❤️ Reacted: {emoji}"
+        
+        # 12. UNKNOWN/UNSUPPORTED MESSAGE TYPE
         else:
             return f"📎 {message_type.title()} message"
-    
     def _normalize_phone_number(self, phone: str) -> str:
         """Normalize phone number format"""
         if not phone:
