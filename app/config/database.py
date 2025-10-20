@@ -392,6 +392,38 @@ async def create_indexes():
         await db.sources.create_index("created_by")  # Track who created sources
         logger.info("✅ Sources indexes created")
 
+         # ============================================================================
+        # 🆕 NEW: LEAD_GROUPS COLLECTION INDEXES
+        # ============================================================================
+        logger.info("👥 Creating Lead Groups collection indexes...")
+        
+        lead_groups_collection = db.lead_groups
+        
+        # Essential indexes for group management
+        await lead_groups_collection.create_index("group_id", unique=True)  # Unique group identifier
+        await lead_groups_collection.create_index("name", unique=True)  # Unique group names
+        await lead_groups_collection.create_index("created_by")  # Query by creator
+        await lead_groups_collection.create_index("created_at")  # Sort by creation time
+        await lead_groups_collection.create_index("updated_at")  # Sort by last update
+        
+        # Lead-related indexes
+        await lead_groups_collection.create_index("lead_ids")  # Find groups containing specific leads
+        await lead_groups_collection.create_index("lead_count")  # Sort by group size
+        
+        # Performance indexes for group listing and filtering
+        await lead_groups_collection.create_index([("created_by", 1), ("created_at", -1)])  # User's groups by date
+        await lead_groups_collection.create_index([("name", 1), ("created_at", -1)])  # Groups by name and date
+        await lead_groups_collection.create_index([("lead_count", 1), ("created_at", -1)])  # Groups by size
+        
+        # Search optimization
+        await lead_groups_collection.create_index([("name", "text")])  # Text search on group names
+        
+        # Updated by tracking
+        await lead_groups_collection.create_index("updated_by")  # Track last modifier
+        await lead_groups_collection.create_index([("updated_by", 1), ("updated_at", -1)])  # Modifier timeline
+        
+        logger.info("✅ Lead Groups indexes created")
+
 
         # ============================================================================
 # 🆕 NEW: CV EXTRACTIONS COLLECTION INDEXES
@@ -528,6 +560,7 @@ async def get_collection_stats():
             "lead_statuses",
             "course_levels",
             "sources",
+            "lead_groups"
             "lead_tasks",
             "lead_activities",
             "lead_counters",
@@ -656,6 +689,13 @@ async def get_collection_stats():
                 elif collection_name == "sources":
                     active_count = await db[collection_name].count_documents({"is_active": True})
                     stats[f"{collection_name}_active"] = active_count
+                elif collection_name == "lead_groups":
+                    # Get groups with leads count
+                    non_empty = await db[collection_name].count_documents({"lead_count": {"$gt": 0}})
+                    stats[f"{collection_name}_non_empty"] = non_empty
+                    
+                    empty = await db[collection_name].count_documents({"lead_count": 0})
+                    stats[f"{collection_name}_empty"] = empty
                     
             except Exception as collection_error:
                 stats[collection_name] = 0
@@ -675,7 +715,7 @@ async def get_index_stats():
     try:
         db = get_database()
         
-        collections = ["users", "leads", "lead_tasks", "lead_activities", "course_levels", "sources", "whatsapp_messages", "bulk_whatsapp_jobs", "notification_history"]  # Added bulk WhatsApp collection
+        collections = ["users", "leads", "lead_tasks", "lead_activities", "course_levels", "sources","lead_groups", "whatsapp_messages", "bulk_whatsapp_jobs", "notification_history"]  # Added bulk WhatsApp collection
         index_stats = {}
         
         for collection_name in collections:
@@ -720,6 +760,8 @@ async def init_database():
     
     if stats.get('sources', 0) > 0:
         logger.info(f"📍 Sources: {stats.get('sources', 0)} total, {stats.get('sources_active', 0)} active")
+    if stats.get('lead_groups', 0) > 0:
+        logger.info(f"👥 Groups: {stats.get('lead_groups', 0)} total, {stats.get('lead_groups_non_empty', 0)} with leads, {stats.get('lead_groups_empty', 0)} empty")
     
     # WhatsApp messages stats
     if stats.get('whatsapp_messages', 0) > 0:

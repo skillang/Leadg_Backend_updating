@@ -15,7 +15,7 @@ from .routers import (
     auth, leads, tasks, notes, documents, timeline, contacts, lead_categories, 
     stages, statuses, course_levels, sources, whatsapp, emails, permissions, 
     tata_auth, tata_calls, tata_users, bulk_whatsapp, realtime, notifications, 
-    integrations, admin_calls, password_reset ,cv_processing ,facebook_leads, automation_campaigns, fcm_notifications, fcm_test
+    integrations, admin_calls, password_reset ,cv_processing ,facebook_leads, automation_campaigns, fcm_notifications, fcm_test, groups
 )
 
 logging.basicConfig(
@@ -363,7 +363,7 @@ async def health_check():
             "auth", "leads", "tasks", "notes", "documents", "timeline", "contacts", 
             "stages", "statuses", "course-levels", "sources", "whatsapp", "realtime", 
             "emails", "permissions", "tata-auth", "tata-calls", "tata-users", 
-            "bulk-whatsapp", "integrations", "admin-calls" , "cv-processing","automation-campaigns"
+            "bulk-whatsapp", "integrations", "admin-calls" , "cv-processing","automation-campaigns","groups"
         ]
     }
 
@@ -397,6 +397,7 @@ async def root():
             "bulk-whatsapp": "/bulk-whatsapp",
             "integrations": "/integrations",
             "admin": "/admin",  # NEW: Admin dashboard
+            "groups": "/groups",
             "health": "/health"
         }
     }
@@ -449,6 +450,12 @@ app.include_router(
     contacts.router,
     prefix="/contacts",
     tags=["Contacts"]
+)
+
+app.include_router(
+    groups.router,
+    prefix="/groups",
+    tags=["Groups"]
 )
 
 app.include_router(
