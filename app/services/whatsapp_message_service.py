@@ -232,6 +232,7 @@ class WhatsAppMessageService:
     async def _broadcast_incoming_message_notification(self, message_data: Dict[str, Any]):
         """
         🆕 FIXED: Instantly broadcast incoming message to authorized users via SSE
+        Uses the correct old format that was working
         """
         try:
             if not self.realtime_manager:
@@ -247,31 +248,28 @@ class WhatsAppMessageService:
                 logger.warning(f"No authorized users found for lead {lead_id}")
                 return
             
-            # Create notification data
-            notification_data = {
+            # ✅ Create notification in OLD WORKING FORMAT
+            notification = {
+                "type": "new_whatsapp_message",
+                "lead_id": lead_id,
                 "lead_name": message_data.get("lead_name"),
-                "lead_email": message_data.get("lead_email"),
-                "lead_phone": message_data.get("phone_number"),
-                "message_preview": message_data["content"][:100] if len(message_data["content"]) > 100 else message_data["content"],
-                "message_id": message_data["message_id"],
-                "direction": message_data["direction"]
+                "message_preview": message_data["content"][:50] + "..." if len(message_data["content"]) > 50 else message_data["content"],
+                "timestamp": message_data["timestamp"],
+                "direction": message_data["direction"],
+                "message_id": message_data["message_id"]
             }
             
-            # ✅ Use the CORRECT method from realtime_service.py
-            await self.realtime_manager.notify_new_message(
-                lead_id=lead_id,
-                notification_data=notification_data,
-                authorized_users=authorized_users
-            )
+            # ✅ Use OLD WORKING METHOD CALL (positional arguments, no keywords)
+            await self.realtime_manager.notify_new_message(lead_id, notification, authorized_users)
             
-            logger.info(f"🔔 Real-time notification broadcast to {len(authorized_users)} users for lead {lead_id}")
+            logger.info(f"🔔 Real-time notification sent to {len(authorized_users)} users for lead {lead_id}")
             
         except Exception as e:
             logger.error(f"Error broadcasting message notification: {str(e)}")
             import traceback
             logger.error(f"Traceback: {traceback.format_exc()}")
 
-
+    
     async def _get_authorized_users_for_lead(self, lead_id: str) -> List[Dict[str, Any]]:
         """
         🆕 NEW: Get users who should be notified about this lead's messages
