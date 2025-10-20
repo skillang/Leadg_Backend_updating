@@ -53,7 +53,7 @@ class AutomationCampaign(BaseModel):
     # Scheduling configuration
     use_custom_dates: bool = Field(default=False, description="Use specific dates instead of auto-schedule")
     campaign_duration_days: Optional[int] = Field(None, ge=1, description="Duration in days (for auto-schedule)")
-    message_limit: int = Field(..., ge=2, description="Number of messages to send per lead")
+    message_limit: int = Field(..., ge=1, description="Number of messages to send per lead")
     send_time: str = Field(default="10:00", description="Time to send messages (HH:MM format)")
     send_on_weekends: bool = Field(default=True, description="Send messages on weekends")
     
@@ -122,7 +122,7 @@ class CampaignCreateRequest(BaseModel):
     category_ids: List[str] = []
     use_custom_dates: bool = False
     campaign_duration_days: Optional[int] = None
-    message_limit: int = Field(..., ge=2)
+    message_limit: int = Field(..., ge=1)
     send_time: str = "10:00"
     send_on_weekends: bool = True
     templates: List[CampaignTemplate]
@@ -170,7 +170,7 @@ class CampaignPreviewRequest(BaseModel):
     category_ids: List[str] = []
     stage_ids: List[str] = []
     campaign_duration_days: int = Field(..., ge=1, description="Duration in days")
-    message_limit: int = Field(..., ge=2, description="Number of messages per lead")
+    message_limit: int = Field(..., ge=1, description="Number of messages per lead")
 
 
 class CampaignPreviewResponse(BaseModel):

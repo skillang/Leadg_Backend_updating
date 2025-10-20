@@ -100,7 +100,7 @@ class CampaignExecutor:
             base_query = {}
             
             if campaign["send_to_all"]:
-                logger.info("Campaign set to send_to_all")
+                logger.info("Campaign set to send_to_all - targeting ALL leads")
                 # base_query remains empty for send_to_all
             else:
                 # Convert IDs to names
@@ -111,16 +111,31 @@ class CampaignExecutor:
                 if campaign.get("stage_ids"):
                     stage_names = await self._convert_stage_ids_to_names(campaign["stage_ids"])
                     logger.info(f"Stage names: {stage_names}")
+                else:
+                    # 🆕 NEW: If no stages specified, get ALL active stages
+                    all_stages = await self.db.lead_stages.find({"is_active": True}).to_list(None)
+                    stage_names = [s["name"] for s in all_stages]
+                    logger.info(f"⭐ No stages specified - including ALL: {stage_names}")
                 
                 if campaign.get("source_ids"):
                     source_names = await self._convert_source_ids_to_names(campaign["source_ids"])
                     logger.info(f"Source names: {source_names}")
+                else:
+                    # 🆕 NEW: If no sources specified, get ALL active sources
+                    all_sources = await self.db.sources.find({"is_active": True}).to_list(None)
+                    source_names = [s["name"] for s in all_sources]
+                    logger.info(f"⭐ No sources specified - including ALL: {source_names}")
                 
                 if campaign.get("category_ids"):
                     category_names = await self._convert_category_ids_to_names(campaign["category_ids"])
                     logger.info(f"Category names: {category_names}")
+                else:
+                    # 🆕 NEW: If no categories specified, get ALL active categories
+                    all_categories = await self.db.lead_categories.find({"is_active": True}).to_list(None)
+                    category_names = [c["name"] for c in all_categories]
+                    logger.info(f"⭐ No categories specified - including ALL: {category_names}")
                 
-                # Build filter conditions
+                # Build filter conditions using AND logic (all must match)
                 conditions = []
                 
                 if stage_names:
@@ -141,7 +156,7 @@ class CampaignExecutor:
                     else:
                         conditions.append({"category": {"$in": category_names}})
                 
-                # Combine conditions with AND logic
+                # Combine conditions with AND logic (all conditions must be true)
                 if len(conditions) == 1:
                     base_query = conditions[0]
                 elif len(conditions) > 1:
@@ -199,7 +214,8 @@ class CampaignExecutor:
         except Exception as e:
             logger.error(f"Error finding matching leads: {str(e)}")
             return []
-    
+
+
     async def _convert_stage_ids_to_names(self, stage_ids: List[str]) -> List[str]:
         """Convert stage ObjectIds to stage names"""
         try:

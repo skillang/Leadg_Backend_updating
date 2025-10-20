@@ -508,6 +508,7 @@ async def preview_campaign(
     
     - Shows lead count breakdown by source, category, stage
     - Campaign schedule preview
+    - If no source/category/stage provided, includes ALL active sources/categories/stages
     """
     try:
         from bson import ObjectId
@@ -520,12 +521,10 @@ async def preview_campaign(
         # ============================================================================
         lead_filter = {}
         
-        # 🔥 FIX: Source filtering - using 'sources' collection
+        # Source filtering - if empty, select ALL sources
         if preview_data.source_ids:
             try:
                 source_object_ids = [ObjectId(sid) for sid in preview_data.source_ids]
-                
-                # Use 'sources' collection instead of 'lead_sources'
                 sources = await db.sources.find({"_id": {"$in": source_object_ids}}).to_list(None)
                 
                 if not sources:
@@ -555,13 +554,21 @@ async def preview_campaign(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Invalid source_ids format: {str(e)}"
                 )
+        else:
+            # If no source_ids provided, include ALL active sources
+            logger.info("⭐ No source_ids provided - including ALL sources")
+            all_sources = await db.sources.find({"is_active": True}).to_list(None)
+            if all_sources:
+                all_source_names = [s["name"] for s in all_sources]
+                logger.info(f"✅ Including all active sources: {all_source_names}")
+                # Don't add to filter - this means ALL sources
+            else:
+                logger.warning("No active sources found in database")
         
-        # 🔥 FIX: Category filtering - using 'lead_categories' collection
+        #  Category filtering - if empty, select ALL categories
         if preview_data.category_ids:
             try:
                 category_object_ids = [ObjectId(cid) for cid in preview_data.category_ids]
-                
-                # Use 'lead_categories' collection
                 categories = await db.lead_categories.find({"_id": {"$in": category_object_ids}}).to_list(None)
                 
                 if not categories:
@@ -591,13 +598,21 @@ async def preview_campaign(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Invalid category_ids format: {str(e)}"
                 )
+        else:
+            #  If no category_ids provided, include ALL active categories
+            logger.info("⭐ No category_ids provided - including ALL categories")
+            all_categories = await db.lead_categories.find({"is_active": True}).to_list(None)
+            if all_categories:
+                all_category_names = [c["name"] for c in all_categories]
+                logger.info(f"✅ Including all active categories: {all_category_names}")
+                # Don't add to filter - this means ALL categories
+            else:
+                logger.warning("No active categories found in database")
         
-        # 🔥 FIX: Stage filtering - using 'lead_stages' collection
+        # Stage filtering - if empty, include ALL stages
         if preview_data.stage_ids:
             try:
                 stage_object_ids = [ObjectId(sid) for sid in preview_data.stage_ids]
-                
-                # Use 'lead_stages' collection
                 stages = await db.lead_stages.find({"_id": {"$in": stage_object_ids}}).to_list(None)
                 
                 if not stages:
@@ -627,6 +642,16 @@ async def preview_campaign(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Invalid stage_ids format: {str(e)}"
                 )
+        else:
+            # If no stage_ids provided, include ALL active stages
+            logger.info("⭐ No stage_ids provided - including ALL stages")
+            all_stages = await db.lead_stages.find({"is_active": True}).to_list(None)
+            if all_stages:
+                all_stage_names = [s["name"] for s in all_stages]
+                logger.info(f"✅ Including all active stages: {all_stage_names}")
+                # Don't add to filter - this means ALL stages
+            else:
+                logger.warning("No active stages found in database")
         
         # 🔥 IMPORTANT: Log the final filter
         logger.info(f"📋 Final lead_filter: {lead_filter}")
