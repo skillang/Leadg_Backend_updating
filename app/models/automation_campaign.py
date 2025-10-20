@@ -1,15 +1,13 @@
 # app/models/automation_campaign.py
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, validator, model_validator
 from typing import Optional, List, Dict, Any, Literal
 from datetime import datetime
 from enum import Enum
-
 
 class CampaignType(str, Enum):
     """Campaign type enum"""
     WHATSAPP = "whatsapp"
     EMAIL = "email"
-
 
 class CampaignStatus(str, Enum):
     ACTIVE = "active"       
@@ -17,7 +15,6 @@ class CampaignStatus(str, Enum):
     DELETED = "deleted"      
     COMPLETED = "completed" 
     CANCELLED = "cancelled"
-
 
 class CampaignTemplate(BaseModel):
     """Template configuration for campaign"""
@@ -36,7 +33,6 @@ class CampaignTemplate(BaseModel):
             except ValueError:
                 raise ValueError('custom_date must be in YYYY-MM-DD format')
         return v
-
 
 class AutomationCampaign(BaseModel):
     """Main campaign configuration model"""
@@ -126,8 +122,64 @@ class CampaignCreateRequest(BaseModel):
     send_time: str = "10:00"
     send_on_weekends: bool = True
     templates: List[CampaignTemplate]
+    
+    @model_validator(mode='after')  # ✅ Pydantic V2 syntax
+    def validate_campaign_filters(self):
+        """
+        STRICT VALIDATION: At least one of stage_ids, source_ids, or category_ids 
+        must be provided, OR send_to_all must be True
+        """
+        # If send_to_all is True, no other validation needed
+        if self.send_to_all:
+            return self
+        
+        # Check if at least one filter is provided
+        has_stage_filter = bool(self.stage_ids and len(self.stage_ids) > 0)
+        has_source_filter = bool(self.source_ids and len(self.source_ids) > 0)
+        has_category_filter = bool(self.category_ids and len(self.category_ids) > 0)
+        
+        if not (has_stage_filter or has_source_filter or has_category_filter):
+            raise ValueError(
+                'At least one filter must be provided: stage_ids, source_ids, or category_ids. '
+                'If you want to target all leads, set send_to_all=true'
+            )
+        
+        return self
 
+    @validator('campaign_duration_days')
+    def validate_duration(cls, v, values):
+        """Validate duration is greater than or equal to message limit"""
+        message_limit = values.get('message_limit')
+        use_custom_dates = values.get('use_custom_dates')
+        
+        if not use_custom_dates and message_limit:
+            if v is None:
+                raise ValueError(
+                    '❌ VALIDATION ERROR: campaign_duration_days is required when use_custom_dates=false.\n'
+                    f'Received: campaign_duration_days={v}, use_custom_dates={use_custom_dates}'
+                )
+            if v < message_limit:
+                raise ValueError(
+                    f'❌ VALIDATION ERROR: campaign_duration_days must be >= message_limit.\n'
+                    f'Received: campaign_duration_days={v}, message_limit={message_limit}\n'
+                    f'Solution: Increase campaign_duration_days to at least {message_limit} days'
+                )
+        return v
+    
+    @validator('send_time')
+    def validate_send_time(cls, v):
+        """Validate time format"""
+        try:
+            datetime.strptime(v, '%H:%M')
+        except ValueError:
+            raise ValueError(
+                f'❌ VALIDATION ERROR: Invalid time format.\n'
+                f'Received: send_time="{v}"\n'
+                f'Expected format: HH:MM (e.g., "10:00", "14:30")'
+            )
+        return v
 
+        
 class CampaignResponse(BaseModel):
     """Response model for campaign operations"""
     success: bool
@@ -171,7 +223,26 @@ class CampaignPreviewRequest(BaseModel):
     stage_ids: List[str] = []
     campaign_duration_days: int = Field(..., ge=1, description="Duration in days")
     message_limit: int = Field(..., ge=1, description="Number of messages per lead")
-
+    
+    @model_validator(mode='after')
+    def validate_preview_filters(self):
+        """
+        STRICT VALIDATION: At least one of stage_ids, source_ids, or category_ids 
+        must be provided for preview
+        """
+        # Check if at least one filter is provided
+        has_stage_filter = bool(self.stage_ids and len(self.stage_ids) > 0)
+        has_source_filter = bool(self.source_ids and len(self.source_ids) > 0)
+        has_category_filter = bool(self.category_ids and len(self.category_ids) > 0)
+        
+        if not (has_stage_filter or has_source_filter or has_category_filter):
+            raise ValueError(
+                '❌ VALIDATION ERROR: At least one filter must be provided.\n'
+                f'Received: stage_ids={self.stage_ids}, source_ids={self.source_ids}, category_ids={self.category_ids}\n'
+                'Please select at least one stage, source, or category to preview the campaign.'
+            )
+        
+        return self  # Return self, not values
 
 class CampaignPreviewResponse(BaseModel):
     """Response model for campaign preview"""

@@ -103,39 +103,46 @@ class CampaignExecutor:
                 logger.info("Campaign set to send_to_all - targeting ALL leads")
                 # base_query remains empty for send_to_all
             else:
+                # ✅ VALIDATION: At least one filter must be present
+                has_stage_filter = bool(campaign.get("stage_ids"))
+                has_source_filter = bool(campaign.get("source_ids"))
+                has_category_filter = bool(campaign.get("category_ids"))
+                
+                if not (has_stage_filter or has_source_filter or has_category_filter):
+                    logger.error("No filters provided and send_to_all is False")
+                    raise ValueError(
+                        "At least one filter (stage_ids, source_ids, or category_ids) must be provided "
+                        "when send_to_all is False"
+                    )
+                
                 # Convert IDs to names
                 stage_names = []
                 source_names = []
                 category_names = []
                 
-                if campaign.get("stage_ids"):
+                # ✅ IMPORTANT: Only fetch if IDs are explicitly provided
+                if has_stage_filter:
                     stage_names = await self._convert_stage_ids_to_names(campaign["stage_ids"])
-                    logger.info(f"Stage names: {stage_names}")
-                else:
-                    # 🆕 NEW: If no stages specified, get ALL active stages
-                    all_stages = await self.db.lead_stages.find({"is_active": True}).to_list(None)
-                    stage_names = [s["name"] for s in all_stages]
-                    logger.info(f"⭐ No stages specified - including ALL: {stage_names}")
+                    logger.info(f"Stage names from IDs: {stage_names}")
+                    
+                    if not stage_names:
+                        logger.warning(f"No valid stages found for provided stage_ids: {campaign['stage_ids']}")
                 
-                if campaign.get("source_ids"):
+                if has_source_filter:
                     source_names = await self._convert_source_ids_to_names(campaign["source_ids"])
-                    logger.info(f"Source names: {source_names}")
-                else:
-                    # 🆕 NEW: If no sources specified, get ALL active sources
-                    all_sources = await self.db.sources.find({"is_active": True}).to_list(None)
-                    source_names = [s["name"] for s in all_sources]
-                    logger.info(f"⭐ No sources specified - including ALL: {source_names}")
+                    logger.info(f"Source names from IDs: {source_names}")
+                    
+                    if not source_names:
+                        logger.warning(f"No valid sources found for provided source_ids: {campaign['source_ids']}")
                 
-                if campaign.get("category_ids"):
+                if has_category_filter:
                     category_names = await self._convert_category_ids_to_names(campaign["category_ids"])
-                    logger.info(f"Category names: {category_names}")
-                else:
-                    # 🆕 NEW: If no categories specified, get ALL active categories
-                    all_categories = await self.db.lead_categories.find({"is_active": True}).to_list(None)
-                    category_names = [c["name"] for c in all_categories]
-                    logger.info(f"⭐ No categories specified - including ALL: {category_names}")
+                    logger.info(f"Category names from IDs: {category_names}")
+                    
+                    if not category_names:
+                        logger.warning(f"No valid categories found for provided category_ids: {campaign['category_ids']}")
                 
-                # Build filter conditions using AND logic (all must match)
+                # Build filter conditions using AND logic (all provided filters must match)
                 conditions = []
                 
                 if stage_names:
@@ -155,6 +162,14 @@ class CampaignExecutor:
                         conditions.append({"category": category_names[0]})
                     else:
                         conditions.append({"category": {"$in": category_names}})
+                
+                # ✅ SAFETY CHECK: Ensure we have at least one valid condition
+                if not conditions:
+                    logger.error("No valid conditions after ID to name conversion")
+                    raise ValueError(
+                        "Could not convert provided IDs to valid stage/source/category names. "
+                        "Please check that the provided IDs are correct."
+                    )
                 
                 # Combine conditions with AND logic (all conditions must be true)
                 if len(conditions) == 1:
@@ -211,10 +226,12 @@ class CampaignExecutor:
             logger.info(f"Found {len(leads)} matching leads")
             return leads
             
+        except ValueError as ve:
+            # Re-raise validation errors
+            raise
         except Exception as e:
             logger.error(f"Error finding matching leads: {str(e)}")
             return []
-
 
     async def _convert_stage_ids_to_names(self, stage_ids: List[str]) -> List[str]:
         """Convert stage ObjectIds to stage names"""
