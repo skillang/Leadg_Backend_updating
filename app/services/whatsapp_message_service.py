@@ -1024,6 +1024,14 @@ class WhatsAppMessageService:
             for change in changes:
                 value = change.get("value", {})
                 webhook_messages = value.get("messages", [])
+                
+                # 🔥 DEBUG: Log what we're seeing
+                if webhook_messages:
+                    for msg in webhook_messages:
+                        logger.info(f"🔍 MESSAGE FOUND: type={msg.get('type')}, id={msg.get('id')}")
+                        if msg.get('type') == 'interactive':
+                            logger.info(f"🔘 INTERACTIVE DATA: {msg.get('interactive')}")
+                
                 messages.extend(webhook_messages)
         
         return messages
