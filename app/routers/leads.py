@@ -26,6 +26,7 @@ from ..models.lead import (
     LeadBulkCreate, 
     LeadBulkCreateResponse,
     LeadCreateComprehensive,
+    LeadsFilterRequest,
     LeadResponseComprehensive, 
     LeadStatusUpdate,
    
@@ -85,41 +86,8 @@ DEFAULT_NEW_LEAD_STATUS = "Initial"
 
 
 # ============================================================================
-# 🆕 NEW: SELECTIVE ROUND ROBIN ENDPOINTS
+#  SELECTIVE ROUND ROBIN ENDPOINTS
 # ============================================================================
-
-@router.post("/assignment/selective-round-robin/test", response_model=SelectiveRoundRobinResponse)
-async def test_selective_round_robin(
-    request: SelectiveRoundRobinRequest,
-    current_user: dict = Depends(get_admin_user)
-):
-    """Test selective round robin assignment (Admin only)"""
-    try:
-        selected_user = await lead_assignment_service.get_next_assignee_selective_round_robin(
-            request.selected_user_emails
-        )
-        
-        if selected_user:
-            return SelectiveRoundRobinResponse(
-                success=True,
-                message=f"User {selected_user} would be selected for assignment",
-                selected_user=selected_user,
-                available_users=request.selected_user_emails
-            )
-        else:
-            return SelectiveRoundRobinResponse(
-                success=False,
-                message="No valid users available for assignment",
-                selected_user=None,
-                available_users=request.selected_user_emails
-            )
-    
-    except Exception as e:
-        logger.error(f"Error in selective round robin test: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to test selective round robin: {str(e)}"
-        )
 
 @router.post("/assignment/bulk-assign-selective", response_model=BulkAssignmentResponse)
 async def bulk_assign_leads_selective(
@@ -236,7 +204,7 @@ async def bulk_assign_leads_selective(
         )
 
 # ============================================================================
-# 🆕 NEW: MULTI-USER ASSIGNMENT ENDPOINTS
+#  MULTI-USER ASSIGNMENT ENDPOINTS
 # ============================================================================
 
 @router.post("/leads/{lead_id}/assign-multiple", response_model=MultiUserAssignmentResponse)
@@ -389,7 +357,7 @@ async def get_lead_assignment_details(
         )
 
 # ============================================================================
-# 🆕 NEW: USER SELECTION ENDPOINTS
+#  USER SELECTION ENDPOINTS
 # ============================================================================
 
 @router.get("/users/assignable-with-details", response_model=UserSelectionResponse)
@@ -483,7 +451,7 @@ async def preview_round_robin_assignment(
         )
 
 # ============================================================================
-# 🆕 NEW: ENHANCED LEAD LISTING WITH MULTI-ASSIGNMENT INFO
+#  ENHANCED LEAD LISTING WITH MULTI-ASSIGNMENT INFO
 # ============================================================================
 @router.get("/leads-extended/", response_model=List[LeadResponseExtended])
 async def get_leads_with_multi_assignment_info(
@@ -616,7 +584,6 @@ async def get_leads_with_multi_assignment_info(
         )
 
 
-
 # ============================================================================
 # HELPER FUNCTIONS
 # ============================================================================
@@ -641,7 +608,7 @@ async def process_lead_for_response(lead: Dict[str, Any], db, current_user: Dict
         elif not isinstance(lead["lead_score"], (int, float)):
             lead["lead_score"] = 0
         
-        # 🆕 NEW: Handle new optional fields with proper defaults
+        #  Handle new optional fields with proper defaults
         lead["age"] = lead.get("age")  # Keep None if not set
         lead["experience"] = lead.get("experience","")  # Keep None if not set
         lead["nationality"] = lead.get("nationality","")  # Keep None if not set
@@ -811,7 +778,7 @@ def format_lead_response(lead_doc: dict) -> dict:
         "experience": lead_doc.get("experience",""),
         "nationality": lead_doc.get("nationality",""),
         "date_of_birth": lead_doc.get("birth_of_date"),
-        "current_location": lead_doc.get("current_location",""),  # 🆕 NEW: Added current_location with default
+        "current_location": lead_doc.get("current_location",""),  #  Added current_location with default
         
         # Multi-assignment fields
         "co_assignees": lead_doc.get("co_assignees", []),
@@ -888,15 +855,15 @@ def get_field_change_description(field_name: str, old_value: any, new_value: any
 async def create_lead(
     lead_data: dict,
     force_create: bool = Query(False, description="Create lead even if duplicates exist"),
-    # 🆕 NEW: Support for selective round robin
+    #  Support for selective round robin
     selected_user_emails: Optional[str] = Query(None, description="Comma-separated list of user emails for selective round robin"),
     current_user: Dict[str, Any] = Depends(get_user_with_single_lead_permission) 
 ):
     """
     🔄 UPDATED: Create a new lead with enhanced assignment options:
-    - 🆕 NEW: Category-Source combination lead IDs (NS-WB-1, SA-SM-2, WA-RF-3, etc.)
-    - 🆕 NEW: Selective round robin assignment
-    - 🆕 NEW: AGE, EXPERIENCE, Nationality fields (optional)
+    -  Category-Source combination lead IDs (NS-WB-1, SA-SM-2, WA-RF-3, etc.)
+    -  Selective round robin assignment
+    -  AGE, EXPERIENCE, Nationality fields (optional)
     - Duplicate detection and prevention
     - Activity logging and user array updates
     """
@@ -923,7 +890,7 @@ async def create_lead(
                         detail="Category is required. Please select a valid lead category."
                     )
                 
-                # 🆕 NEW: Validate source is provided for new ID format
+                #  Validate source is provided for new ID format
                 if not basic_info_data.get("source"):
                     raise HTTPException(
                         status_code=400,
@@ -977,7 +944,7 @@ async def create_lead(
                         detail="Category is required. Please select a valid lead category."
                     )
                 
-                # 🆕 NEW: Validate source is provided for new ID format
+                #  Validate source is provided for new ID format
                 if not lead_data.get("source"):
                     raise HTTPException(
                         status_code=400,
@@ -1070,11 +1037,11 @@ async def create_lead(
             "success": True,
             "message": result.get("message", "Lead created successfully"),
             "lead_id": result.get("lead_id"),
-            "lead_id_format": "category_source_combination",  # 🆕 NEW: Track format used
+            "lead_id_format": "category_source_combination",  #  Track format used
             "assigned_to": result.get("assigned_to"),
             "assignment_method": result.get("assignment_method"),
             "selected_users_pool": selected_users,
-            "lead_id_info": result.get("lead_id_info", {}),  # 🆕 NEW: ID generation details
+            "lead_id_info": result.get("lead_id_info", {}),  #  ID generation details
             "duplicate_check": result.get("duplicate_check", {
                 "is_duplicate": False,
                 "checked": True
@@ -1100,7 +1067,7 @@ async def get_leads(
     lead_status: Optional[str] = Query(None),  # ✅ Changed from LeadStatus to str
     assigned_to: Optional[str] = Query(None),
     search: Optional[str] = Query(None),
-    # 🆕 NEW: Add the missing filter parameters
+    #  Add the missing filter parameters
     stage: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     category: Optional[str] = Query(None),
@@ -1129,11 +1096,11 @@ async def get_leads(
                 {"co_assignees": {"$in": [current_user["email"]]}}
             ]
                 
-        # 🆕 NEW: Handle stage filter
+        #  Handle stage filter
         if stage:
             query["stage"] = stage
             
-        # 🆕 NEW: Handle status filter (prefer new 'status' over old 'lead_status')
+        #  Handle status filter (prefer new 'status' over old 'lead_status')
         if status:
             query["status"] = status
         elif lead_status:
@@ -1144,19 +1111,19 @@ async def get_leads(
                 status_conditions.extend([{"status": old_status} for old_status in possible_old_statuses])
             query["$or"] = status_conditions
             
-        # 🆕 NEW: Handle category filter
+        #  Handle category filter
         if category:
             query["category"] = category
             
-        # 🆕 NEW: Handle source filter
+        #  Handle source filter
         if source:
             query["source"] = source
             
-        # 🆕 NEW: Handle course_level filter
+        #  Handle course_level filter
         if course_level:
             query["course_level"] = course_level
             
-        # 🆕 NEW: Handle date range filter
+        #  Handle date range filter
         if created_from or created_to:
             date_query = {}
             if created_from:
@@ -1277,7 +1244,7 @@ async def get_my_leads(
     limit: int = Query(20, ge=1, le=100),
     lead_status: Optional[str] = Query(None),  # ✅ Changed from LeadStatus to str
     search: Optional[str] = Query(None),
-    # 🆕 NEW: Add the missing filter parameters
+    #  Add the missing filter parameters
     stage: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     category: Optional[str] = Query(None),
@@ -1421,6 +1388,178 @@ async def get_my_leads(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve your leads"
+        )
+
+@router.post("/filter")
+@convert_lead_dates()
+async def filter_leads(
+    filter_request: LeadsFilterRequest,
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    current_user: Dict[str, Any] = Depends(get_current_active_user)
+):
+    """
+    Filter leads with optional bulk lead_ids array in request body
+    
+    Supports large arrays of lead IDs that won't fit in URL query parameters.
+    Returns same format as /leads and /my-leads endpoints.
+    """
+    try:
+        logger.info(f"Filter leads requested by: {current_user.get('email')}")
+        db = get_database()
+        
+        # Build base query based on user role
+        query = {}
+        if current_user["role"] != "admin":
+            query["$or"] = [
+                {"assigned_to": current_user["email"]},
+                {"co_assignees": {"$in": [current_user["email"]]}}
+            ]
+        
+        # 🔥 Handle lead_ids filter (from request body)
+        if filter_request.lead_ids:
+            if "$or" in query or "$and" in query:
+                # Combine with existing conditions
+                existing_query = query.copy()
+                query = {
+                    "$and": [
+                        existing_query,
+                        {"lead_id": {"$in": filter_request.lead_ids}}
+                    ]
+                }
+            else:
+                query["lead_id"] = {"$in": filter_request.lead_ids}
+        
+        # Handle stage filter
+        if filter_request.stage:
+            if "$and" in query:
+                query["$and"].append({"stage": filter_request.stage})
+            else:
+                query["stage"] = filter_request.stage
+        
+        # Handle status filter
+        if filter_request.status:
+            if "$and" in query:
+                query["$and"].append({"status": filter_request.status})
+            else:
+                query["status"] = filter_request.status
+        
+        # Handle category filter
+        if filter_request.category:
+            if "$and" in query:
+                query["$and"].append({"category": filter_request.category})
+            else:
+                query["category"] = filter_request.category
+        
+        # Handle source filter
+        if filter_request.source:
+            if "$and" in query:
+                query["$and"].append({"source": filter_request.source})
+            else:
+                query["source"] = filter_request.source
+        
+        # Handle assigned_to filter (admin only)
+        if filter_request.assigned_to and current_user["role"] == "admin":
+            if "$and" in query:
+                query["$and"].append({"assigned_to": filter_request.assigned_to})
+            else:
+                query["assigned_to"] = filter_request.assigned_to
+        
+        # Handle search filter
+        if filter_request.search:
+            search_condition = {
+                "$or": [
+                    {"name": {"$regex": filter_request.search, "$options": "i"}},
+                    {"email": {"$regex": filter_request.search, "$options": "i"}},
+                    {"lead_id": {"$regex": filter_request.search, "$options": "i"}},
+                    {"contact_number": {"$regex": filter_request.search, "$options": "i"}},
+                    {"phone_number": {"$regex": filter_request.search, "$options": "i"}}
+                ]
+            }
+            if "$and" in query:
+                query["$and"].append(search_condition)
+            else:
+                query = {"$and": [query, search_condition]} if query else search_condition
+        
+        # Handle date range filters
+        if filter_request.created_from or filter_request.created_to:
+            date_query = {}
+            if filter_request.created_from:
+                date_query["$gte"] = filter_request.created_from
+            if filter_request.created_to:
+                date_query["$lte"] = filter_request.created_to
+            
+            if "$and" in query:
+                query["$and"].append({"created_at": date_query})
+            else:
+                query["created_at"] = date_query
+        
+        if filter_request.updated_from or filter_request.updated_to:
+            date_query = {}
+            if filter_request.updated_from:
+                date_query["$gte"] = filter_request.updated_from
+            if filter_request.updated_to:
+                date_query["$lte"] = filter_request.updated_to
+            
+            if "$and" in query:
+                query["$and"].append({"updated_at": date_query})
+            else:
+                query["updated_at"] = date_query
+        
+        if filter_request.last_contacted_from or filter_request.last_contacted_to:
+            date_query = {}
+            if filter_request.last_contacted_from:
+                date_query["$gte"] = filter_request.last_contacted_from
+            if filter_request.last_contacted_to:
+                date_query["$lte"] = filter_request.last_contacted_to
+            
+            if "$and" in query:
+                query["$and"].append({"last_contacted": date_query})
+            else:
+                query["last_contacted"] = date_query
+        
+        logger.info(f"Final filter query: {query}")
+        
+        # Get total count
+        total = await db.leads.count_documents(query)
+        skip = (page - 1) * limit
+        
+        # Fetch leads with pagination
+        leads = await db.leads.find(query).skip(skip).limit(limit).sort("created_at", -1).to_list(None)
+        
+        # Process leads with migration support
+        processed_leads = []
+        for lead in leads:
+            try:
+                processed_lead = await process_lead_for_response(lead, db, current_user)
+                processed_leads.append(processed_lead)
+            except Exception as e:
+                logger.error(f"Failed to process lead {lead.get('lead_id', 'unknown')}: {e}")
+                continue
+        
+        # Convert ObjectIds before response
+        final_leads = convert_objectid_to_str(processed_leads)
+        
+        logger.info(f"Successfully filtered {len(final_leads)} leads out of {len(leads)} total")
+        
+        # Return SAME format as /leads and /my-leads
+        return {
+            "leads": final_leads,
+            "pagination": {
+                "page": page,
+                "limit": limit,
+                "total": total,
+                "pages": (total + limit - 1) // limit,
+                "has_next": page * limit < total,
+                "has_prev": page > 1
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Filter leads error: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to filter leads"
         )
 
 @router.get("/stats", response_model=LeadStatsResponse)
@@ -1628,16 +1767,10 @@ async def get_lead(
             detail="Failed to retrieve lead"
         )
 
-# ============================================================================
-# EXISTING ENDPOINTS CONTINUED...
-# ============================================================================
-# Add all the remaining endpoints here (assign, update, delete, bulk operations, admin endpoints, etc.)
-# Due to length limits, I'm focusing on the core corrected structure
-
-# app/routers/leads.py - Part 2: Remaining Endpoints with Multi-Assignment Support
 
 # ============================================================================
 # ASSIGNMENT ENDPOINTS
+# Add all the remaining endpoints here (assign, update, delete, bulk operations, admin endpoints, etc.)
 # ============================================================================
 
 @router.post("/{lead_id}/assign", response_model=LeadAssignResponse)
@@ -1738,7 +1871,7 @@ async def update_lead_universal(
                 detail="Lead not found"
             )
         
-        # 🆕 NEW: AUTOMATION LOGIC - Check if stage is changing
+        #  AUTOMATION LOGIC - Check if stage is changing
         new_stage = update_request.get("stage")
         current_stage = lead.get("stage")
         stage_changed = new_stage and new_stage != current_stage
@@ -1843,7 +1976,7 @@ async def update_lead_universal(
                         }
                         update_request["_automation_activity"] = automation_activity
         
-        # 🆕 NEW: Check campaign criteria when stage or source changes
+        #  Check campaign criteria when stage or source changes
         new_source = update_request.get("source")
         current_source = lead.get("source")
         source_changed = new_source and new_source != current_source
@@ -2283,93 +2416,9 @@ async def check_duplicates_batch(
 # ADMIN ENDPOINTS WITH MULTI-ASSIGNMENT ENHANCEMENTS
 # ============================================================================
 
-@router.get("/my-leads-fast")
-@convert_lead_dates()
-async def get_my_leads_fast(
-    # 🆕 NEW: Include co-assignments in fast lookup
-    include_co_assignments: bool = Query(True, description="Include leads where I'm a co-assignee"),
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
-):
-    """SUPER FAST user leads using user array lookup with enhanced multi-assignment support"""
-    try:
-        logger.info(f"Fast leads requested by user: {current_user.get('email')}")
-        
-        db = get_database()
-        user_email = current_user["email"]
-        user_data = await db.users.find_one({"email": user_email})
-        
-        if not user_data:
-            raise HTTPException(status_code=404, detail="User not found")
-        
-        lead_ids = user_data.get("assigned_leads", [])
-        
-        # If including co-assignments, get those leads too
-        if include_co_assignments:
-            co_assigned_leads = await db.leads.find(
-                {"co_assignees": user_email},
-                {"lead_id": 1}
-            ).to_list(None)
-            
-            co_assigned_ids = [lead["lead_id"] for lead in co_assigned_leads]
-            
-            # Combine and deduplicate
-            all_lead_ids = list(set(lead_ids + co_assigned_ids))
-        else:
-            all_lead_ids = lead_ids
-        
-        total_count = len(all_lead_ids)
-        
-        logger.info(f"User has {total_count} leads (including co-assignments: {include_co_assignments})")
-        
-        if not all_lead_ids:
-            return {
-                "success": True,
-                "leads": [],
-                "total": 0,
-                "message": "No leads assigned",
-                "performance": "ultra_fast_array_lookup",
-                "include_co_assignments": include_co_assignments
-            }
-        
-        # Fetch lead details
-        leads_cursor = db.leads.find({"lead_id": {"$in": all_lead_ids}})
-        leads = await leads_cursor.to_list(None)
-        
-        # Process leads with migration support
-        clean_leads = []
-        for lead in leads:
-            try:
-                processed_lead = await process_lead_for_response(lead, db, current_user)
-                clean_leads.append(processed_lead)
-            except Exception as e:
-                logger.error(f"Error processing lead {lead.get('lead_id', 'unknown')}: {e}")
-                continue
-        
-        # Convert all ObjectIds to strings before returning
-        final_leads = convert_objectid_to_str(clean_leads)
-        
-        logger.info(f"✅ Fast lookup returned {len(final_leads)} leads")
-        
-        return {
-            "success": True,
-            "leads": final_leads,
-            "total": total_count,
-            "performance": "ultra_fast_array_lookup",
-            "include_co_assignments": include_co_assignments
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Fast leads error: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve fast leads: {str(e)}"
-        )
-
 @router.get("/admin/user-lead-stats")
 async def get_admin_user_lead_stats(
-    # 🆕 NEW: Include multi-assignment stats
+    #  Include multi-assignment stats
     include_multi_assignment_stats: bool = Query(True, description="Include multi-assignment statistics"),
     current_user: Dict[str, Any] = Depends(get_admin_user)
 ):
@@ -2512,11 +2561,6 @@ async def sync_user_arrays(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to sync arrays: {str(e)}"
         )
-
-# ============================================================================
-# MIGRATION AND ANALYSIS ENDPOINTS
-# ============================================================================
-
 
 # ============================================================================
 # ADDITIONAL UTILITY ENDPOINTS
@@ -2982,54 +3026,4 @@ async def get_lead_call_stats(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get call statistics: {str(e)}"
-        )
-
-@router.post("/admin/migrate-historical-calls")
-async def migrate_historical_call_data(
-    batch_size: int = Query(50, ge=1, le=200, description="Number of leads to process at once"),
-    current_user: Dict[str, Any] = Depends(get_admin_user)
-):
-    """
-    One-time migration to populate call stats for existing leads (Admin only)
-    This endpoint is for migrating historical data for leads that already have call history
-    """
-    try:
-        admin_email = current_user.get("email")
-        logger.info(f"Historical call data migration requested by admin: {admin_email}")
-        
-        # Run bulk refresh for ALL leads with force_refresh=True
-        result = await tata_call_service.bulk_refresh_call_counts(
-            lead_ids=None,  # All leads
-            assigned_to_user=None,  # All users
-            force_refresh=True,  # Force refresh even if recently updated
-            batch_size=batch_size
-        )
-        
-        if result.get("success"):
-            return {
-                "success": True,
-                "message": "Historical call data migration completed",
-                "migration_summary": {
-                    "total_leads_processed": result.get("total_leads", 0),
-                    "successful_migrations": result.get("successful_refreshes", 0),
-                    "failed_migrations": result.get("failed_refreshes", 0),
-                    "processing_time_seconds": result.get("processing_time", 0),
-                    "failed_lead_ids": result.get("failed_lead_ids", [])
-                },
-                "next_steps": "Call statistics are now available for all leads. Users can view counts in lead details.",
-                "note": "This was a one-time migration. Future calls will automatically update counts."
-            }
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=result.get("error", "Migration failed")
-            )
-            
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error in historical call data migration: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to migrate historical call data: {str(e)}"
         )

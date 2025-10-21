@@ -1029,6 +1029,22 @@ class LeadListResponse(BaseModel):
             }
         }
 
+class LeadsFilterRequest(BaseModel):
+    """Request model for filtering leads with optional lead_ids array"""
+    lead_ids: Optional[List[str]] = Field(None, description="Array of lead IDs to filter")
+    stage: Optional[str] = Field(None, description="Filter by stage")
+    status: Optional[str] = Field(None, description="Filter by status")
+    category: Optional[str] = Field(None, description="Filter by category")
+    source: Optional[str] = Field(None, description="Filter by source")
+    search: Optional[str] = Field(None, description="Search in name, email, lead_id")
+    assigned_to: Optional[str] = Field(None, description="Filter by assigned user (admin only)")
+    created_from: Optional[str] = Field(None, description="Filter by creation date from")
+    created_to: Optional[str] = Field(None, description="Filter by creation date to")
+    updated_from: Optional[str] = Field(None, description="Filter by update date from")
+    updated_to: Optional[str] = Field(None, description="Filter by update date to")
+    last_contacted_from: Optional[str] = Field(None, description="Filter by last contact date from")
+    last_contacted_to: Optional[str] = Field(None, description="Filter by last contact date to")
+
 class LeadStatusUpdate(BaseModel):
     """Lead status update model"""
     status: str
