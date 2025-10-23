@@ -513,7 +513,7 @@ class CVProcessingService:
                 }
             
             # Import existing lead models
-            from ..models.lead import LeadCreateComprehensive, LeadBasicInfo, LeadStatusAndTags, LeadAdditionalInfo
+            from ..models.lead import LeadCreateComprehensive, LeadBasicInfo, LeadStatusAndTags, LeadAdditionalInfo, LeadAssignmentInfo
             
             # Step 3: Build lead data with validation
             try:
