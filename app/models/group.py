@@ -29,17 +29,18 @@ class GroupCreate(GroupBase):
         }
 
 class GroupUpdate(BaseModel):
-    """Model for updating a group"""
-    name: Optional[str] = Field(None, min_length=1, max_length=100)
-    description: Optional[str] = Field(None, max_length=500)
-    lead_ids: Optional[List[str]] = None
+    """
+    Model for updating a group
+    ✅ UPDATED: Removed lead_ids - use /add or /remove endpoints instead
+    """
+    name: Optional[str] = Field(None, min_length=1, max_length=100, description="New group name")
+    description: Optional[str] = Field(None, max_length=500, description="New group description")
     
     class Config:
         json_schema_extra = {
             "example": {
                 "name": "Engineering Batch 2025 - Updated",
-                "description": "Updated description for the group",
-                "lead_ids": ["NS-1", "SA-5", "WA-10", "NS-15"]
+                "description": "Updated description for the group"
             }
         }
 
@@ -50,7 +51,7 @@ class GroupAddLeads(BaseModel):
     class Config:
         json_schema_extra = {
             "example": {
-                "lead_ids": ["NS-20", "SA-15"]
+                "lead_ids": ["NS-20", "SA-15", "WA-30"]
             }
         }
 
@@ -66,14 +67,19 @@ class GroupRemoveLeads(BaseModel):
         }
 
 class GroupResponse(GroupBase):
-    """Response model for a single group"""
+    """
+    Response model for a single group
+    ✅ UPDATED: Returns user names instead of user IDs
+    """
     group_id: str = Field(..., description="Unique group identifier (e.g., GRP-001)")
     lead_ids: List[str] = Field(default_factory=list, description="Array of lead IDs in this group")
     lead_count: int = Field(..., description="Number of leads in the group")
-    created_by: str = Field(..., description="User ID who created the group")
+    
+    # ✅ CHANGED: Return names instead of IDs
+    created_by_name: str = Field(..., description="Name of user who created the group")
     created_at: datetime = Field(..., description="Group creation timestamp")
     updated_at: datetime = Field(..., description="Last update timestamp")
-    updated_by: Optional[str] = Field(None, description="User ID who last updated the group")
+    updated_by_name: Optional[str] = Field(None, description="Name of user who last updated the group")
     
     class Config:
         json_schema_extra = {
@@ -83,10 +89,10 @@ class GroupResponse(GroupBase):
                 "description": "Students interested in Engineering programs",
                 "lead_ids": ["NS-1", "SA-5", "WA-10"],
                 "lead_count": 3,
-                "created_by": "686f894b1ca17da22b3533e7",
+                "created_by_name": "John Smith",  # ✅ Changed from created_by ID
                 "created_at": "2025-01-15T10:30:00Z",
                 "updated_at": "2025-01-15T10:30:00Z",
-                "updated_by": None
+                "updated_by_name": "Jane Doe"  # ✅ Changed from updated_by ID
             }
         }
 
@@ -102,10 +108,10 @@ class GroupWithLeadsResponse(GroupResponse):
                 "description": "Students interested in Engineering programs",
                 "lead_ids": ["NS-1", "SA-5"],
                 "lead_count": 2,
-                "created_by": "686f894b1ca17da22b3533e7",
+                "created_by_name": "John Smith",  # ✅ Changed from created_by ID
                 "created_at": "2025-01-15T10:30:00Z",
                 "updated_at": "2025-01-15T10:30:00Z",
-                "updated_by": None,
+                "updated_by_name": "Jane Doe",  # ✅ Changed from updated_by ID
                 "leads": [
                     {
                         "lead_id": "NS-1",
@@ -128,17 +134,20 @@ class GroupWithLeadsResponse(GroupResponse):
         }
 
 class GroupListResponse(BaseModel):
-    """Response for listing groups with pagination"""
-    success: bool = Field(default=True)
+    """
+    Response for listing groups with pagination
+    ✅ UPDATED: Matches leads pagination format with has_next and has_prev
+    """
     groups: List[GroupResponse] = Field(default_factory=list)
     total: int = Field(..., description="Total number of groups")
     page: int = Field(..., description="Current page number")
     limit: int = Field(..., description="Items per page")
+    has_next: bool = Field(..., description="Whether there is a next page")
+    has_prev: bool = Field(..., description="Whether there is a previous page")
     
     class Config:
         json_schema_extra = {
             "example": {
-                "success": True,
                 "groups": [
                     {
                         "group_id": "GRP-001",
@@ -146,15 +155,17 @@ class GroupListResponse(BaseModel):
                         "description": "Engineering students",
                         "lead_ids": ["NS-1", "SA-5"],
                         "lead_count": 2,
-                        "created_by": "686f894b1ca17da22b3533e7",
+                        "created_by_name": "John Smith",
                         "created_at": "2025-01-15T10:30:00Z",
                         "updated_at": "2025-01-15T10:30:00Z",
-                        "updated_by": None
+                        "updated_by_name": "Jane Doe"
                     }
                 ],
-                "total": 1,
+                "total": 25,
                 "page": 1,
-                "limit": 20
+                "limit": 20,
+                "has_next": True,
+                "has_prev": False
             }
         }
 
