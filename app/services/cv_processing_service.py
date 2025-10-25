@@ -513,7 +513,7 @@ class CVProcessingService:
                 }
             
             # Import existing lead models
-            from ..models.lead import LeadCreateComprehensive, LeadBasicInfo, LeadStatusAndTags, LeadAdditionalInfo
+            from ..models.lead import LeadCreateComprehensive, LeadBasicInfo, LeadStatusAndTags, LeadAdditionalInfo, LeadAssignmentInfo
             
             # Step 3: Build lead data with validation
             try:
@@ -536,10 +536,9 @@ class CVProcessingService:
                     additional_info=LeadAdditionalInfo(
                         notes=self._build_lead_notes_from_cv(extraction, conversion_request.notes, raw_experience, mapped_experience)
                     ),
-                    assignment={
-                        "assign_to": conversion_request.assign_to,
-                        "assignment_method": conversion_request.assignment_method or "unassigned"
-                    }
+                   assignment=LeadAssignmentInfo(
+                    assigned_to="unassigned" if conversion_request.assignment_method == "unassigned" else conversion_request.assign_to
+                  )
                 )
             except Exception as validation_error:
                 logger.error(f"Lead data validation error: {str(validation_error)}")
