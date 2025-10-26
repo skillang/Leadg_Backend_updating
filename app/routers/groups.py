@@ -93,10 +93,10 @@ async def get_user_name_from_id(db, user_id: str) -> str:
 @router.post("/", response_model=GroupResponse, status_code=status.HTTP_201_CREATED)
 async def create_group(
     group_data: GroupCreate,
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_current_active_user)  # ✅ Changed to allow all users
 ):
     """
-    Create a new group (Admin only)
+    Create a new group (All users can create)
     
     - **name**: Group name (required, unique)
     - **description**: Optional description
@@ -279,11 +279,14 @@ async def get_groups(
         
         return GroupListResponse(
             groups=group_responses,
-            total=total,
-            page=page,
-            limit=limit,
-            has_next=skip + limit < total,  # ✅ Added has_next
-            has_prev=page > 1  # ✅ Added has_prev
+            pagination={
+                "page": page,
+                "limit": limit,
+                "total": total,
+                "pages": (total + limit - 1) // limit,  # Calculate total pages
+                "has_next": skip + limit < total,
+                "has_prev": page > 1
+            }
         )
         
     except Exception as e:
@@ -297,15 +300,18 @@ async def get_groups(
 # GET SINGLE GROUP BY ID (with populated lead details)
 # ============================================================================
 
-@router.get("/{group_id}", response_model=GroupWithLeadsResponse)
+@router.get("/{group_id}", response_model=GroupResponse)
 async def get_group_with_leads(
     group_id: str,
     current_user: Dict[str, Any] = Depends(get_current_active_user)
 ):
     """
-    Get group details with populated lead information
+    Get group details (without populated lead details)
     
     - **group_id**: Group ID (e.g., GRP-001)
+    
+    NOTE: This endpoint returns group info without lead details.
+    To get lead details, use GET /leads/ with filters.
     """
     try:
         db = get_database()
@@ -323,55 +329,16 @@ async def get_group_with_leads(
         created_by_name = await get_user_name_from_id(db, group["created_by"])
         updated_by_name = await get_user_name_from_id(db, group.get("updated_by")) if group.get("updated_by") else None
         
-        # Fetch lead details
-        leads = []
-        if group.get("lead_ids"):
-            lead_cursor = db.leads.find(
-                {"lead_id": {"$in": group["lead_ids"]}},
-                {
-                    "lead_id": 1,
-                    "name": 1,
-                    "email": 1,
-                    "contact_number": 1,
-                    "stage": 1,
-                    "assigned_to": 1,
-                    "status": 1
-                }
-            )
-            
-            async for lead in lead_cursor:
-                # Get assigned user name
-                assigned_to_name = None
-                if lead.get("assigned_to"):
-                    assigned_user = await db.users.find_one({"email": lead["assigned_to"]})
-                    if assigned_user:
-                        first_name = assigned_user.get('first_name', '')
-                        last_name = assigned_user.get('last_name', '')
-                        assigned_to_name = f"{first_name} {last_name}".strip()
-                        if not assigned_to_name:
-                            assigned_to_name = assigned_user.get('email', 'Unknown')
-                
-                leads.append({
-                    "lead_id": lead["lead_id"],
-                    "name": lead["name"],
-                    "email": lead["email"],
-                    "contact_number": lead.get("contact_number", ""),
-                    "stage": lead.get("stage", "new"),
-                    "status": lead.get("status", "open"),
-                    "assigned_to_name": assigned_to_name
-                })
-        
-        return GroupWithLeadsResponse(
+        return GroupResponse(
             group_id=group["group_id"],
             name=group["name"],
             description=group.get("description", ""),
             lead_ids=group.get("lead_ids", []),
             lead_count=group.get("lead_count", 0),
-            created_by_name=created_by_name,  # ✅ Name instead of ID
+            created_by_name=created_by_name,
             created_at=group["created_at"],
             updated_at=group["updated_at"],
-            updated_by_name=updated_by_name,  # ✅ Name instead of ID
-            leads=leads
+            updated_by_name=updated_by_name
         )
         
     except HTTPException:
@@ -391,13 +358,14 @@ async def get_group_with_leads(
 async def update_group(
     group_id: str,
     group_data: GroupUpdate,
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_current_active_user)  # ✅ All users can update
 ):
     """
-    Update group details (Admin only)
+    Update group details (All users can update any group)
     
     - **name**: Optional new name
     - **description**: Optional new description
+    - Any user can update any group's name and description
     
     NOTE: To add or remove leads, use /groups/{group_id}/leads/add or /groups/{group_id}/leads/remove endpoints
     """
@@ -489,13 +457,15 @@ async def update_group(
 async def add_leads_to_group(
     group_id: str,
     lead_data: GroupAddLeads,
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_current_active_user)  # ✅ All users can add
 ):
     """
-    Add leads to an existing group (Admin only)
+    Add leads to any group (All users can add their assigned leads)
     
     - **lead_ids**: Array of lead IDs to add (in request body)
     - Duplicates are automatically handled (no duplicates in final array)
+    - Users can add their assigned leads to ANY group
+    - Admins can add any leads to any group
     
     Example Request Body:
     {
@@ -514,7 +484,33 @@ async def add_leads_to_group(
                 detail=f"Group with ID '{group_id}' not found"
             )
         
-        # Validate lead IDs
+        # ✅ NEW: For non-admin users, validate they can only add their assigned leads
+        user_email = current_user.get("email")
+        user_role = current_user.get("role")
+        
+        if user_role != "admin":
+            # Check if all leads are assigned to the current user
+            for lead_id in lead_data.lead_ids:
+                lead = await db.leads.find_one({"lead_id": lead_id})
+                if not lead:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Lead '{lead_id}' not found"
+                    )
+                
+                # Check if lead is assigned to current user or co-assigned
+                is_assigned = (
+                    lead.get("assigned_to") == user_email or
+                    user_email in lead.get("co_assignees", [])
+                )
+                
+                if not is_assigned:
+                    raise HTTPException(
+                        status_code=403,
+                        detail=f"You can only add leads assigned to you. Lead '{lead_id}' is not assigned to you."
+                    )
+        
+        # Validate lead IDs exist
         all_valid, invalid_ids = await validate_lead_ids(db, lead_data.lead_ids)
         if not all_valid:
             raise HTTPException(
@@ -581,12 +577,14 @@ async def add_leads_to_group(
 async def remove_leads_from_group(
     group_id: str,
     lead_data: GroupRemoveLeads,
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_current_active_user)  # ✅ All users can remove
 ):
     """
-    Remove leads from a group (Admin only)
+    Remove leads from any group (All users can remove their assigned leads)
     
     - **lead_ids**: Array of lead IDs to remove (in request body)
+    - Users can remove their assigned leads from ANY group
+    - Admins can remove any leads from any group
     
     Example Request Body:
     {
@@ -604,6 +602,29 @@ async def remove_leads_from_group(
                 status_code=404,
                 detail=f"Group with ID '{group_id}' not found"
             )
+        
+        # ✅ NEW: For non-admin users, validate they can only remove their assigned leads
+        user_email = current_user.get("email")
+        user_role = current_user.get("role")
+        
+        if user_role != "admin":
+            # Check if all leads are assigned to the current user
+            for lead_id in lead_data.lead_ids:
+                lead = await db.leads.find_one({"lead_id": lead_id})
+                if not lead:
+                    continue  # Skip if lead not found
+                
+                # Check if lead is assigned to current user or co-assigned
+                is_assigned = (
+                    lead.get("assigned_to") == user_email or
+                    user_email in lead.get("co_assignees", [])
+                )
+                
+                if not is_assigned:
+                    raise HTTPException(
+                        status_code=403,
+                        detail=f"You can only remove leads assigned to you. Lead '{lead_id}' is not assigned to you."
+                    )
         
         # Remove leads using set difference
         current_leads = set(group.get("lead_ids", []))
@@ -663,13 +684,14 @@ async def remove_leads_from_group(
 @router.delete("/{group_id}", response_model=GroupDeleteResponse)
 async def delete_group(
     group_id: str,
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_current_active_user)  # ✅ All users can delete
 ):
     """
-    Delete a group (Admin only)
+    Delete a group (All users can delete any group)
     
     - **group_id**: Group ID to delete
     - This is a hard delete (permanent removal)
+    - Any user can delete any group
     """
     try:
         db = get_database()

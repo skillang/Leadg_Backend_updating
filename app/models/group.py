@@ -1,6 +1,6 @@
 # app/models/group.py
 from pydantic import BaseModel, Field, validator
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 class GroupBase(BaseModel):
@@ -136,14 +136,13 @@ class GroupWithLeadsResponse(GroupResponse):
 class GroupListResponse(BaseModel):
     """
     Response for listing groups with pagination
-    ✅ UPDATED: Matches leads pagination format with has_next and has_prev
+    ✅ UPDATED: Matches leads pagination format with nested pagination object
     """
     groups: List[GroupResponse] = Field(default_factory=list)
-    total: int = Field(..., description="Total number of groups")
-    page: int = Field(..., description="Current page number")
-    limit: int = Field(..., description="Items per page")
-    has_next: bool = Field(..., description="Whether there is a next page")
-    has_prev: bool = Field(..., description="Whether there is a previous page")
+    pagination: Dict[str, Any] = Field(
+        ..., 
+        description="Pagination information with page, limit, total, pages, has_next, has_prev"
+    )
     
     class Config:
         json_schema_extra = {
@@ -161,11 +160,14 @@ class GroupListResponse(BaseModel):
                         "updated_by_name": "Jane Doe"
                     }
                 ],
-                "total": 25,
-                "page": 1,
-                "limit": 20,
-                "has_next": True,
-                "has_prev": False
+                "pagination": {
+                    "page": 1,
+                    "limit": 20,
+                    "total": 25,
+                    "pages": 2,
+                    "has_next": True,
+                    "has_prev": False
+                }
             }
         }
 
