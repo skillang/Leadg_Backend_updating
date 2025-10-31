@@ -203,103 +203,6 @@ async def bulk_assign_leads_selective(
             detail=f"Failed to perform bulk assignment: {str(e)}"
         )
 
-# ============================================================================
-#  MULTI-USER ASSIGNMENT ENDPOINTS
-# ============================================================================
-
-@router.post("/leads/{lead_id}/assign-multiple", response_model=MultiUserAssignmentResponse)
-async def assign_lead_to_multiple_users(
-    lead_id: str,
-    request: MultiUserAssignmentRequest,
-    current_user: dict = Depends(get_admin_user)
-):
-    """Assign a lead to multiple users (Admin only)"""
-    try:
-        db = get_database()
-        
-        # Validate lead exists
-        lead = await db.leads.find_one({"lead_id": lead_id})
-        if not lead:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Lead {lead_id} not found"
-            )
-        
-        admin_email = current_user.get("email")
-        
-        # Perform multi-user assignment
-        result = await lead_assignment_service.assign_lead_to_multiple_users(
-            lead_id=lead_id,
-            user_emails=request.user_emails,
-            assigned_by=admin_email,
-            reason=request.reason
-        )
-        
-        if result["success"]:
-            return MultiUserAssignmentResponse(**result)
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=result["message"]
-            )
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error in multi-user assignment: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to assign lead to multiple users: {str(e)}"
-        )
-
-@router.delete("/leads/{lead_id}/remove-user")
-async def remove_user_from_assignment(
-    lead_id: str,
-    request: RemoveFromAssignmentRequest,
-    current_user: dict = Depends(get_admin_user)
-):
-    """Remove a user from a multi-user assignment (Admin only)"""
-    try:
-        db = get_database()
-        
-        # Validate lead exists
-        lead = await db.leads.find_one({"lead_id": lead_id})
-        if not lead:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Lead {lead_id} not found"
-            )
-        
-        admin_email = current_user.get("email")
-        
-        # Remove user from assignment
-        success = await lead_assignment_service.remove_user_from_multi_assignment(
-            lead_id=lead_id,
-            user_email=request.user_email,
-            removed_by=admin_email,
-            reason=request.reason
-        )
-        
-        if success:
-            return {
-                "success": True,
-                "message": f"User {request.user_email} removed from lead {lead_id}"
-            }
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Failed to remove user from assignment"
-            )
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error removing user from assignment: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to remove user from assignment: {str(e)}"
-        )
-
 @router.get("/leads/{lead_id}/assignments")
 async def get_lead_assignment_details(
     lead_id: str,
@@ -845,8 +748,6 @@ def get_field_change_description(field_name: str, old_value: any, new_value: any
 
 # ============================================================================
 # CORE ENDPOINTS (UPDATED WITH NEW FEATURES)
-# ============================================================================
-# ============================================================================
 # 🔄 UPDATED: MAIN LEAD CREATION ENDPOINT WITH NEW ID GENERATION
 # ============================================================================
 
@@ -2031,39 +1932,74 @@ async def update_lead_universal(
         
         # Handle assignment change validation
         assignment_changed = False
+        co_assignees_changed = False
         old_assignee = lead.get("assigned_to")
         old_co_assignees = lead.get("co_assignees", [])
         new_assignee = None
-        
+        new_co_assignees = []
+
         if "assigned_to" in update_request:
             new_assignee = update_request.get("assigned_to")
             assignment_changed = (old_assignee != new_assignee)
-            
-            logger.info(f"🔄 Assignment change detected: '{old_assignee}' → '{new_assignee}' (Changed: {assignment_changed})")
-            
-            if assignment_changed and user_role != "admin":
+
+        # 🔥 NEW: Handle co-assignees from update request
+        if "co_assignees" in update_request:
+            new_co_assignees = update_request.get("co_assignees", [])
+            if not isinstance(new_co_assignees, list):
+                new_co_assignees = []
+            co_assignees_changed = set(old_co_assignees) != set(new_co_assignees)
+            logger.info(f"🔄 Co-assignees change detected: {old_co_assignees} → {new_co_assignees}")
+
+        if assignment_changed and user_role != "admin":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only admins can reassign leads"
+            )
+        
+        # Validate new assignee exists (if not None)
+        if new_assignee:
+            assignee = await db.users.find_one({"email": new_assignee, "is_active": True})
+            if not assignee:
                 raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Only admins can reassign leads"
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"User {new_assignee} not found or inactive"
                 )
             
-            # Validate new assignee exists (if not None)
-            if new_assignee:
-                assignee = await db.users.find_one({"email": new_assignee, "is_active": True})
-                if not assignee:
+            # Add assignee name for update
+            update_request["assigned_to_name"] = f"{assignee.get('first_name', '')} {assignee.get('last_name', '')}".strip()
+            logger.info(f"✅ New assignee validated: {new_assignee}")
+        
+        # 🔥 NEW: Validate co-assignees and build co_assignees_names
+        if co_assignees_changed and user_role != "admin":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only admins can modify co-assignees"
+            )
+
+        if new_co_assignees:
+            co_assignees_names = []
+            validated_co_assignees = []
+            
+            for co_email in new_co_assignees:
+                co_user = await db.users.find_one({"email": co_email, "is_active": True})
+                if not co_user:
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"User {new_assignee} not found or inactive"
+                        detail=f"Co-assignee {co_email} not found or inactive"
                     )
-                
-                # Add assignee name for update
-                update_request["assigned_to_name"] = f"{assignee.get('first_name', '')} {assignee.get('last_name', '')}".strip()
-                logger.info(f"✅ New assignee validated: {new_assignee}")
-            else:
-                # Unassignment case
-                update_request["assigned_to_name"] = None
-                logger.info(f"🔄 Unassigning lead from {old_assignee}")
-        
+                validated_co_assignees.append(co_email)
+                co_assignees_names.append(f"{co_user.get('first_name', '')} {co_user.get('last_name', '')}".strip() or co_email)
+            
+            update_request["co_assignees"] = validated_co_assignees
+            update_request["co_assignees_names"] = co_assignees_names
+            update_request["is_multi_assigned"] = len(validated_co_assignees) > 0
+            logger.info(f"✅ Co-assignees validated: {validated_co_assignees}")
+        elif "co_assignees" in update_request and not new_co_assignees:
+            # Clearing co-assignees
+            update_request["co_assignees"] = []
+            update_request["co_assignees_names"] = []
+            update_request["is_multi_assigned"] = False
+
         # Remove lead_id from update data
         update_data = {k: v for k, v in update_request.items() if k != "lead_id"}
         
@@ -2139,33 +2075,41 @@ async def update_lead_universal(
             except Exception as notif_error:
                 logger.warning(f"⚠️ Failed to send reassignment notification: {notif_error}")
         
-        # Enhanced user array updates for multi-assignment
+        # 🔥 ENHANCED: User array updates for multi-assignment including co-assignees
         assignment_sync_error = None
-        if assignment_changed:
-            logger.info(f"🔄 Processing enhanced user array updates for assignment change")
+        if assignment_changed or co_assignees_changed:
+            logger.info(f"🔄 Processing enhanced user array updates")
             
             try:
-                # Remove from old assignee's array
-                if old_assignee:
-                    logger.info(f"📤 Removing lead {lead_id} from {old_assignee}")
+                # Remove from old assignee's array (if changed)
+                if assignment_changed and old_assignee and old_assignee != new_assignee:
+                    logger.info(f"📤 Removing lead {lead_id} from old assignee {old_assignee}")
                     await user_lead_array_service.remove_lead_from_user_array(old_assignee, lead_id)
-                    logger.info(f"✅ Successfully removed lead {lead_id} from {old_assignee}")
+                    logger.info(f"✅ Removed from {old_assignee}")
                 
-                # Remove from all co-assignees' arrays
-                for co_assignee in old_co_assignees:
-                    logger.info(f"📤 Removing lead {lead_id} from co-assignee {co_assignee}")
+                # Remove from old co-assignees who are no longer assigned
+                removed_co_assignees = set(old_co_assignees) - set(new_co_assignees)
+                for co_assignee in removed_co_assignees:
+                    logger.info(f"📤 Removing lead {lead_id} from removed co-assignee {co_assignee}")
                     await user_lead_array_service.remove_lead_from_user_array(co_assignee, lead_id)
-                    logger.info(f"✅ Successfully removed lead {lead_id} from co-assignee {co_assignee}")
+                    logger.info(f"✅ Removed from {co_assignee}")
                 
-                # Add to new assignee's array
-                if new_assignee:
-                    logger.info(f"📥 Adding lead {lead_id} to {new_assignee}")
+                # Add to new assignee's array (if changed)
+                if assignment_changed and new_assignee and old_assignee != new_assignee:
+                    logger.info(f"📥 Adding lead {lead_id} to new assignee {new_assignee}")
                     await user_lead_array_service.add_lead_to_user_array(new_assignee, lead_id)
-                    logger.info(f"✅ Successfully added lead {lead_id} to {new_assignee}")
+                    logger.info(f"✅ Added to {new_assignee}")
+                
+                # Add to new co-assignees
+                added_co_assignees = set(new_co_assignees) - set(old_co_assignees)
+                for co_assignee in added_co_assignees:
+                    logger.info(f"📥 Adding lead {lead_id} to new co-assignee {co_assignee}")
+                    await user_lead_array_service.add_lead_to_user_array(co_assignee, lead_id)
+                    logger.info(f"✅ Added to {co_assignee}")
                     
             except Exception as array_error:
                 logger.error(f"❌ CRITICAL: Enhanced user array update failed: {str(array_error)}")
-                logger.error(f"❌ Assignment details: {old_assignee} → {new_assignee}")
+                logger.error(f"❌ Assignment details: {old_assignee} → {new_assignee}, co-assignees: {old_co_assignees} → {new_co_assignees}")
                 
                 assignment_sync_error = {
                     "error": "User array sync failed",
@@ -2173,7 +2117,7 @@ async def update_lead_universal(
                     "recommendation": "Run /admin/sync-user-arrays endpoint"
                 }
         else:
-            logger.info(f"ℹ️ No assignment change, skipping user array updates")
+            logger.info(f"ℹ️ No assignment or co-assignee changes, skipping user array updates")
         
         # Log all activities
         automation_activity = update_request.get("_automation_activity")
@@ -2791,7 +2735,6 @@ async def update_lead_status(
 # ============================================================================
 # HEALTH CHECK AND DEBUG ENDPOINTS
 # ============================================================================
-
 
 @router.get("/constants/experience-levels")
 async def get_experience_levels():

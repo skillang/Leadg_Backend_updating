@@ -966,6 +966,9 @@ class LeadUpdate(BaseModel):
     
     # NEW: Call Stats Field
     call_stats: Optional[CallStatsModel] = Field(default=None, description="Call statistics for this lead")
+    co_assignees: Optional[List[str]] = Field(None, description="List of co-assignee email addresses")
+    co_assignees_names: Optional[List[str]] = Field(None, description="List of co-assignee names (auto-populated)")
+
 
 class LeadAssign(BaseModel):
     """Lead assignment/reassignment model"""
