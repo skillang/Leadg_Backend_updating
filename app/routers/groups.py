@@ -193,6 +193,17 @@ async def get_groups(
         
         # Build match query
         match_query = {}
+
+        user_role = current_user.get("role")
+        user_id = str(current_user.get("_id"))
+        
+        if user_role != "admin":
+            # Regular users can only see their own groups
+            match_query["created_by"] = user_id
+            logger.info(f"User {current_user.get('email')} accessing own groups only")
+        else:
+            logger.info(f"Admin {current_user.get('email')} accessing all groups")
+            
         if search:
             match_query["name"] = {"$regex": search, "$options": "i"}
         
