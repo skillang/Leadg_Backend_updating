@@ -1,5 +1,6 @@
 # app/routers/groups.py
 from fastapi import APIRouter, Depends, HTTPException, Query, status, Body
+from app.decorators.timezone_decorator import convert_dates_to_ist
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 from bson import ObjectId
@@ -91,6 +92,7 @@ async def get_user_name_from_id(db, user_id: str) -> str:
 # ============================================================================
 
 @router.post("/", response_model=GroupResponse, status_code=status.HTTP_201_CREATED)
+@convert_dates_to_ist()
 async def create_group(
     group_data: GroupCreate,
     current_user: Dict[str, Any] = Depends(get_current_active_user)  # ✅ Changed to allow all users
@@ -175,6 +177,7 @@ async def create_group(
 # ============================================================================
 
 @router.get("/", response_model=GroupListResponse)
+@convert_dates_to_ist()
 async def get_groups(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(20, ge=1, le=100, description="Items per page"),
@@ -193,6 +196,17 @@ async def get_groups(
         
         # Build match query
         match_query = {}
+
+        user_role = current_user.get("role")
+        user_id = str(current_user.get("_id"))
+        
+        if user_role != "admin":
+            # Regular users can only see their own groups
+            match_query["created_by"] = user_id
+            logger.info(f"User {current_user.get('email')} accessing own groups only")
+        else:
+            logger.info(f"Admin {current_user.get('email')} accessing all groups")
+            
         if search:
             match_query["name"] = {"$regex": search, "$options": "i"}
         
@@ -301,6 +315,7 @@ async def get_groups(
 # ============================================================================
 
 @router.get("/{group_id}", response_model=GroupResponse)
+@convert_dates_to_ist()
 async def get_group_with_leads(
     group_id: str,
     current_user: Dict[str, Any] = Depends(get_current_active_user)
@@ -355,6 +370,7 @@ async def get_group_with_leads(
 # ============================================================================
 
 @router.put("/{group_id}", response_model=GroupResponse)
+@convert_dates_to_ist()
 async def update_group(
     group_id: str,
     group_data: GroupUpdate,
