@@ -968,7 +968,6 @@ async def get_leads(
     lead_status: Optional[str] = Query(None),  # ✅ Changed from LeadStatus to str
     assigned_to: Optional[str] = Query(None),
     search: Optional[str] = Query(None),
-    #  Add the missing filter parameters
     stage: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     category: Optional[str] = Query(None),
@@ -984,6 +983,12 @@ async def get_leads(
 ):
     """
     Get leads with comprehensive filtering support
+
+    Special values for assigned_to parameter (admin only):
+    - "multi_assigned": Returns only leads with multiple assignees
+    - "null": Returns only unassigned leads
+    - "user@email.com": Returns leads assigned to specific user
+    - Not provided or "all": Returns all leads (respects user role)
     """
     try:
         logger.info(f"Get leads requested by: {current_user.get('email')}")
@@ -1040,21 +1045,24 @@ async def get_leads(
             if date_query:
                 query["created_at"] = date_query
 
-        # Handle assigned_to filter (admin only)
         # Handle assigned_to filter (admin only) - FIXED for unassigned leads
         if assigned_to and current_user["role"] == "admin":
-            # Convert string representations to actual None for unassigned leads
-            if assigned_to.lower() in ["null", "none", "unassigned"]:
-                assigned_to_value = None  # Python None = MongoDB null
+            if assigned_to == "multi_assigned":
+                # Filter for multi-assigned leads only
+                query["is_multi_assigned"] = True
+            elif assigned_to.lower() in ["null", "none", "unassigned"]:
+                # Filter for unassigned leads
+                if "$or" in query:
+                    query = {"$and": [{"assigned_to": None}, {"$or": query["$or"]}]}
+                else:
+                    query["assigned_to"] = None
             else:
-                assigned_to_value = assigned_to
-            
-            if "$or" in query:
-                # Combine with existing OR condition
-                query = {"$and": [{"assigned_to": assigned_to_value}, {"$or": query["$or"]}]}
-            else:
-                query["assigned_to"] = assigned_to_value
-
+                # Filter for specific user
+                if "$or" in query:
+                    query = {"$and": [{"assigned_to": assigned_to}, {"$or": query["$or"]}]}
+                else:
+                    query["assigned_to"] = assigned_to
+        
         # Handle updated_at date range
         if updated_from or updated_to:
             date_query = {}
@@ -1234,7 +1242,7 @@ async def get_my_leads(
                 date_query["$lte"] = datetime.fromisoformat(last_contacted_to)
             if date_query:
                 filters.append({"last_contacted": date_query})
-        
+
         # Handle search
         if search:
             search_condition = {
