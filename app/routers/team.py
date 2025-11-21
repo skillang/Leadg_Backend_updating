@@ -7,7 +7,7 @@ from datetime import datetime
 import logging
 from bson import ObjectId
 
-from ..models.user import User
+
 from ..services.team_service import TeamService
 from ..services.rbac_service import RBACService
 from ..utils.dependencies import get_current_active_user

@@ -12,7 +12,7 @@ from ..models.role import (
     RoleAssignRequest, RoleAssignResponse, RoleCloneRequest
 )
 from ..services.role_service import role_service
-from ..services.rbac_service import rbac_service
+from ..services.rbac_service import RBACService
 from ..utils.dependencies import get_current_active_user
 from ..config.database import get_database
 
