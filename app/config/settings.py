@@ -1,4 +1,4 @@
-# app/config/settings.py - Updated with Email (ZeptoMail), Tata Tele, and Skillang Integration configuration
+# app/config/settings.py - Updated with RBAC, Email (ZeptoMail), Tata Tele, and Skillang Integration configuration
 from pydantic_settings import BaseSettings
 from typing import List
 import secrets
@@ -13,7 +13,7 @@ load_dotenv(override=True)
 class Settings(BaseSettings):
     # App Config
     app_name: str = "LeadG CRM API"
-    version: str = "1.0.0"
+    version: str = "2.0.0"  # 🆕 RBAC Version
     debug: bool = True
     
     # Security
@@ -22,9 +22,46 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 7
     
+    # ============================================================================
+    # 🆕 RBAC - SUPER ADMIN CONFIGURATION
+    # ============================================================================
+    super_admin_email: str = "superadmin@leadg.com"
+    super_admin_password: str = "SecurePassword123!"
+    super_admin_first_name: str = "Super"
+    super_admin_last_name: str = "Admin"
+    
+    # ============================================================================
+    # 🆕 RBAC - ROLE MANAGEMENT CONFIGURATION
+    # ============================================================================
+    max_custom_roles: int = 50
+    min_users_per_role: int = 0
+    allow_role_deletion: bool = True
+    default_new_user_role: str = "user"
+    
+    # ============================================================================
+    # 🆕 RBAC - PERMISSION SYSTEM CONFIGURATION
+    # ============================================================================
+    enable_permission_overrides: bool = True
+    permission_cache_ttl: int = 3600  # 1 hour in seconds
+    enable_permission_audit: bool = True
+    
+    # ============================================================================
+    # 🆕 RBAC - TEAM HIERARCHY CONFIGURATION
+    # ============================================================================
+    max_hierarchy_depth: int = 5
+    enable_nested_team_view: bool = True
+    allow_nested_team_access: bool = True
+    
+    # ============================================================================
+    # 🆕 RBAC - MIGRATION & INITIALIZATION
+    # ============================================================================
+    auto_create_default_roles: bool = True
+    auto_migrate_existing_users: bool = True
+    auto_seed_permissions: bool = True
+    
     # MongoDB Atlas Configuration
     mongodb_url: str = "mongodb+srv://username:password@cluster.mongodb.net/database?retryWrites=true&w=majority"
-    database_name: str = "leadg_crm"
+    database_name: str = "CRM_permission"  # 🆕 Changed to new RBAC database
     
     # MongoDB Atlas Connection Options
     mongodb_max_pool_size: int = 10
@@ -135,6 +172,54 @@ class Settings(BaseSettings):
             self.secret_key = os.getenv("SECRET_KEY")
         if os.getenv("DEBUG"):
             self.debug = os.getenv("DEBUG").lower() == "true"
+        
+        # ============================================================================
+        # 🆕 RBAC ENVIRONMENT VARIABLES
+        # ============================================================================
+        
+        # Super Admin Configuration
+        if os.getenv("SUPER_ADMIN_EMAIL"):
+            self.super_admin_email = os.getenv("SUPER_ADMIN_EMAIL")
+        if os.getenv("SUPER_ADMIN_PASSWORD"):
+            self.super_admin_password = os.getenv("SUPER_ADMIN_PASSWORD")
+        if os.getenv("SUPER_ADMIN_FIRST_NAME"):
+            self.super_admin_first_name = os.getenv("SUPER_ADMIN_FIRST_NAME")
+        if os.getenv("SUPER_ADMIN_LAST_NAME"):
+            self.super_admin_last_name = os.getenv("SUPER_ADMIN_LAST_NAME")
+        
+        # Role Management Configuration
+        if os.getenv("MAX_CUSTOM_ROLES"):
+            self.max_custom_roles = int(os.getenv("MAX_CUSTOM_ROLES"))
+        if os.getenv("MIN_USERS_PER_ROLE"):
+            self.min_users_per_role = int(os.getenv("MIN_USERS_PER_ROLE"))
+        if os.getenv("ALLOW_ROLE_DELETION"):
+            self.allow_role_deletion = os.getenv("ALLOW_ROLE_DELETION").lower() == "true"
+        if os.getenv("DEFAULT_NEW_USER_ROLE"):
+            self.default_new_user_role = os.getenv("DEFAULT_NEW_USER_ROLE")
+        
+        # Permission System Configuration
+        if os.getenv("ENABLE_PERMISSION_OVERRIDES"):
+            self.enable_permission_overrides = os.getenv("ENABLE_PERMISSION_OVERRIDES").lower() == "true"
+        if os.getenv("PERMISSION_CACHE_TTL"):
+            self.permission_cache_ttl = int(os.getenv("PERMISSION_CACHE_TTL"))
+        if os.getenv("ENABLE_PERMISSION_AUDIT"):
+            self.enable_permission_audit = os.getenv("ENABLE_PERMISSION_AUDIT").lower() == "true"
+        
+        # Team Hierarchy Configuration
+        if os.getenv("MAX_HIERARCHY_DEPTH"):
+            self.max_hierarchy_depth = int(os.getenv("MAX_HIERARCHY_DEPTH"))
+        if os.getenv("ENABLE_NESTED_TEAM_VIEW"):
+            self.enable_nested_team_view = os.getenv("ENABLE_NESTED_TEAM_VIEW").lower() == "true"
+        if os.getenv("ALLOW_NESTED_TEAM_ACCESS"):
+            self.allow_nested_team_access = os.getenv("ALLOW_NESTED_TEAM_ACCESS").lower() == "true"
+        
+        # Migration & Initialization Configuration
+        if os.getenv("AUTO_CREATE_DEFAULT_ROLES"):
+            self.auto_create_default_roles = os.getenv("AUTO_CREATE_DEFAULT_ROLES").lower() == "true"
+        if os.getenv("AUTO_MIGRATE_EXISTING_USERS"):
+            self.auto_migrate_existing_users = os.getenv("AUTO_MIGRATE_EXISTING_USERS").lower() == "true"
+        if os.getenv("AUTO_SEED_PERMISSIONS"):
+            self.auto_seed_permissions = os.getenv("AUTO_SEED_PERMISSIONS").lower() == "true"
         
         # MongoDB Atlas environment variable handling
         if os.getenv("MONGODB_URL"):
@@ -385,6 +470,57 @@ class Settings(BaseSettings):
             "base_url": self.cms_base_url,
             "templates_endpoint": self.cms_templates_endpoint
         }
+    
+    # ============================================================================
+    # 🆕 RBAC CONFIGURATION HELPERS
+    # ============================================================================
+    
+    def get_rbac_config(self) -> dict:
+        """Get complete RBAC configuration dictionary"""
+        return {
+            # Super Admin
+            "super_admin_email": self.super_admin_email,
+            "super_admin_password": self.super_admin_password,
+            "super_admin_first_name": self.super_admin_first_name,
+            "super_admin_last_name": self.super_admin_last_name,
+            
+            # Role Management
+            "max_custom_roles": self.max_custom_roles,
+            "min_users_per_role": self.min_users_per_role,
+            "allow_role_deletion": self.allow_role_deletion,
+            "default_new_user_role": self.default_new_user_role,
+            
+            # Permission System
+            "enable_permission_overrides": self.enable_permission_overrides,
+            "permission_cache_ttl": self.permission_cache_ttl,
+            "enable_permission_audit": self.enable_permission_audit,
+            
+            # Team Hierarchy
+            "max_hierarchy_depth": self.max_hierarchy_depth,
+            "enable_nested_team_view": self.enable_nested_team_view,
+            "allow_nested_team_access": self.allow_nested_team_access,
+            
+            # Initialization
+            "auto_create_default_roles": self.auto_create_default_roles,
+            "auto_migrate_existing_users": self.auto_migrate_existing_users,
+            "auto_seed_permissions": self.auto_seed_permissions
+        }
+    
+    def is_rbac_enabled(self) -> bool:
+        """Check if RBAC is properly configured"""
+        return bool(
+            self.super_admin_email and 
+            self.super_admin_password and
+            self.max_custom_roles > 0
+        )
+    
+    def should_initialize_rbac(self) -> bool:
+        """Check if RBAC should be initialized on startup"""
+        return (
+            self.auto_create_default_roles or 
+            self.auto_seed_permissions or 
+            self.auto_migrate_existing_users
+        )
 
 # Global settings instance
 settings = Settings()

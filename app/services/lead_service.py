@@ -4,6 +4,8 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime
 from bson import ObjectId
 import logging
+from .rbac_service import RBACService
+from .team_service import TeamService
 
 from ..config.database import get_database
 from ..models.lead import (
@@ -22,7 +24,8 @@ class LeadService:
     """Service for lead-related operations with enhanced assignment features and dynamic validation"""
     
     def __init__(self):
-        pass
+        self.rbac_service = RBACService()
+        self.team_service = TeamService()
     
     def get_db(self):
         """Get database connection"""
@@ -31,7 +34,319 @@ class LeadService:
     # ============================================================================
     # 🆕 NEW: ENHANCED LEAD ID GENERATION WITH CATEGORY-SOURCE COMBINATION
     # ============================================================================
-    
+    async def build_access_filter_rbac(
+    self,
+    user_data: Dict[str, Any],
+    db
+) -> Dict[str, Any]:
+        """
+        Build MongoDB query filter based on user's RBAC permissions.
+        
+        **Permission Levels:**
+        - `leads.read_all` → See all leads in system
+        - `leads.read_team` → See own + team's leads (manager view)
+        - `leads.read_own` → See only own assigned leads
+        - Super Admin → Always see all
+        
+        **Returns:** MongoDB query filter
+        """
+        try:
+            # Super admin bypass
+            if user_data.get("is_super_admin"):
+                logger.info("🔓 Super admin - full access")
+                return {}
+            
+            # Get user's effective permissions
+            effective_permissions = user_data.get("effective_permissions", [])
+            user_email = user_data.get("email")
+            
+            # Check permission levels (order matters - most permissive first)
+            if "leads.read_all" in effective_permissions:
+                logger.info(f"✅ User {user_email} has leads.read_all - full access")
+                return {}
+            
+            elif "leads.read_team" in effective_permissions:
+                # Manager view - see own leads + team's leads
+                logger.info(f"👥 User {user_email} has leads.read_team - building team filter")
+                
+                # Get all team member emails (including self)
+                team_emails = await self._get_team_member_emails(user_data, db)
+                
+                logger.info(f"📋 Team members ({len(team_emails)}): {team_emails}")
+                
+                return {
+                    "$or": [
+                        {"assigned_to": {"$in": team_emails}},
+                        {"co_assignees": {"$in": team_emails}},
+                        {"created_by_email": user_email}  # Also see leads they created
+                    ]
+                }
+            
+            elif "leads.read_own" in effective_permissions:
+                # Basic user - only see assigned leads
+                logger.info(f"👤 User {user_email} has leads.read_own - own leads only")
+                
+                return {
+                    "$or": [
+                        {"assigned_to": user_email},
+                        {"co_assignees": user_email}
+                    ]
+                }
+            
+            else:
+                # No read permission - return impossible filter
+                logger.warning(f"⚠️ User {user_email} has no lead read permissions!")
+                return {"_id": ObjectId("000000000000000000000000")}  # No match
+        
+        except Exception as e:
+            logger.error(f"❌ Error building access filter: {e}")
+            # Fail-safe: restrict to user's own leads
+            return {
+                "$or": [
+                    {"assigned_to": user_data.get("email")},
+                    {"co_assignees": user_data.get("email")}
+                ]
+            }
+
+    # ============================================================================
+    # 🆕 NEW METHOD 2: GET TEAM MEMBER EMAILS
+    # ============================================================================
+
+    async def _get_team_member_emails(
+        self,
+        manager_data: Dict[str, Any],
+        db
+    ) -> List[str]:
+        """
+        Get all email addresses of team members (subordinates).
+        
+        **Returns:** List of team member emails (includes manager's own email)
+        """
+        try:
+            from ..config.settings import settings
+            
+            manager_id = manager_data.get("_id")
+            manager_email = manager_data.get("email")
+            
+            # Start with manager's own email
+            team_emails = [manager_email]
+            
+            # Check if nested access is enabled
+            if settings.allow_nested_team_access:
+                # Get ALL subordinates at all levels
+                team_emails.extend(
+                    await self._get_all_subordinate_emails(manager_id, db)
+                )
+            else:
+                # Get only direct reports
+                direct_reports = await db.users.find(
+                    {"reports_to": str(manager_id)},
+                    {"email": 1}
+                ).to_list(None)
+                
+                team_emails.extend([user["email"] for user in direct_reports])
+            
+            # Remove duplicates and return
+            return list(set(team_emails))
+        
+        except Exception as e:
+            logger.error(f"❌ Error getting team emails: {e}")
+            return [manager_data.get("email")]  # Fallback to just manager
+
+    # ============================================================================
+    # 🆕 NEW METHOD 3: GET ALL SUBORDINATE EMAILS (RECURSIVE)
+    # ============================================================================
+
+    async def _get_all_subordinate_emails(
+        self,
+        manager_id: str,
+        db,
+        visited: Optional[set] = None
+    ) -> List[str]:
+        """
+        Recursively get all subordinate emails at all levels.
+        
+        **Prevents Circular References:**
+        - Tracks visited users to avoid infinite loops
+        """
+        try:
+            from ..config.settings import settings
+            
+            if visited is None:
+                visited = set()
+            
+            # Prevent circular references
+            if str(manager_id) in visited:
+                return []
+            
+            visited.add(str(manager_id))
+            
+            # Check depth limit
+            if len(visited) > settings.max_hierarchy_depth * 10:  # Safety factor
+                logger.warning("⚠️ Reached max subordinate depth")
+                return []
+            
+            # Get direct reports
+            direct_reports = await db.users.find(
+                {"reports_to": str(manager_id)},
+                {"_id": 1, "email": 1}
+            ).to_list(None)
+            
+            subordinate_emails = []
+            
+            # Add direct reports and their subordinates
+            for user in direct_reports:
+                subordinate_emails.append(user["email"])
+                
+                # Recursively get their subordinates
+                nested = await self._get_all_subordinate_emails(
+                    str(user["_id"]),
+                    db,
+                    visited
+                )
+                subordinate_emails.extend(nested)
+            
+            return subordinate_emails
+        
+        except Exception as e:
+            logger.error(f"❌ Error getting subordinates: {e}")
+            return []
+
+    # ============================================================================
+    # 🆕 NEW METHOD 4: CAN USER ACCESS LEAD
+    # ============================================================================
+
+    async def can_user_access_lead(
+        self,
+        user_data: Dict[str, Any],
+        lead_id: str,
+        required_permission: str,
+        db
+    ) -> tuple[bool, str]:
+        """
+        Check if user can access a specific lead with required permission.
+        
+        **Args:**
+        - user_data: Current user's data
+        - lead_id: Lead to check access for
+        - required_permission: Permission code needed (e.g., "leads.update")
+        - db: Database connection
+        
+        **Returns:** (can_access: bool, reason: str)
+        """
+        try:
+            # Super admin bypass
+            if user_data.get("is_super_admin"):
+                return True, "Super admin access"
+            
+            # Check if user has the required permission
+            effective_permissions = user_data.get("effective_permissions", [])
+            if required_permission not in effective_permissions:
+                return False, f"Missing permission: {required_permission}"
+            
+            # Get the lead
+            lead = await db.leads.find_one({"lead_id": lead_id})
+            if not lead:
+                return False, "Lead not found"
+            
+            user_email = user_data.get("email")
+            
+            # Check if has read_all permission
+            if "leads.read_all" in effective_permissions:
+                return True, "Has leads.read_all permission"
+            
+            # Check if assigned or co-assigned
+            if lead.get("assigned_to") == user_email:
+                return True, "Primary assignee"
+            
+            if user_email in lead.get("co_assignees", []):
+                return True, "Co-assignee"
+            
+            # Check if lead is assigned to team member (if has read_team)
+            if "leads.read_team" in effective_permissions:
+                team_emails = await self._get_team_member_emails(user_data, db)
+                
+                if lead.get("assigned_to") in team_emails:
+                    return True, "Assigned to team member"
+                
+                if any(co_assignee in team_emails for co_assignee in lead.get("co_assignees", [])):
+                    return True, "Co-assigned to team member"
+            
+            # No access
+            return False, "Not assigned and not in visible scope"
+        
+        except Exception as e:
+            logger.error(f"❌ Error checking lead access: {e}")
+            return False, f"Error: {str(e)}"
+
+    # ============================================================================
+    # 🆕 NEW METHOD 5: CAN USER ASSIGN LEAD
+    # ============================================================================
+
+    async def can_user_assign_lead(
+        self,
+        user_data: Dict[str, Any],
+        target_user_email: str,
+        db
+    ) -> tuple[bool, str]:
+        """
+        Check if user can assign leads to target user.
+        
+        **Business Rules:**
+        - Super admin: Can assign to anyone
+        - Has `leads.assign_any`: Can assign to anyone
+        - Has `leads.assign_team`: Can assign to team members only
+        
+        **Returns:** (can_assign: bool, reason: str)
+        """
+        try:
+            # Super admin bypass
+            if user_data.get("is_super_admin"):
+                return True, "Super admin access"
+            
+            effective_permissions = user_data.get("effective_permissions", [])
+            
+            # Check assign_any permission
+            if "leads.assign_any" in effective_permissions:
+                return True, "Has leads.assign_any permission"
+            
+            # Check assign_team permission
+            if "leads.assign_team" in effective_permissions:
+                # Get team member emails
+                team_emails = await self._get_team_member_emails(user_data, db)
+                
+                if target_user_email in team_emails:
+                    return True, "Target is team member"
+                else:
+                    return False, "Target not in team - need leads.assign_any"
+            
+            # No assign permission
+            return False, "Missing assignment permission (need leads.assign_team or leads.assign_any)"
+        
+        except Exception as e:
+            logger.error(f"❌ Error checking assign permission: {e}")
+            return False, f"Error: {str(e)}"
+
+    # ============================================================================
+    # 🆕 NEW METHOD 6: GET ACCESS LEVEL NAME (HELPER)
+    # ============================================================================
+
+    def _get_access_level_name(self, user_data: Dict[str, Any]) -> str:
+        """Get human-readable access level name"""
+        if user_data.get("is_super_admin"):
+            return "super_admin"
+        
+        effective_permissions = user_data.get("effective_permissions", [])
+        
+        if "leads.read_all" in effective_permissions:
+            return "read_all"
+        elif "leads.read_team" in effective_permissions:
+            return "read_team"
+        elif "leads.read_own" in effective_permissions:
+            return "read_own"
+        else:
+            return "no_access"
+
     async def generate_lead_id_by_category_and_source(self, category: str, source: str) -> str:
         """
         🆕 NEW: Generate lead ID using category-source combination
@@ -1643,18 +1958,49 @@ class LeadService:
         except Exception as e:
             logger.error(f"Error getting lead {lead_id}: {str(e)}")
             return None
-    
     async def update_lead(
-        self,
-        lead_id: str,
-        update_data: Dict[str, Any],
-        updated_by: str
-    ) -> Dict[str, Any]:
-        """Update a lead with activity logging and dynamic field validation"""
+    self,
+    lead_id: str,
+    update_data: Dict[str, Any],
+    user_data: Dict[str, Any]  # 🔄 CHANGED: was updated_by (str)
+) -> Dict[str, Any]:
+        """
+        🔄 UPDATED: Update a lead with RBAC permission check, activity logging and dynamic field validation
+        
+        **Changes from original:**
+        - Parameter changed from `updated_by: str` to `user_data: Dict[str, Any]`
+        - Added RBAC permission check at the beginning
+        - Returns access denied error if user doesn't have permission
+        - All other logic remains the same
+        """
         try:
             db = self.get_db()
             
-            # 🆕 NEW: Validate dynamic fields if being updated
+            # ============================================================================
+            # 🆕 RBAC: CHECK PERMISSION BEFORE UPDATE
+            # ============================================================================
+            can_access, reason = await self.can_user_access_lead(
+                user_data=user_data,
+                lead_id=lead_id,
+                required_permission="leads.update",
+                db=db
+            )
+            
+            if not can_access:
+                logger.warning(f"⚠️ Update denied for lead {lead_id}: {reason}")
+                return {
+                    "success": False,
+                    "error": f"Access denied: {reason}",
+                    "permission_required": "leads.update"
+                }
+            
+            logger.info(f"✅ Permission check passed for lead {lead_id} update by {user_data.get('email')}")
+            
+            # ============================================================================
+            # ORIGINAL LOGIC STARTS HERE (UNCHANGED)
+            # ============================================================================
+            
+            # Validate dynamic fields if being updated
             if "course_level" in update_data:
                 validated_course_level = await self.validate_and_set_course_level(update_data["course_level"])
                 update_data["course_level"] = validated_course_level
@@ -1673,19 +2019,24 @@ class LeadService:
             )
             
             if result.modified_count > 0:
-                # Log activity
+                # Log activity (using user_data instead of updated_by)
                 await self.log_lead_activity(
                     lead_id=lead_id,
                     activity_type="lead_updated",
                     description="Lead information updated",
-                    created_by=updated_by,
-                    metadata={"updated_fields": list(update_data.keys())}
+                    created_by=str(user_data.get("_id")),  # 🔄 CHANGED: was updated_by
+                    metadata={
+                        "updated_fields": list(update_data.keys()),
+                        "updated_by_email": user_data.get("email")  # 🆕 NEW: added for audit
+                    }
                 )
                 
                 # Get updated lead
                 updated_lead = await db.leads.find_one({"lead_id": lead_id})
                 if updated_lead and "_id" in updated_lead:
                     updated_lead["_id"] = str(updated_lead["_id"])
+                
+                logger.info(f"✅ Lead {lead_id} updated successfully by {user_data.get('email')}")
                 
                 return {
                     "success": True,
@@ -1699,16 +2050,53 @@ class LeadService:
                 }
                 
         except Exception as e:
-            logger.error(f"Error updating lead {lead_id}: {str(e)}")
+            logger.error(f"❌ Error updating lead {lead_id}: {str(e)}")
             return {
                 "success": False,
                 "error": str(e)
             }
-    
-    async def delete_lead(self, lead_id: str, deleted_by: str) -> Dict[str, Any]:
-        """Delete a lead with activity logging"""
+
+
+    async def delete_lead(
+        self,
+        lead_id: str,
+        user_data: Dict[str, Any]  # 🔄 CHANGED: was deleted_by (str)
+    ) -> Dict[str, Any]:
+        """
+        🔄 UPDATED: Delete a lead with RBAC permission check and activity logging
+        
+        **Changes from original:**
+        - Parameter changed from `deleted_by: str` to `user_data: Dict[str, Any]`
+        - Added RBAC permission check at the beginning
+        - Returns access denied error if user doesn't have permission
+        - All other logic remains the same
+        """
         try:
             db = self.get_db()
+            
+            # ============================================================================
+            # 🆕 RBAC: CHECK PERMISSION BEFORE DELETE
+            # ============================================================================
+            can_access, reason = await self.can_user_access_lead(
+                user_data=user_data,
+                lead_id=lead_id,
+                required_permission="leads.delete",
+                db=db
+            )
+            
+            if not can_access:
+                logger.warning(f"⚠️ Delete denied for lead {lead_id}: {reason}")
+                return {
+                    "success": False,
+                    "error": f"Access denied: {reason}",
+                    "permission_required": "leads.delete"
+                }
+            
+            logger.info(f"✅ Permission check passed for lead {lead_id} deletion by {user_data.get('email')}")
+            
+            # ============================================================================
+            # ORIGINAL LOGIC STARTS HERE (UNCHANGED)
+            # ============================================================================
             
             # Get lead first for logging
             lead = await db.leads.find_one({"lead_id": lead_id})
@@ -1730,17 +2118,18 @@ class LeadService:
                     co_assignee, lead_id
                 )
             
-            # Log activity before deletion
+            # Log activity before deletion (using user_data instead of deleted_by)
             await self.log_lead_activity(
                 lead_id=lead_id,
                 activity_type="lead_deleted",
                 description=f"Lead {lead_id} deleted",
-                created_by=deleted_by,
+                created_by=str(user_data.get("_id")),  # 🔄 CHANGED: was deleted_by
                 metadata={
                     "lead_name": lead.get("name"),
                     "lead_email": lead.get("email"),
                     "was_assigned_to": lead.get("assigned_to"),
-                    "had_co_assignees": lead.get("co_assignees", [])
+                    "had_co_assignees": lead.get("co_assignees", []),
+                    "deleted_by_email": user_data.get("email")  # 🆕 NEW: added for audit
                 }
             )
             
@@ -1748,6 +2137,7 @@ class LeadService:
             result = await db.leads.delete_one({"lead_id": lead_id})
             
             if result.deleted_count > 0:
+                logger.info(f"✅ Lead {lead_id} deleted successfully by {user_data.get('email')}")
                 return {
                     "success": True,
                     "message": f"Lead {lead_id} deleted successfully"
@@ -1759,7 +2149,7 @@ class LeadService:
                 }
                 
         except Exception as e:
-            logger.error(f"Error deleting lead {lead_id}: {str(e)}")
+            logger.error(f"❌ Error deleting lead {lead_id}: {str(e)}")
             return {
                 "success": False,
                 "error": str(e)
@@ -1767,31 +2157,25 @@ class LeadService:
     
     async def get_leads_with_filters(
         self,
-        user_email: str,
-        user_role: str,
+        user_data: Dict[str, Any],  # 🔄 CHANGED: was user_email + user_role
         page: int = 1,
         limit: int = 20,
         filters: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
-        """Get leads with filtering and pagination"""
+        """
+        🔄 UPDATED: Get leads with RBAC filtering and pagination
+        """
         try:
             db = self.get_db()
             
-            # Build base query based on user role
-            if user_role == "admin":
-                base_query = {}
-            else:
-                # Regular users can only see assigned leads (primary or co-assignee)
-                base_query = {
-                    "$or": [
-                        {"assigned_to": user_email},
-                        {"co_assignees": user_email}
-                    ]
-                }
+            # 🆕 RBAC: Build access filter based on permissions
+            access_filter = await self.build_access_filter_rbac(user_data, db)
             
-            # Add filters if provided
+            # Merge with additional filters
             if filters:
-                base_query.update(filters)
+                base_query = {**access_filter, **filters}
+            else:
+                base_query = access_filter
             
             # Get total count
             total_count = await db.leads.count_documents(base_query)
@@ -1813,7 +2197,9 @@ class LeadService:
                 "page": page,
                 "limit": limit,
                 "total_pages": (total_count + limit - 1) // limit,
-                "filters_applied": filters or {}
+                "filters_applied": filters or {},
+                "user_email": user_data.get("email"),
+                "access_level": self._get_access_level_name(user_data)  # 🆕 NEW
             }
             
         except Exception as e:
@@ -1824,22 +2210,18 @@ class LeadService:
                 "leads": [],
                 "total_count": 0
             }
-    
-    async def get_lead_statistics(self, user_email: str, user_role: str) -> Dict[str, Any]:
-        """Get lead statistics based on user role with dynamic field breakdowns"""
+    async def get_lead_statistics(
+    self,
+    user_data: Dict[str, Any]  # 🔄 CHANGED: was user_email + user_role
+) -> Dict[str, Any]:
+        """
+        🔄 UPDATED: Get lead statistics with RBAC filtering
+        """
         try:
             db = self.get_db()
             
-            # Build base query based on user role
-            if user_role == "admin":
-                base_query = {}
-            else:
-                base_query = {
-                    "$or": [
-                        {"assigned_to": user_email},
-                        {"co_assignees": user_email}
-                    ]
-                }
+            # 🆕 RBAC: Build access filter
+            base_query = await self.build_access_filter_rbac(user_data, db)
             
             # Get total leads
             total_leads = await db.leads.count_documents(base_query)
@@ -1856,7 +2238,7 @@ class LeadService:
             ]
             status_distribution = await db.leads.aggregate(status_pipeline).to_list(None)
             
-            # 🆕 NEW: Get course level distribution
+            # Get course level distribution
             course_level_pipeline = [
                 {"$match": base_query},
                 {
@@ -1880,16 +2262,16 @@ class LeadService:
             ]
             source_distribution = await db.leads.aggregate(source_pipeline).to_list(None)
             
-            # Get assignment statistics (admin only)
+            # Get assignment statistics (if has permission)
             assignment_stats = {}
-            if user_role == "admin":
-                # Get multi-assignment stats
-                multi_assigned_count = await db.leads.count_documents({"is_multi_assigned": True})
+            if "leads.read_all" in user_data.get("effective_permissions", []) or user_data.get("is_super_admin"):
+                multi_assigned_count = await db.leads.count_documents({**base_query, "is_multi_assigned": True})
                 single_assigned_count = await db.leads.count_documents({
+                    **base_query,
                     "assigned_to": {"$ne": None},
                     "is_multi_assigned": {"$ne": True}
                 })
-                unassigned_count = await db.leads.count_documents({"assigned_to": None})
+                unassigned_count = await db.leads.count_documents({**base_query, "assigned_to": None})
                 
                 assignment_stats = {
                     "multi_assigned": multi_assigned_count,
@@ -1900,25 +2282,26 @@ class LeadService:
             return {
                 "total_leads": total_leads,
                 "status_distribution": status_distribution,
-                "course_level_distribution": course_level_distribution,  # 🆕 NEW
+                "course_level_distribution": course_level_distribution,
                 "source_distribution": source_distribution,
                 "assignment_statistics": assignment_stats,
-                "user_role": user_role
+                "user_email": user_data.get("email"),
+                "access_level": self._get_access_level_name(user_data)
             }
             
         except Exception as e:
             logger.error(f"Error getting lead statistics: {str(e)}")
             return {"error": str(e)}
-    
     async def search_leads(
-        self,
-        search_term: str,
-        user_email: str,
-        user_role: str,
-        page: int = 1,
-        limit: int = 20
-    ) -> Dict[str, Any]:
-        """Search leads by name, email, or lead ID"""
+    self,
+    search_term: str,
+    user_data: Dict[str, Any],  # 🔄 CHANGED: was user_email + user_role
+    page: int = 1,
+    limit: int = 20
+) -> Dict[str, Any]:
+        """
+        🔄 UPDATED: Search leads with RBAC filtering
+        """
         try:
             db = self.get_db()
             
@@ -1932,26 +2315,23 @@ class LeadService:
                 ]
             }
             
-            # Add role-based filtering
-            if user_role != "admin":
-                search_query = {
-                    "$and": [
-                        search_query,
-                        {
-                            "$or": [
-                                {"assigned_to": user_email},
-                                {"co_assignees": user_email}
-                            ]
-                        }
-                    ]
-                }
+            # 🆕 RBAC: Add access filter
+            access_filter = await self.build_access_filter_rbac(user_data, db)
+            
+            # Combine search and access filters
+            combined_query = {
+                "$and": [
+                    search_query,
+                    access_filter
+                ]
+            } if access_filter else search_query
             
             # Get total count
-            total_count = await db.leads.count_documents(search_query)
+            total_count = await db.leads.count_documents(combined_query)
             
             # Get leads with pagination
             skip = (page - 1) * limit
-            leads = await db.leads.find(search_query).skip(skip).limit(limit).sort("created_at", -1).to_list(None)
+            leads = await db.leads.find(combined_query).skip(skip).limit(limit).sort("created_at", -1).to_list(None)
             
             # Format leads for response
             formatted_leads = []
@@ -1966,7 +2346,9 @@ class LeadService:
                 "page": page,
                 "limit": limit,
                 "total_pages": (total_count + limit - 1) // limit,
-                "search_term": search_term
+                "search_term": search_term,
+                "user_email": user_data.get("email"),
+                "access_level": self._get_access_level_name(user_data)
             }
             
         except Exception as e:
@@ -1977,8 +2359,6 @@ class LeadService:
                 "leads": [],
                 "total_count": 0
             }
-
-
 
 
     # ADD THESE METHODS TO YOUR EXISTING app/services/lead_service.py

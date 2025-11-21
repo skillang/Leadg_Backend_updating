@@ -51,11 +51,20 @@ async def register_user(
     current_user: Dict[str, Any] = Depends(get_admin_user)
 ):
     """
-    Register a new user with call routing capability (no fixed extensions)
+    Register a new user with RBAC role assignment
     Admin only endpoint with TATA Call Routing integration
+    
+    🆕 RBAC CHANGES:
+    - Assigns default "User" role if no role_id provided
+    - Computes effective_permissions based on role
+    - Initializes team hierarchy fields
+    - Sets is_super_admin flag
     """
     try:
         db = get_database()
+        rbac_service = RBACService()
+        role_service = RoleService()
+        
         logger.info(f"Admin {current_user.get('email')} registering new user: {user_data.email}")
         
         # Check if user already exists
@@ -69,7 +78,38 @@ async def register_user(
         # Hash password
         hashed_password = get_password_hash(user_data.password)
         
-        # Prepare user document
+        # 🆕 RBAC: Get or assign role
+        role_id = getattr(user_data, 'role_id', None)
+        
+        if not role_id:
+            # Get default "User" role
+            default_role = await db.roles.find_one({"name": "user", "is_active": True})
+            if not default_role:
+                # Fallback: Create basic user role if it doesn't exist
+                logger.warning("Default 'user' role not found - user will have no role assigned")
+                role_id = None
+                role_name = "user"  # Legacy role
+                effective_permissions = []
+                is_super_admin = False
+            else:
+                role_id = str(default_role["_id"])
+                role_name = default_role["name"]
+                effective_permissions = [p["permission_code"] for p in default_role.get("permissions", []) if p.get("granted", False)]
+                is_super_admin = False
+        else:
+            # Validate provided role exists
+            role = await db.roles.find_one({"_id": ObjectId(role_id), "is_active": True})
+            if not role:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Role with ID {role_id} not found or inactive"
+                )
+            
+            role_name = role["name"]
+            effective_permissions = [p["permission_code"] for p in role.get("permissions", []) if p.get("granted", False)]
+            is_super_admin = role.get("type") == "system" and role.get("name") == "super_admin"
+        
+        # Prepare user document with RBAC fields
         user_doc = {
             "email": user_data.email,
             "username": user_data.username,
@@ -77,7 +117,27 @@ async def register_user(
             "last_name": user_data.last_name,
             "full_name": f"{user_data.first_name} {user_data.last_name}",
             "hashed_password": hashed_password,
-            "role": user_data.role,
+            
+            # 🔄 LEGACY: Keep for backward compatibility during migration
+            "role": user_data.role if hasattr(user_data, 'role') else "user",
+            
+            # 🆕 RBAC: New role fields
+            "role_id": ObjectId(role_id) if role_id else None,
+            "role_name": role_name,
+            "is_super_admin": is_super_admin,
+            
+            # 🆕 RBAC: Permission fields
+            "effective_permissions": effective_permissions,
+            "permission_overrides": [],  # Individual permission overrides
+            "permissions_last_computed": datetime.utcnow(),
+            
+            # 🆕 RBAC: Team hierarchy fields
+            "reports_to": None,  # Manager's ObjectId
+            "reports_to_email": None,  # Manager's email
+            "team_members": [],  # List of subordinate emails
+            "team_level": 0,  # Hierarchy level (0 = no manager)
+            
+            # Standard user fields
             "phone": user_data.phone,
             "department": user_data.departments,
             "is_active": True,
@@ -85,7 +145,7 @@ async def register_user(
             "updated_at": datetime.utcnow(),
             "created_by": current_user.get("email"),
             
-            # 🆕 NEW: Initialize Tata calling fields
+            # Tata calling fields
             "calling_enabled": False,
             "tata_agent_id": None,
             "tata_extension": None,
@@ -98,11 +158,11 @@ async def register_user(
             "calling_setup_date": None
         }
         
-        # Insert user first
+        # Insert user
         result = await db.users.insert_one(user_doc)
         user_id = str(result.inserted_id)
         
-        logger.info(f"User created with ID: {user_id}")
+        logger.info(f"✅ User created with ID: {user_id}, Role: {role_name}, Permissions: {len(effective_permissions)}")
         
         # Get the updated user data
         updated_user = await db.users.find_one({"_id": ObjectId(user_id)})
@@ -114,7 +174,14 @@ async def register_user(
             "username": updated_user["username"],
             "first_name": updated_user["first_name"],
             "last_name": updated_user["last_name"],
-            "role": updated_user["role"],
+            "role": updated_user["role"],  # Legacy
+            
+            # 🆕 RBAC fields in response
+            "role_id": str(updated_user["role_id"]) if updated_user.get("role_id") else None,
+            "role_name": updated_user.get("role_name"),
+            "is_super_admin": updated_user.get("is_super_admin", False),
+            "permissions_count": len(updated_user.get("effective_permissions", [])),
+            
             "phone": updated_user["phone"],
             "department": updated_user["department"],
             "is_active": updated_user["is_active"],
@@ -124,12 +191,17 @@ async def register_user(
             "created_at": updated_user["created_at"].isoformat()
         }
         
-        success_message = f"User registered successfully! 📞 Tata calling will be enabled on first login"
+        success_message = f"User registered successfully with role: {role_name}! 📞 Tata calling will be enabled on first login"
         
         response = {
             "success": True,
             "message": success_message,
             "user": user_response,
+            "rbac_info": {
+                "role_assigned": role_name,
+                "permissions_granted": len(effective_permissions),
+                "is_super_admin": is_super_admin
+            },
             "note": "User will be auto-synced with Tata agents on first login"
         }
         
@@ -150,19 +222,19 @@ async def register_user(
 # =============================================================================
 # 🆕 ENHANCED LOGIN WITH TATA AUTO-SYNC
 # =============================================================================
-
 @router.post("/login", response_model=LoginResponse)
 async def login_user(request: Request, login_data: LoginRequest):
     """
-    Enhanced user login endpoint with Tata Tele auto-sync
+    Enhanced user login endpoint with RBAC + Tata Tele auto-sync
     
-    - Standard CRM authentication
-    - Automatic Tata agent sync on login
-    - Phone number matching with Tata agents
-    - Extension/DID retrieval for calling
-    - Enhanced response with calling status
+    🆕 RBAC CHANGES:
+    - Loads user's role and effective_permissions
+    - Includes role_id, role_name, is_super_admin in JWT token
+    - Returns effective_permissions in login response
+    - Computes permissions if not cached or stale
     """
     db = get_database()
+    rbac_service = RBACService()
     
     # Find user by email
     user = await db.users.find_one({"email": login_data.email})
@@ -208,34 +280,64 @@ async def login_user(request: Request, login_data: LoginRequest):
             detail="Account is disabled"
         )
     
-    # Reset failed login attempts and update login info
-    # await db.users.update_one(
-    #     {"_id": user["_id"]},
-    #     {
-    #         "$set": {
-    #             "last_login": datetime.utcnow(),
-    #             "last_activity": datetime.utcnow(),
-    #             "failed_login_attempts": 0,
-    #             "locked_until": None
-    #         },
-    #         "$inc": {"login_count": 1}
-    #     }
-    # )
-
+    # 🆕 RBAC: Compute or refresh effective permissions
+    effective_permissions = user.get("effective_permissions", [])
+    permissions_last_computed = user.get("permissions_last_computed")
+    
+    # Recompute if permissions are stale (older than 24 hours) or missing
+    should_recompute = (
+        not effective_permissions or
+        not permissions_last_computed or
+        (datetime.utcnow() - permissions_last_computed).total_seconds() > 86400
+    )
+    
+    if should_recompute:
+        logger.info(f"Recomputing permissions for user {user['email']} during login")
+        effective_permissions = await rbac_service.get_user_permissions(str(user["_id"]))
+        
+        # Update user with fresh permissions
+        await db.users.update_one(
+            {"_id": user["_id"]},
+            {
+                "$set": {
+                    "effective_permissions": effective_permissions,
+                    "permissions_last_computed": datetime.utcnow()
+                }
+            }
+        )
+    
+    # 🆕 RBAC: Get role information
+    role_id = user.get("role_id")
+    role_name = user.get("role_name", "user")
+    is_super_admin = user.get("is_super_admin", False)
+    
+    # If role_id exists but role_name is missing (legacy user), fetch from role
+    if role_id and not role_name:
+        role = await db.roles.find_one({"_id": ObjectId(role_id)})
+        if role:
+            role_name = role["name"]
+            is_super_admin = role.get("type") == "system" and role.get("name") == "super_admin"
+            
+            # Update user with role info
+            await db.users.update_one(
+                {"_id": user["_id"]},
+                {"$set": {"role_name": role_name, "is_super_admin": is_super_admin}}
+            )
+    
+    # Update login tracking
     update_data = {
-    "last_login": datetime.utcnow(),
-    "last_activity": datetime.utcnow(),
-    "failed_login_attempts": 0,
-    "locked_until": None
+        "last_login": datetime.utcnow(),
+        "last_activity": datetime.utcnow(),
+        "failed_login_attempts": 0,
+        "locked_until": None
     }
 
-    # Store FCM token if provided in login request
+    # Store FCM token if provided
     if hasattr(login_data, 'fcm_token') and login_data.fcm_token:
         update_data["fcm_token"] = login_data.fcm_token
         update_data["fcm_token_updated_at"] = datetime.utcnow()
         logger.info(f"FCM token registered for user: {user['email']}")
 
-    # Single database update with all fields
     await db.users.update_one(
         {"_id": user["_id"]},
         {
@@ -244,7 +346,7 @@ async def login_user(request: Request, login_data: LoginRequest):
         }
     )
     
-    # 🆕 NEW: Auto-sync with Tata agents during login
+    # Tata auto-sync (unchanged)
     calling_status = {
         "enabled": False,
         "sync_status": "not_attempted",
@@ -256,7 +358,6 @@ async def login_user(request: Request, login_data: LoginRequest):
             logger.info(f"Starting Tata auto-sync for user: {user['email']}")
             calling_status = await tata_user_service.auto_sync_on_login(user)
             
-            # Update user record with calling status
             await db.users.update_one(
                 {"_id": user["_id"]},
                 {
@@ -279,23 +380,26 @@ async def login_user(request: Request, login_data: LoginRequest):
                 "sync_status": "failed",
                 "message": f"Auto-sync failed: {str(e)}"
             }
-    else:
-        if not TATA_INTEGRATION_AVAILABLE:
-            logger.debug("Tata integration not available - skipping auto-sync")
-        else:
-            logger.debug(f"Auto-sync disabled for user {user['email']}")
     
-    # Create tokens
+    # 🆕 RBAC: Create tokens with role and permission info
     token_data = {
         "sub": str(user["_id"]),
         "email": user["email"],
         "username": user["username"],
-        "role": user["role"]
+        
+        # 🔄 LEGACY: Keep for backward compatibility
+        "role": user.get("role", "user"),
+        
+        # 🆕 RBAC: New fields in JWT
+        "role_id": str(role_id) if role_id else None,
+        "role_name": role_name,
+        "is_super_admin": is_super_admin,
+        # Note: We don't include full permissions list in JWT (too large)
+        # Instead, we fetch from database using get_current_active_user
     }
     
     access_token = security.create_access_token(token_data)
 
-    # Use remember_me for refresh token expiry
     if login_data.remember_me:
         refresh_token = security.create_refresh_token(token_data, expire_days=30)
     else:
@@ -312,16 +416,27 @@ async def login_user(request: Request, login_data: LoginRequest):
     }
     await db.user_sessions.insert_one(session_data)
     
-    # 🆕 ENHANCED: Login response with calling status
+    # 🆕 RBAC: Enhanced login response with permissions
     user_response = {
         "id": str(user["_id"]),
         "email": user["email"],
         "username": user["username"],
         "first_name": user["first_name"],
         "last_name": user["last_name"],
-        "role": user["role"],
+        "role": user.get("role", "user"),  # Legacy
         
-        # 🆕 NEW: Tata calling fields
+        # 🆕 RBAC fields
+        "role_id": str(role_id) if role_id else None,
+        "role_name": role_name,
+        "is_super_admin": is_super_admin,
+        "effective_permissions": effective_permissions,  # Full permissions list
+        "permissions_count": len(effective_permissions),
+        
+        # Team hierarchy
+        "reports_to": user.get("reports_to_email"),
+        "team_level": user.get("team_level", 0),
+        
+        # Calling fields
         "calling_enabled": calling_status.get("enabled", False),
         "tata_extension": calling_status.get("extension"),
         "tata_agent_id": calling_status.get("agent_id"),
@@ -329,21 +444,21 @@ async def login_user(request: Request, login_data: LoginRequest):
         "ready_to_call": calling_status.get("enabled", False)
     }
     
-    # Log successful login with calling status
+    # Log successful login with RBAC info
     if calling_status.get("enabled"):
-        logger.info(f"✅ Successful login for {user['email']} - Calling enabled (Ext: {calling_status.get('extension')})")
+        logger.info(f"✅ Login: {user['email']} | Role: {role_name} | Permissions: {len(effective_permissions)} | Calling: Enabled (Ext: {calling_status.get('extension')})")
     else:
-        logger.info(f"✅ Successful login for {user['email']} - Calling status: {calling_status.get('sync_status')}")
+        logger.info(f"✅ Login: {user['email']} | Role: {role_name} | Permissions: {len(effective_permissions)} | Calling: {calling_status.get('sync_status')}")
     
     return LoginResponse(
         access_token=access_token,
         refresh_token=refresh_token,
         expires_in=security.access_token_expire_minutes * 60,
         user=user_response,
-        # 🆕 NEW: Include calling status in response
         calling_status=calling_status.get("sync_status", "unknown"),
         message=calling_status.get("message") if not calling_status.get("enabled") else None
     )
+
 
 # =============================================================================
 # EXISTING ENDPOINTS - UNCHANGED (keeping all your existing code)
@@ -377,22 +492,27 @@ async def logout_user(
             message="Logged out"
         )
 
+
 @router.get("/me", response_model=UserResponse)
 @convert_user_dates()
 async def get_current_user_info(
     current_user: Dict[str, Any] = Depends(get_current_active_user)
 ):
     """
-    Get current user information with multi-department support and calling status
+    Get current user information with RBAC permissions and team hierarchy
+    
+    🆕 RBAC ADDITIONS:
+    - Returns effective_permissions list
+    - Returns role_id, role_name, is_super_admin
+    - Returns team hierarchy (reports_to, team_level)
+    - Returns permission overrides if any
     """
     try:
-        # Handle both old and new department formats
+        # Handle departments (unchanged)
         departments = current_user.get("departments")
         old_department = current_user.get("department")
         
-        # Determine departments field based on what's available
         if departments is not None:
-            # New format - use departments field
             if isinstance(departments, str):
                 department_list = [departments]
                 departments_field = departments
@@ -403,26 +523,20 @@ async def get_current_user_info(
                 department_list = []
                 departments_field = [] if current_user.get("role") == "user" else "admin"
         elif old_department is not None:
-            # 🔥 FIX: Handle both string and list formats for old_department
             if current_user.get("role") == "admin":
-                departments_field = "admin"  # Admin gets string
+                departments_field = "admin"
                 department_list = ["admin"]
             else:
-                # ✅ FIXED: Check if old_department is string or list
                 if isinstance(old_department, str):
-                    # Single string department
                     departments_field = [old_department.lower()]
                     department_list = [old_department.lower()]
                 elif isinstance(old_department, list):
-                    # List of departments - apply .lower() to each string in the list
                     departments_field = [dept.lower() if isinstance(dept, str) else dept for dept in old_department]
                     department_list = [dept.lower() if isinstance(dept, str) else dept for dept in old_department]
                 else:
-                    # Fallback if department is neither string nor list
                     departments_field = []
                     department_list = []
         else:
-            # No department field at all - set defaults
             if current_user.get("role") == "admin":
                 departments_field = "admin"
                 department_list = ["admin"]
@@ -430,14 +544,13 @@ async def get_current_user_info(
                 departments_field = []
                 department_list = []
         
-        # 🔥 NEW: Extract calling status information
+        # Calling status (unchanged)
         calling_enabled = current_user.get("calling_enabled", False)
         tata_extension = current_user.get("tata_extension")
         tata_agent_id = current_user.get("tata_agent_id")  
         sync_status = current_user.get("tata_sync_status", "unknown")
         calling_status = current_user.get("calling_status", "pending")
         
-        # 🔥 FIX: Ensure boolean conversion for ready_to_call
         ready_to_call = bool(
             calling_enabled and 
             sync_status in ["already_synced", "synced"] and
@@ -445,34 +558,58 @@ async def get_current_user_info(
             tata_agent_id
         )
         
-        # 🔥 FIX: Use explicit parameter names to avoid order issues
+        # 🆕 RBAC: Extract role and permission info
+        role_id = current_user.get("role_id")
+        role_name = current_user.get("role_name", current_user.get("role", "user"))
+        is_super_admin = current_user.get("is_super_admin", False)
+        effective_permissions = current_user.get("effective_permissions", [])
+        permission_overrides = current_user.get("permission_overrides", [])
+        
+        # 🆕 RBAC: Team hierarchy info
+        reports_to_email = current_user.get("reports_to_email")
+        team_level = current_user.get("team_level", 0)
+        team_members = current_user.get("team_members", [])
+        
         return UserResponse(
             id=str(current_user["_id"]),
             email=current_user["email"],
             username=current_user["username"],
             first_name=current_user["first_name"],
             last_name=current_user["last_name"],
-            role=current_user["role"],
+            role=current_user.get("role", "user"),  # Legacy
             is_active=current_user.get("is_active", True),
             phone=current_user.get("phone", ""),
             departments=departments_field,
             department_list=department_list,
-            permissions=current_user.get("permissions", {}),
+            permissions=current_user.get("permissions", {}),  # Legacy lead permissions
             created_at=current_user.get("created_at"),
             last_login=current_user.get("last_login"),
             assigned_leads=current_user.get("assigned_leads", []),
             total_assigned_leads=current_user.get("total_assigned_leads", 0),
-            # Existing calling fields
+            
+            # Calling fields
             extension_number=tata_extension,
             smartflo_agent_id=tata_agent_id,
             smartflo_user_id=current_user.get("tata_user_id"),
             calling_status=calling_status,
-            # 🆕 NEW: Additional calling fields with explicit names
             calling_enabled=calling_enabled,
             tata_extension=tata_extension,
             tata_agent_id=tata_agent_id,
             sync_status=sync_status,
-            ready_to_call=ready_to_call
+            ready_to_call=ready_to_call,
+            
+            # 🆕 RBAC: Add these fields to response
+            role_id=str(role_id) if role_id else None,
+            role_name=role_name,
+            is_super_admin=is_super_admin,
+            effective_permissions=effective_permissions,
+            permission_overrides=permission_overrides,
+            permissions_count=len(effective_permissions),
+            
+            # 🆕 RBAC: Team hierarchy
+            reports_to=reports_to_email,
+            team_level=team_level,
+            team_members_count=len(team_members)
         )
         
     except Exception as e:
@@ -486,12 +623,12 @@ async def get_current_user_info(
 # =============================================================================
 # EMERGENCY ADMIN AND DEBUG ENDPOINTS - UNCHANGED
 # =============================================================================
-
 @router.post("/emergency-admin", response_model=Dict[str, Any], status_code=status.HTTP_201_CREATED)
 async def create_emergency_admin(user_data: UserCreate):
     """
-    🚨 EMERGENCY ENDPOINT: Create admin when database has no admins
-    ⚠️ REMOVE THIS ENDPOINT AFTER CREATING YOUR ADMIN!
+    🚨 EMERGENCY ENDPOINT: Create super admin when database has no admins
+    
+    🆕 RBAC: Creates user with Super Admin role
     """
     try:
         db = get_database()
@@ -501,12 +638,11 @@ async def create_emergency_admin(user_data: UserCreate):
         if admin_count > 0:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Emergency endpoint disabled - Admin users already exist. Use regular registration."
+                detail="Emergency endpoint disabled - Admin users already exist"
             )
         
-        logger.warning("🚨 EMERGENCY ADMIN CREATION INITIATED - NO ADMINS FOUND IN DATABASE")
+        logger.warning("🚨 EMERGENCY ADMIN CREATION INITIATED")
         
-        # Check if user already exists
         existing_user = await db.users.find_one({"email": user_data.email})
         if existing_user:
             raise HTTPException(
@@ -514,13 +650,23 @@ async def create_emergency_admin(user_data: UserCreate):
                 detail="User with this email already exists"
             )
         
-        # Force admin role for security
-        user_data.role = "admin"
-        
-        # Hash password
         hashed_password = get_password_hash(user_data.password)
         
-        # Create admin user document
+        # 🆕 RBAC: Try to assign Super Admin role
+        super_admin_role = await db.roles.find_one({"name": "super_admin", "type": "system"})
+        
+        if super_admin_role:
+            role_id = super_admin_role["_id"]
+            role_name = "super_admin"
+            is_super_admin = True
+            effective_permissions = [p["permission_code"] for p in super_admin_role.get("permissions", []) if p.get("granted", False)]
+        else:
+            # Fallback if roles not seeded yet
+            role_id = None
+            role_name = "admin"
+            is_super_admin = True
+            effective_permissions = []
+        
         user_doc = {
             "email": user_data.email,
             "username": user_data.username,
@@ -528,7 +674,24 @@ async def create_emergency_admin(user_data: UserCreate):
             "last_name": user_data.last_name,
             "full_name": f"{user_data.first_name} {user_data.last_name}",
             "hashed_password": hashed_password,
+            
+            # Legacy
             "role": "admin",
+            
+            # 🆕 RBAC
+            "role_id": role_id,
+            "role_name": role_name,
+            "is_super_admin": is_super_admin,
+            "effective_permissions": effective_permissions,
+            "permission_overrides": [],
+            "permissions_last_computed": datetime.utcnow(),
+            
+            # Team hierarchy
+            "reports_to": None,
+            "reports_to_email": None,
+            "team_members": [],
+            "team_level": 0,
+            
             "phone": user_data.phone,
             "department": user_data.department,
             "is_active": True,
@@ -538,21 +701,20 @@ async def create_emergency_admin(user_data: UserCreate):
             "failed_login_attempts": 0,
             "login_count": 0,
             
-            # Initialize Tata fields
+            # Tata fields
             "calling_enabled": False,
             "tata_sync_status": "pending",
             "auto_sync_enabled": True
         }
         
-        # Insert admin user
         result = await db.users.insert_one(user_doc)
         user_id = str(result.inserted_id)
         
-        logger.warning(f"🚨 EMERGENCY ADMIN CREATED: {user_data.email}")
+        logger.warning(f"🚨 EMERGENCY SUPER ADMIN CREATED: {user_data.email}")
         
         return {
             "success": True,
-            "message": "🚨 EMERGENCY ADMIN CREATED! Remove this endpoint immediately for security!",
+            "message": "🚨 EMERGENCY SUPER ADMIN CREATED! Remove this endpoint immediately!",
             "user": {
                 "user_id": user_id,
                 "email": user_data.email,
@@ -560,13 +722,11 @@ async def create_emergency_admin(user_data: UserCreate):
                 "first_name": user_data.first_name,
                 "last_name": user_data.last_name,
                 "role": "admin",
+                "role_name": role_name,
+                "is_super_admin": is_super_admin,
+                "permissions_count": len(effective_permissions),
                 "created_at": user_doc["created_at"]
-            },
-            "next_steps": [
-                "1. Test login with new admin credentials",
-                "2. Remove this /emergency-admin endpoint from code",
-                "3. Use regular /register endpoint for future users"
-            ]
+            }
         }
         
     except HTTPException:
@@ -578,6 +738,7 @@ async def create_emergency_admin(user_data: UserCreate):
             detail=f"Emergency admin creation failed: {str(e)}"
         )
 
+        
 @router.get("/debug-admin-users")
 @convert_user_dates()
 async def debug_admin_users():

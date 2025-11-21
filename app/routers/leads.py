@@ -11,6 +11,7 @@ from app.decorators.timezone_decorator import convert_lead_dates, convert_dates_
 from ..services.user_lead_array_service import user_lead_array_service
 from ..services.lead_assignment_service import lead_assignment_service
 from app.services import lead_category_service
+from ..services.rbac_service import RBACService
 from ..services.lead_category_service import lead_category_service
 from ..config.database import get_database
 from ..utils.dependencies import get_current_active_user, get_admin_user, get_user_with_single_lead_permission, get_user_with_bulk_lead_permission
@@ -59,8 +60,14 @@ from ..schemas.lead import (
     LeadFilterParams
 )
 
+from ..utils.dependencies import (
+    get_current_active_user,
+    get_user_with_permission  # 🆕 NEW - RBAC dependency
+)
+
 logger = logging.getLogger(__name__)
 router = APIRouter()
+rbac_service = RBACService()
 
 # ============================================================================
 # OBJECTID CONVERSION UTILITY
@@ -83,6 +90,67 @@ def convert_objectid_to_str(obj):
 
 
 DEFAULT_NEW_LEAD_STATUS = "Initial"
+async def build_lead_query_with_rbac(current_user: Dict, db) -> Dict:
+    """
+    🆕 Build MongoDB query based on user's RBAC permissions
+    
+    Permission hierarchy:
+    - lead.read_all: See ALL leads (no restrictions)
+    - lead.read_team: See team members' leads
+    - lead.read_own: See only assigned leads (default)
+    """
+    user_email = current_user.get("email")
+    
+    # Check permissions in order of scope (broadest first)
+    has_read_all = await rbac_service.check_permission(current_user, "lead.read_all")
+    if has_read_all:
+        return {}  # No restrictions - can see all leads
+    
+    has_read_team = await rbac_service.check_permission(current_user, "lead.read_team")
+    if has_read_team:
+        # Get team members reporting to this user
+        team_members = await get_user_team_members(current_user, db)
+        return {
+            "$or": [
+                {"assigned_to": user_email},
+                {"co_assignees": user_email},
+                {"assigned_to": {"$in": team_members}}
+            ]
+        }
+    
+    # Default: read_own - only see assigned leads
+    return {
+        "$or": [
+            {"assigned_to": user_email},
+            {"co_assignees": user_email}
+        ]
+    }
+
+
+async def get_user_team_members(current_user: Dict, db) -> List[str]:
+    """Get emails of all team members reporting to this user"""
+    user_email = current_user.get("email")
+    team_members = await db.users.find(
+        {"reports_to_email": user_email},
+        {"email": 1}
+    ).to_list(None)
+    return [member["email"] for member in team_members]
+
+
+async def check_lead_access(lead: Dict, user_email: str, current_user: Dict) -> bool:
+    """
+    🆕 Check if user has access to a specific lead using RBAC
+    """
+    # Check if user has read_all permission
+    has_read_all = await rbac_service.check_permission(current_user, "lead.read_all")
+    if has_read_all:
+        return True
+    
+    # Check if assigned (primary or co-assignee)
+    assigned_to = lead.get("assigned_to")
+    co_assignees = lead.get("co_assignees", [])
+    
+    return user_email in ([assigned_to] + co_assignees)
 
 
 # ============================================================================
@@ -92,7 +160,7 @@ DEFAULT_NEW_LEAD_STATUS = "Initial"
 @router.post("/assignment/bulk-assign-selective", response_model=BulkAssignmentResponse)
 async def bulk_assign_leads_selective(
     request: BulkAssignmentRequest,
-    current_user: dict = Depends(get_admin_user)
+    current_user: dict = Depends(get_user_with_permission("lead.assign"))  # 🔄 CHANGE THIS LINE
 ):
     """Bulk assign leads using selective round robin or all users (Admin only)"""
     try:
@@ -265,7 +333,7 @@ async def get_lead_assignment_details(
 
 @router.get("/users/assignable-with-details", response_model=UserSelectionResponse)
 async def get_assignable_users_with_details(
-    current_user: dict = Depends(get_admin_user)
+    current_user: dict = Depends(get_user_with_permission("user.read_all"))  # 🔄 CHANGE THIS LINE
 ):
     """Get all assignable users with their current lead counts and details (Admin only)"""
     try:
@@ -315,8 +383,8 @@ async def get_assignable_users_with_details(
 
 @router.get("/assignment/round-robin-preview")
 async def preview_round_robin_assignment(
-    selected_users: Optional[str] = Query(None, description="Comma-separated list of user emails for selective round robin"),
-    current_user: dict = Depends(get_admin_user)
+    selected_users: Optional[str] = Query(None),
+    current_user: dict = Depends(get_user_with_permission("lead.assign"))  # 🔄 CHANGE THIS LINE
 ):
     """Preview next assignments in round robin without actually assigning (Admin only)"""
     try:
@@ -358,11 +426,11 @@ async def preview_round_robin_assignment(
 # ============================================================================
 @router.get("/leads-extended/", response_model=List[LeadResponseExtended])
 async def get_leads_with_multi_assignment_info(
-    page: int = Query(1, ge=1, description="Page number"),
-    limit: int = Query(20, ge=1, le=100, description="Items per page"),
-    include_multi_assigned: bool = Query(False, description="Filter for multi-assigned leads only"),
-    assigned_to_user: Optional[str] = Query(None, description="Filter by user email (includes co-assignments)"),
-    current_user: dict = Depends(get_current_active_user)
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    include_multi_assigned: bool = Query(False),
+    assigned_to_user: Optional[str] = Query(None),
+    current_user: dict = Depends(get_user_with_permission("lead.read_own"))  # 🔄 CHANGE THIS LINE
 ):
     """Get leads with extended multi-assignment information"""
     try:
@@ -371,7 +439,7 @@ async def get_leads_with_multi_assignment_info(
         user_email = current_user.get("email")
         
         # Build query filters
-        query_filters = {}
+        query_filters = await build_lead_query_with_rbac(current_user, db)
         
         if user_role != "admin":
             # Regular users see leads where they are assigned (primary or co-assignee)
@@ -381,7 +449,10 @@ async def get_leads_with_multi_assignment_info(
             ]
         
         if include_multi_assigned:
-            query_filters["is_multi_assigned"] = True
+            if "$and" in query_filters:
+                query_filters["$and"].append({"is_multi_assigned": True})
+            else:
+                query_filters["is_multi_assigned"] = True
         
         if assigned_to_user:
             if user_role == "admin":  # Only admins can filter by other users
@@ -756,20 +827,24 @@ def get_field_change_description(field_name: str, old_value: any, new_value: any
 async def create_lead(
     lead_data: dict,
     force_create: bool = Query(False, description="Create lead even if duplicates exist"),
-    #  Support for selective round robin
     selected_user_emails: Optional[str] = Query(None, description="Comma-separated list of user emails for selective round robin"),
-    current_user: Dict[str, Any] = Depends(get_user_with_single_lead_permission) 
+    # 🔄 UPDATED: Use RBAC permission check
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("lead.create"))
 ):
     """
-    🔄 UPDATED: Create a new lead with enhanced assignment options:
-    -  Category-Source combination lead IDs (NS-WB-1, SA-SM-2, WA-RF-3, etc.)
-    -  Selective round robin assignment
-    -  AGE, EXPERIENCE, Nationality fields (optional)
+    🔄 RBAC-ENABLED: Create a new lead
+    
+    **Required Permission:** `lead.create`
+    
+    Features:
+    - Category-Source combination lead IDs
+    - Selective round robin assignment
+    - AGE, EXPERIENCE, Nationality fields (optional)
     - Duplicate detection and prevention
     - Activity logging and user array updates
     """
     try:
-        logger.info(f"Creating lead by admin: {current_user['email']}")
+        logger.info(f"Creating lead by user: {current_user['email']}")
         
         # Parse selective round robin parameter
         selected_users = None
@@ -791,14 +866,12 @@ async def create_lead(
                         detail="Category is required. Please select a valid lead category."
                     )
                 
-                #  Validate source is provided for new ID format
                 if not basic_info_data.get("source"):
                     raise HTTPException(
                         status_code=400,
                         detail="Source is required. Please select a valid lead source."
                     )
                 
-                # Create structured data using the classes
                 from ..models.lead import LeadCreateComprehensive, LeadBasicInfo, LeadStatusAndTags, LeadAssignmentInfo, LeadAdditionalInfo
                 
                 structured_lead_data = LeadCreateComprehensive(
@@ -806,15 +879,14 @@ async def create_lead(
                         name=basic_info_data.get("name", ""),
                         email=basic_info_data.get("email", ""),
                         contact_number=basic_info_data.get("contact_number", ""),
-                        source=basic_info_data.get("source"),  # 🔄 UPDATED: Now required
+                        source=basic_info_data.get("source"),
                         category=basic_info_data.get("category"),
-                        # Handle new optional fields
                         age=basic_info_data.get("age"),
                         experience=basic_info_data.get("experience"),
                         nationality=basic_info_data.get("nationality"),
                         current_location=basic_info_data.get("current_location"),
                         date_of_birth=basic_info_data.get("date_of_birth"),
-                         call_stats=basic_info_data.get("call_stats") or CallStatsModel.create_default()
+                        call_stats=basic_info_data.get("call_stats") or CallStatsModel.create_default()
                     ),
                     status_and_tags=LeadStatusAndTags(
                         stage=status_and_tags_data.get("stage", "initial"),
@@ -845,7 +917,6 @@ async def create_lead(
                         detail="Category is required. Please select a valid lead category."
                     )
                 
-                #  Validate source is provided for new ID format
                 if not lead_data.get("source"):
                     raise HTTPException(
                         status_code=400,
@@ -859,9 +930,8 @@ async def create_lead(
                         name=lead_data.get("name", ""),
                         email=lead_data.get("email", ""),
                         contact_number=lead_data.get("contact_number", ""),
-                        source=lead_data.get("source"),  # 🔄 UPDATED: Now required
+                        source=lead_data.get("source"),
                         category=lead_data.get("category"),
-                        # Handle new optional fields in legacy format
                         age=lead_data.get("age"),
                         experience=lead_data.get("experience"),
                         nationality=lead_data.get("nationality"),
@@ -887,10 +957,7 @@ async def create_lead(
                     detail=f"Invalid lead data format: {str(e)}"
                 )
         
-        # Step 2: Use the enhanced lead service with NEW ID generation
-        from ..services.lead_service import lead_service
-        
-        # Use selective assignment if users are specified
+        # Step 2: Use the enhanced lead service
         if selected_users and hasattr(lead_service, 'create_lead_with_selective_assignment'):
             result = await lead_service.create_lead_with_selective_assignment(
                 basic_info=structured_lead_data.basic_info,
@@ -901,7 +968,6 @@ async def create_lead(
                 selected_user_emails=selected_users
             )
         else:
-            # Use regular creation method with NEW ID generation
             result = await lead_service.create_lead_comprehensive(
                 lead_data=structured_lead_data,
                 created_by=str(current_user["_id"]),
@@ -913,7 +979,6 @@ async def create_lead(
                 duplicate_info = result["duplicate_check"]
                 logger.warning(f"🚫 Duplicate detected: {duplicate_info.get('message', 'Duplicate found')}")
                 
-                # Provide detailed duplicate information
                 raise HTTPException(
                     status_code=400,
                     detail={
@@ -931,18 +996,17 @@ async def create_lead(
                     detail=result["message"]
                 )
         
-        logger.info(f"✅ Lead created successfully: {result.get('lead_id', 'unknown')} with NEW format (category-source-number)")
+        logger.info(f"✅ Lead created successfully: {result.get('lead_id', 'unknown')}")
         
-        # Step 3: Return successful response with enhanced info
         return convert_objectid_to_str({
             "success": True,
             "message": result.get("message", "Lead created successfully"),
             "lead_id": result.get("lead_id"),
-            "lead_id_format": "category_source_combination",  #  Track format used
+            "lead_id_format": "category_source_combination",
             "assigned_to": result.get("assigned_to"),
             "assignment_method": result.get("assignment_method"),
             "selected_users_pool": selected_users,
-            "lead_id_info": result.get("lead_id_info", {}),  #  ID generation details
+            "lead_id_info": result.get("lead_id_info", {}),
             "duplicate_check": result.get("duplicate_check", {
                 "is_duplicate": False,
                 "checked": True
@@ -960,191 +1024,7 @@ async def create_lead(
             detail=f"Failed to create lead: {str(e)}"
         )
 
-@router.get("/")
-@convert_lead_dates()  # <-- ADD THIS LINE
-async def get_leads(
-    page: int = Query(1, ge=1),
-    limit: int = Query(20, ge=1, le=100),
-    lead_status: Optional[str] = Query(None),  # ✅ Changed from LeadStatus to str
-    assigned_to: Optional[str] = Query(None),
-    search: Optional[str] = Query(None),
-    stage: Optional[str] = Query(None),
-    status: Optional[str] = Query(None),
-    category: Optional[str] = Query(None),
-    source: Optional[str] = Query(None),
-    course_level: Optional[str] = Query(None),
-    created_from: Optional[str] = Query(None),
-    created_to: Optional[str] = Query(None),
-    updated_from: Optional[str] = Query(None),     
-    updated_to: Optional[str] = Query(None),       
-    last_contacted_from: Optional[str] = Query(None),  
-    last_contacted_to: Optional[str] = Query(None),    
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
-):
-    """
-    Get leads with comprehensive filtering support
 
-    Special values for assigned_to parameter (admin only):
-    - "multi_assigned": Returns only leads with multiple assignees
-    - "null": Returns only unassigned leads
-    - "user@email.com": Returns leads assigned to specific user
-    - Not provided or "all": Returns all leads (respects user role)
-    """
-    try:
-        logger.info(f"Get leads requested by: {current_user.get('email')}")
-        db = get_database()
-        
-        # Build query
-        query = {}
-        if current_user["role"] != "admin":
-            query["$or"] = [
-                {"assigned_to": current_user["email"]},
-                {"co_assignees": {"$in": [current_user["email"]]}}
-            ]
-                
-        #  Handle stage filter
-        if stage:
-            query["stage"] = stage
-            
-        #  Handle status filter (prefer new 'status' over old 'lead_status')
-        if status:
-            query["status"] = status
-        elif lead_status:
-            # Handle old parameter for backward compatibility
-            possible_old_statuses = [k for k, v in OLD_TO_NEW_STATUS_MAPPING.items() if v == lead_status.value]
-            status_conditions = [{"status": lead_status.value}]
-            if possible_old_statuses:
-                status_conditions.extend([{"status": old_status} for old_status in possible_old_statuses])
-            query["$or"] = status_conditions
-            
-        #  Handle category filter
-        if category:
-            query["category"] = category
-            
-        #  Handle source filter
-        if source:
-            query["source"] = source
-            
-        #  Handle course_level filter
-        if course_level:
-            query["course_level"] = course_level
-            
-        #  Handle date range filter
-        if created_from or created_to:
-            date_query = {}
-            if created_from:
-                try:
-                    date_query["$gte"] = datetime.fromisoformat(created_from)
-                except ValueError:
-                    pass  # Skip invalid date
-            if created_to:
-                try:
-                    date_query["$lte"] = datetime.fromisoformat(created_to)
-                except ValueError:
-                    pass  # Skip invalid date
-            if date_query:
-                query["created_at"] = date_query
-
-        # Handle assigned_to filter (admin only) - FIXED for unassigned leads
-        if assigned_to and current_user["role"] == "admin":
-            if assigned_to == "multi_assigned":
-                # Filter for multi-assigned leads only
-                query["is_multi_assigned"] = True
-            elif assigned_to.lower() in ["null", "none", "unassigned"]:
-                # Filter for unassigned leads
-                if "$or" in query:
-                    query = {"$and": [{"assigned_to": None}, {"$or": query["$or"]}]}
-                else:
-                    query["assigned_to"] = None
-            else:
-                # Filter for specific user
-                if "$or" in query:
-                    query = {"$and": [{"assigned_to": assigned_to}, {"$or": query["$or"]}]}
-                else:
-                    query["assigned_to"] = assigned_to
-        
-        # Handle updated_at date range
-        if updated_from or updated_to:
-            date_query = {}
-            if updated_from:
-                date_query["$gte"] = datetime.fromisoformat(updated_from)
-            if updated_to:
-                # Add end of day to include full day
-                end_date = datetime.fromisoformat(updated_to)
-                if updated_to == updated_from:  # Same day filter
-                    end_date = end_date.replace(hour=23, minute=59, second=59)
-                date_query["$lte"] = end_date
-            if date_query:
-                query["updated_at"] = date_query
-
-        # Handle last_contacted date range  
-        if last_contacted_from or last_contacted_to:
-            date_query = {}
-            if last_contacted_from:
-                date_query["$gte"] = datetime.fromisoformat(last_contacted_from)
-            if last_contacted_to:
-                date_query["$lte"] = datetime.fromisoformat(last_contacted_to)
-            if date_query:
-                query["last_contacted"] = date_query
-        
-        # Handle search
-        if search:
-            search_condition = {
-                "$or": [
-                    {"name": {"$regex": search, "$options": "i"}},
-                    {"email": {"$regex": search, "$options": "i"}},
-                    {"lead_id": {"$regex": search, "$options": "i"}},
-                    {"contact_number": {"$regex": search, "$options": "i"}},
-                    {"phone_number": {"$regex": search, "$options": "i"}}
-                ]
-            }
-            if "$and" in query:
-                query["$and"].append(search_condition)
-            elif "$or" in query:
-                query = {"$and": [{"$or": query["$or"]}, search_condition]}
-            else:
-                query.update(search_condition)
-        
-        logger.info(f"Final query: {query}")  # 🔍 Debug log
-        
-        total = await db.leads.count_documents(query)
-        skip = (page - 1) * limit
-        
-        leads = await db.leads.find(query).skip(skip).limit(limit).sort("created_at", -1).to_list(None)
-        
-        # Process leads with migration support
-        processed_leads = []
-        for lead in leads:
-            try:
-                processed_lead = await process_lead_for_response(lead, db, current_user)
-                processed_leads.append(processed_lead)
-            except Exception as e:
-                logger.error(f"Failed to process lead {lead.get('lead_id', 'unknown')}: {e}")
-                continue
-        
-        # Convert ObjectIds before response
-        final_leads = convert_objectid_to_str(processed_leads)
-        
-        logger.info(f"Successfully processed {len(final_leads)} leads out of {len(leads)} total")
-        
-        return {
-            "leads": final_leads,
-            "pagination": {
-                "page": page,
-                "limit": limit,
-                "total": total,
-                "pages": (total + limit - 1) // limit,
-                "has_next": page * limit < total,
-                "has_prev": page > 1
-            }
-        }
-        
-    except Exception as e:
-        logger.error(f"Get leads error: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to retrieve leads"
-        )
 
 @router.get("/my-leads")
 @convert_lead_dates()
@@ -1305,7 +1185,7 @@ async def filter_leads(
     filter_request: LeadsFilterRequest,
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("lead.read_own"))  # 🔄 CHANGE THIS LINE
 ):
     """
     Filter leads with optional bulk lead_ids array in request body
@@ -1314,30 +1194,10 @@ async def filter_leads(
     Returns same format as /leads and /my-leads endpoints.
     """
     try:
-        logger.info(f"Filter leads requested by: {current_user.get('email')}")
         db = get_database()
         
-        # Build base query based on user role
-        query = {}
-        if current_user["role"] != "admin":
-            query["$or"] = [
-                {"assigned_to": current_user["email"]},
-                {"co_assignees": {"$in": [current_user["email"]]}}
-            ]
-        
-        # 🔥 Handle lead_ids filter (from request body)
-        if filter_request.lead_ids:
-            if "$or" in query or "$and" in query:
-                # Combine with existing conditions
-                existing_query = query.copy()
-                query = {
-                    "$and": [
-                        existing_query,
-                        {"lead_id": {"$in": filter_request.lead_ids}}
-                    ]
-                }
-            else:
-                query["lead_id"] = {"$in": filter_request.lead_ids}
+        # 🆕 Build base query using RBAC
+        query = await build_lead_query_with_rbac(current_user, db)
         
         # Handle stage filter
         if filter_request.stage:
@@ -1474,28 +1334,14 @@ async def filter_leads(
 @router.get("/stats", response_model=LeadStatsResponse)
 @convert_dates_to_ist()
 async def get_lead_stats(
-    include_multi_assignment_stats: bool = Query(True, description="Include multi-assignment statistics"),
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    include_multi_assignment_stats: bool = Query(True),
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("lead.read_own"))  # 🔄 CHANGE THIS LINE
 ):
     """Get lead statistics with enhanced breakdown support"""
     try:
         db = get_database()
-        user_role = current_user.get("role", "user")
-        user_email = current_user.get("email")
-        
-        # Base query based on role
-        if user_role != "admin":
-            if include_multi_assignment_stats:
-                base_query = {
-                    "$or": [
-                        {"assigned_to": user_email},
-                        {"co_assignees": user_email}
-                    ]
-                }
-            else:
-                base_query = {"assigned_to": user_email}
-        else:
-            base_query = {}
+         # 🆕 Build base query using RBAC
+        base_query = await build_lead_query_with_rbac(current_user, db)
         
         # Get total leads
         total_leads = await db.leads.count_documents(base_query)
@@ -1629,27 +1475,22 @@ async def get_lead_stats(
 @convert_lead_dates()
 async def get_lead(
     lead_id: str,
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    # 🔄 UPDATED: Use RBAC permission check
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("lead.read_own"))
 ):
-    """Get a specific lead by ID with enhanced multi-assignment support"""
+    """
+    🔄 RBAC-ENABLED: Get specific lead by ID
+    
+    **Required Permission:** `lead.read_own`
+    """
     try:
         db = get_database()
         
-        query = {"lead_id": lead_id}
-        user_role = current_user.get("role", "user")
-        user_email = current_user.get("email")
+        # 🆕 Build query with RBAC
+        base_query = await build_lead_query_with_rbac(current_user, db)
+        base_query["lead_id"] = lead_id
         
-        if user_role != "admin":
-            # Check both primary and co-assignments
-            query = {
-                "lead_id": lead_id,
-                "$or": [
-                    {"assigned_to": user_email},
-                    {"co_assignees": user_email}
-                ]
-            }
-        
-        lead = await db.leads.find_one(query)
+        lead = await db.leads.find_one(base_query)
         
         if not lead:
             raise HTTPException(
@@ -1657,7 +1498,7 @@ async def get_lead(
                 detail="Lead not found or you don't have permission to view it"
             )
         
-        # Transform to structured format with migration support and ObjectId conversion
+        # Transform to structured format
         structured_lead = transform_lead_to_structured_format(lead)
         
         return {
@@ -1686,7 +1527,7 @@ async def get_lead(
 async def assign_lead(
     lead_id: str,
     assignment: LeadAssign,
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("lead.assign"))  # 🔄 CHANGE THIS LINE
 ):
     """
     🔄 UPDATED: Assign a lead to a user with unified notification
@@ -1753,11 +1594,18 @@ async def assign_lead(
 @router.put("/update")
 async def update_lead_universal(
     update_request: dict,
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    # 🔄 UPDATED: Use RBAC permission check
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("lead.update"))
 ):
     """
-    🔄 UPDATED: Universal lead update endpoint with unified notification system
-    Handles all lead updates including reassignment with ONE notification for assignee + admins
+    🔄 RBAC-ENABLED: Universal lead update endpoint
+    
+    **Required Permission:**
+    - `lead.update` - Update assigned leads
+    - `lead.update_all` - Update any lead (admin)
+    
+    **Special Permissions:**
+    - `lead.reassign` - Required to change assignee or co-assignees
     """
     try:
         logger.info(f"🔄 Update by {current_user.get('email')} with data: {update_request}")
@@ -1780,7 +1628,34 @@ async def update_lead_universal(
                 detail="Lead not found"
             )
         
-        #  AUTOMATION LOGIC - Check if stage is changing
+        # 🆕 CHECK RBAC: Can user update this specific lead?
+        has_update_all = await rbac_service.check_permission(current_user, "lead.update_all")
+        if not has_update_all:
+            user_email = current_user.get("email")
+            if not await check_lead_access(lead, user_email, current_user):
+                raise HTTPException(
+                    status_code=403,
+                    detail="You can only update leads assigned to you"
+                )
+        
+        # 🆕 CHECK RBAC: Reassignment permission
+        assignment_changed = "assigned_to" in update_request and update_request["assigned_to"] != lead.get("assigned_to")
+        co_assignees_changed = False
+        
+        if "co_assignees" in update_request:
+            old_co_assignees = set(lead.get("co_assignees", []))
+            new_co_assignees = set(update_request.get("co_assignees", []))
+            co_assignees_changed = old_co_assignees != new_co_assignees
+        
+        if assignment_changed or co_assignees_changed:
+            has_reassign = await rbac_service.check_permission(current_user, "lead.reassign")
+            if not has_reassign:
+                raise HTTPException(
+                    status_code=403,
+                    detail="You don't have permission to reassign leads. Required: lead.reassign"
+                )
+        
+        # AUTOMATION LOGIC - Check if stage is changing
         new_stage = update_request.get("stage")
         current_stage = lead.get("stage")
         stage_changed = new_stage and new_stage != current_stage
@@ -1788,26 +1663,19 @@ async def update_lead_universal(
         if stage_changed:
             logger.info(f"🔄 Stage change detected: '{current_stage}' → '{new_stage}'")
             
-            # Check if target stage has automation enabled
             target_stage = await db.lead_stages.find_one({"name": new_stage})
             if target_stage and target_stage.get("automation"):
                 logger.info(f"🤖 Automation enabled for stage '{new_stage}'")
                 
-                # Get automation config
                 automation_config = target_stage.get("automation_config")
                 if automation_config and automation_config.get("template_name"):
                     template_name = automation_config["template_name"]
-                    
-                    # Check if user confirmed automation (frontend should send this)
                     automation_approved = update_request.get("automation_approved")
                     
                     if automation_approved:
                         logger.info(f"🚀 Sending WhatsApp template '{template_name}' for lead {lead_id}")
                         
                         try:
-                            # Send WhatsApp template
-                            from ..services.whatsapp_message_service import whatsapp_message_service
-                            
                             contact_number = lead.get("contact_number") or lead.get("phone_number")
                             if contact_number:
                                 whatsapp_result = await whatsapp_message_service.send_template_message(
@@ -1823,8 +1691,6 @@ async def update_lead_universal(
                             
                             if whatsapp_result.get("success"):
                                 logger.info(f"✅ WhatsApp template sent successfully for lead {lead_id}")
-                                
-                                # Log automation activity
                                 automation_activity = {
                                     "activity_type": "automation_executed",
                                     "description": f"WhatsApp template '{template_name}' sent automatically due to stage change to '{new_stage}'",
@@ -1837,8 +1703,6 @@ async def update_lead_universal(
                                 }
                             else:
                                 logger.error(f"❌ WhatsApp template failed for lead {lead_id}: {whatsapp_result.get('error')}")
-                                
-                                # Log automation failure
                                 automation_activity = {
                                     "activity_type": "automation_failed",
                                     "description": f"Failed to send WhatsApp template '{template_name}' for stage change to '{new_stage}': {whatsapp_result.get('error')}",
@@ -1850,13 +1714,10 @@ async def update_lead_universal(
                                     }
                                 }
                             
-                            # Store automation activity for later logging
                             update_request["_automation_activity"] = automation_activity
                             
                         except Exception as automation_error:
                             logger.error(f"❌ Automation error for lead {lead_id}: {str(automation_error)}")
-                            
-                            # Log automation error
                             automation_activity = {
                                 "activity_type": "automation_error",
                                 "description": f"Error executing automation for stage change to '{new_stage}': {str(automation_error)}",
@@ -1868,11 +1729,8 @@ async def update_lead_universal(
                                 }
                             }
                             update_request["_automation_activity"] = automation_activity
-                    
                     else:
                         logger.info(f"ℹ️ Automation declined by user for lead {lead_id}")
-                        
-                        # Log automation decline
                         automation_activity = {
                             "activity_type": "automation_declined",
                             "description": f"User declined to send WhatsApp template '{template_name}' for stage change to '{new_stage}'",
@@ -1885,34 +1743,30 @@ async def update_lead_universal(
                         }
                         update_request["_automation_activity"] = automation_activity
         
-        #  Check campaign criteria when stage or source changes
+        # Check campaign criteria when stage or source changes
         new_source = update_request.get("source")
         current_source = lead.get("source")
         source_changed = new_source and new_source != current_source
-
+        
         if stage_changed or source_changed:
             try:
                 from ..services.campaign_executor import campaign_executor
                 
                 logger.info(f"🤖 Checking campaign criteria for lead {lead_id}")
                 
-                # 🔥 NEW: Convert stage/source names to ObjectIds for campaign comparison
                 new_stage_id = None
                 new_source_id = None
                 
                 if new_stage:
-                    # Get stage ObjectId from stage name
                     stage_doc = await db.lead_stages.find_one({"name": new_stage})
                     if stage_doc:
                         new_stage_id = str(stage_doc["_id"])
                 
                 if new_source:
-                    # Get source ObjectId from source name
                     source_doc = await db.lead_sources.find_one({"name": new_source})
                     if source_doc:
                         new_source_id = str(source_doc["_id"])
                 
-                # Pass ObjectIds to campaign executor
                 await campaign_executor.check_lead_criteria_change(
                     lead_id=lead_id,
                     new_stage_id=new_stage_id,
@@ -1923,46 +1777,22 @@ async def update_lead_universal(
         
         logger.info(f"📋 Found lead {lead_id}, currently assigned to: {lead.get('assigned_to')}")
         
-        # Enhanced permission checking for multi-assignment
-        user_role = current_user.get("role", "user")
-        user_email = current_user.get("email")
-        
-        if user_role != "admin":
-            # Check if user has access (primary or co-assignee)
-            assigned_to = lead.get("assigned_to")
-            co_assignees = lead.get("co_assignees", [])
-            
-            if user_email not in [assigned_to] + co_assignees:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="You can only update leads assigned to you"
-                )
-        
         # Handle assignment change validation
-        assignment_changed = False
-        co_assignees_changed = False
         old_assignee = lead.get("assigned_to")
         old_co_assignees = lead.get("co_assignees", [])
         new_assignee = None
         new_co_assignees = []
-
+        
         if "assigned_to" in update_request:
             new_assignee = update_request.get("assigned_to")
             assignment_changed = (old_assignee != new_assignee)
-
-        # 🔥 NEW: Handle co-assignees from update request
+        
         if "co_assignees" in update_request:
             new_co_assignees = update_request.get("co_assignees", [])
             if not isinstance(new_co_assignees, list):
                 new_co_assignees = []
             co_assignees_changed = set(old_co_assignees) != set(new_co_assignees)
             logger.info(f"🔄 Co-assignees change detected: {old_co_assignees} → {new_co_assignees}")
-
-        if assignment_changed and user_role != "admin":
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Only admins can reassign leads"
-            )
         
         # Validate new assignee exists (if not None)
         if new_assignee:
@@ -1973,17 +1803,10 @@ async def update_lead_universal(
                     detail=f"User {new_assignee} not found or inactive"
                 )
             
-            # Add assignee name for update
             update_request["assigned_to_name"] = f"{assignee.get('first_name', '')} {assignee.get('last_name', '')}".strip()
             logger.info(f"✅ New assignee validated: {new_assignee}")
         
-        # 🔥 NEW: Validate co-assignees and build co_assignees_names
-        if co_assignees_changed and user_role != "admin":
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Only admins can modify co-assignees"
-            )
-
+        # Validate co-assignees and build co_assignees_names
         if new_co_assignees:
             co_assignees_names = []
             validated_co_assignees = []
@@ -2003,11 +1826,10 @@ async def update_lead_universal(
             update_request["is_multi_assigned"] = len(validated_co_assignees) > 0
             logger.info(f"✅ Co-assignees validated: {validated_co_assignees}")
         elif "co_assignees" in update_request and not new_co_assignees:
-            # Clearing co-assignees
             update_request["co_assignees"] = []
             update_request["co_assignees_names"] = []
             update_request["is_multi_assigned"] = False
-
+        
         # Remove lead_id from update data
         update_data = {k: v for k, v in update_request.items() if k != "lead_id"}
         
@@ -2016,12 +1838,11 @@ async def update_lead_universal(
         
         # Track field changes for activity logging
         for field, new_value in update_data.items():
-            if field in ["updated_at", "assigned_to_name"]:  # Skip system fields
+            if field in ["updated_at", "assigned_to_name", "_automation_activity"]:
                 continue
-                
+            
             old_value = lead.get(field)
             
-            # Only log if value actually changed
             if old_value != new_value:
                 activity_type = get_activity_type_for_field(field)
                 description = get_field_change_description(field.replace("_", " ").title(), old_value, new_value)
@@ -2053,12 +1874,11 @@ async def update_lead_universal(
         
         logger.info(f"✅ Lead {lead_id} updated in database successfully")
         
-        # 🔥 UPDATED: Send unified lead reassignment notification
+        # Send unified lead reassignment notification
         if assignment_changed and new_assignee:
             try:
                 from ..services.realtime_service import realtime_manager
                 
-                # Get new assignee details
                 new_user = await db.users.find_one({"email": new_assignee})
                 new_user_name = f"{new_user.get('first_name', '')} {new_user.get('last_name', '')}".strip()
                 if not new_user_name:
@@ -2076,39 +1896,34 @@ async def update_lead_universal(
                 
                 authorized_users = [{"email": new_assignee, "name": new_user_name}]
                 
-                # 🔥 ONE call creates notification for new assignee + admins automatically
                 await realtime_manager.notify_lead_reassigned(lead_id, notification_data, authorized_users)
                 
                 logger.info(f"✅ Unified lead reassignment notification created for {new_assignee}")
             except Exception as notif_error:
                 logger.warning(f"⚠️ Failed to send reassignment notification: {notif_error}")
         
-        # 🔥 ENHANCED: User array updates for multi-assignment including co-assignees
+        # Enhanced user array updates for multi-assignment
         assignment_sync_error = None
         if assignment_changed or co_assignees_changed:
             logger.info(f"🔄 Processing enhanced user array updates")
             
             try:
-                # Remove from old assignee's array (if changed)
                 if assignment_changed and old_assignee and old_assignee != new_assignee:
                     logger.info(f"📤 Removing lead {lead_id} from old assignee {old_assignee}")
                     await user_lead_array_service.remove_lead_from_user_array(old_assignee, lead_id)
                     logger.info(f"✅ Removed from {old_assignee}")
                 
-                # Remove from old co-assignees who are no longer assigned
                 removed_co_assignees = set(old_co_assignees) - set(new_co_assignees)
                 for co_assignee in removed_co_assignees:
                     logger.info(f"📤 Removing lead {lead_id} from removed co-assignee {co_assignee}")
                     await user_lead_array_service.remove_lead_from_user_array(co_assignee, lead_id)
                     logger.info(f"✅ Removed from {co_assignee}")
                 
-                # Add to new assignee's array (if changed)
                 if assignment_changed and new_assignee and old_assignee != new_assignee:
                     logger.info(f"📥 Adding lead {lead_id} to new assignee {new_assignee}")
                     await user_lead_array_service.add_lead_to_user_array(new_assignee, lead_id)
                     logger.info(f"✅ Added to {new_assignee}")
                 
-                # Add to new co-assignees
                 added_co_assignees = set(new_co_assignees) - set(old_co_assignees)
                 for co_assignee in added_co_assignees:
                     logger.info(f"📥 Adding lead {lead_id} to new co-assignee {co_assignee}")
@@ -2171,7 +1986,6 @@ async def update_lead_universal(
             "assignment_changed": assignment_changed
         }
         
-        # Add sync error info if it occurred
         if assignment_changed and assignment_sync_error:
             response["warning"] = assignment_sync_error
         
@@ -2195,9 +2009,19 @@ async def update_lead_universal(
 @router.delete("/{lead_id}")
 async def delete_lead(
     lead_id: str,
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    # 🔄 UPDATED: Use RBAC permission check
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("lead.delete"))
 ):
-    """Delete a lead (Admin only) - Enhanced with multi-assignment cleanup"""
+    """
+    🔄 RBAC-ENABLED: Delete a lead
+    
+    **Required Permission:** `lead.delete`
+    
+    Cleanup:
+    - Removes lead from database
+    - Removes from all assignees' arrays
+    - Logs deletion activity
+    """
     try:
         db = get_database()
         
@@ -2223,17 +2047,14 @@ async def delete_lead(
         
         # Remove from all assignees' arrays
         try:
-            # Remove from primary assignee's array
             if assigned_to:
                 await user_lead_array_service.remove_lead_from_user_array(assigned_to, lead_id)
             
-            # Remove from all co-assignees' arrays
             for co_assignee in co_assignees:
                 await user_lead_array_service.remove_lead_from_user_array(co_assignee, lead_id)
                 
         except Exception as array_error:
             logger.error(f"Error updating user arrays after lead deletion: {str(array_error)}")
-            # Don't fail the deletion if array update fails
         
         logger.info(f"Lead {lead_id} deleted by {current_user['email']}")
         
@@ -2252,17 +2073,16 @@ async def delete_lead(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to delete lead"
         )
-
 # ============================================================================
 # BULK OPERATIONS WITH ENHANCED ASSIGNMENT SUPPORT
 # ============================================================================
 @router.post("/bulk-create", status_code=status.HTTP_201_CREATED)
 async def bulk_create_leads(
-    leads_data: List[dict],  
-    force_create: bool = Query(False, description="Create leads even if duplicates exist"),
-    assignment_method: str = Query("all_users", description="Assignment method: 'all_users' or 'selected_users'"),
-    selected_user_emails: Optional[str] = Query(None, description="Comma-separated user emails for selective round robin"),
-    current_user: Dict[str, Any] = Depends(get_user_with_bulk_lead_permission) 
+    leads_data: List[dict],
+    force_create: bool = Query(False),
+    assignment_method: str = Query("all_users"),
+    selected_user_emails: Optional[str] = Query(None),
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("lead.create_bulk"))  # 🔄 CHANGE THIS LINE
 ):
     """
     🔧 FIXED: Bulk create leads with PROPER duplicate detection
@@ -2370,9 +2190,8 @@ async def check_duplicates_batch(
 
 @router.get("/admin/user-lead-stats")
 async def get_admin_user_lead_stats(
-    #  Include multi-assignment stats
-    include_multi_assignment_stats: bool = Query(True, description="Include multi-assignment statistics"),
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    include_multi_assignment_stats: bool = Query(True),
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("lead.read_all"))  # 🔄 CHANGE THIS LINE
 ):
     """SUPER FAST admin stats with enhanced multi-assignment support"""
     try:
@@ -2450,7 +2269,7 @@ async def get_admin_user_lead_stats(
 
 @router.post("/admin/sync-user-arrays")
 async def sync_user_arrays(
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("system.manage"))  # 🔄 CHANGE THIS LINE
 ):
     """Sync user arrays with actual lead assignments including multi-assignments"""
     try:
@@ -2520,7 +2339,7 @@ async def sync_user_arrays(
 
 @router.get("/users/assignable")
 async def get_assignable_users(
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("user.read_all"))  # 🔄 CHANGE THIS LINE
 ):
     """Get list of users that can be assigned leads (Admin only)"""
     try:
@@ -2555,7 +2374,7 @@ async def get_assignable_users(
 @router.post("/bulk-assign")
 async def bulk_assign_leads(
     bulk_assign: LeadBulkAssign,
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("lead.assign"))  # 🔄 CHANGE THIS LINE
 ):
     """Bulk assign multiple leads to users (Admin only)"""
     try:
@@ -2786,8 +2605,8 @@ async def get_experience_levels():
 @router.post("/{lead_id}/refresh-call-count", response_model=CallCountRefreshResponse)
 async def refresh_lead_call_count(
     lead_id: str,
-    force_refresh: bool = Query(False, description="Force refresh even if recently updated"),
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    force_refresh: bool = Query(False),
+    current_user: Dict[str, Any] = Depends(get_current_active_user)  # Keep this as-is
 ):
     """
     Refresh call count for a specific lead
@@ -2796,34 +2615,19 @@ async def refresh_lead_call_count(
     """
     try:
         db = get_database()
-        user_role = current_user.get("role", "user")
+        
+        # Get lead
+        lead = await db.leads.find_one({"lead_id": lead_id})
+        if not lead:
+            raise HTTPException(status_code=404, detail="Lead not found")
+        
+        # 🆕 Check RBAC access
         user_email = current_user.get("email")
-        
-        # Check permissions
-        if user_role != "admin":
-            # Users can only refresh leads assigned to them (primary or co-assignee)
-            lead = await db.leads.find_one({
-                "lead_id": lead_id,
-                "$or": [
-                    {"assigned_to": user_email},
-                    {"co_assignees": user_email}
-                ]
-            })
-            if not lead:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Lead not found or you don't have permission to refresh it"
-                )
-        else:
-            # Admin check - just verify lead exists
-            lead = await db.leads.find_one({"lead_id": lead_id})
-            if not lead:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Lead not found"
-                )
-        
-        logger.info(f"Manual call count refresh requested for lead {lead_id} by {user_email}")
+        if not await check_lead_access(lead, user_email, current_user):
+            raise HTTPException(
+                status_code=403,
+                detail="You don't have permission to refresh this lead's call count"
+            )
         
         # Use the call service to refresh
         result = await tata_call_service.refresh_lead_call_count(
@@ -2857,7 +2661,7 @@ async def refresh_lead_call_count(
 @router.post("/bulk-refresh-call-counts", response_model=BulkCallCountRefreshResponse)
 async def bulk_refresh_call_counts(
     request: BulkCallCountRefreshRequest,
-    current_user: Dict[str, Any] = Depends(get_admin_user)  # Admin only for bulk operations
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("system.manage"))  # 🔄 CHANGE THIS LINE
 ):
     """
     Bulk refresh call counts for multiple leads (Admin only)
@@ -2906,7 +2710,7 @@ async def bulk_refresh_call_counts(
 @router.get("/{lead_id}/call-stats")
 async def get_lead_call_stats(
     lead_id: str,
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    current_user: Dict[str, Any] = Depends(get_current_active_user)  # Keep this as-is
 ):
     """
     Get call statistics for a specific lead
@@ -2916,18 +2720,12 @@ async def get_lead_call_stats(
     """
     try:
         db = get_database()
-        user_role = current_user.get("role", "user")
-        user_email = current_user.get("email")
         
-        # Check permissions
-        query = {"lead_id": lead_id}
-        if user_role != "admin":
-            query["$or"] = [
-                {"assigned_to": user_email},
-                {"co_assignees": user_email}
-            ]
+        # 🆕 Build query with RBAC
+        base_query = await build_lead_query_with_rbac(current_user, db)
+        base_query["lead_id"] = lead_id
         
-        lead = await db.leads.find_one(query)
+        lead = await db.leads.find_one(base_query)
         if not lead:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,

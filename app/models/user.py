@@ -1,14 +1,15 @@
-# app/models/user.py - Fully Dynamic Department System + LEAD CREATION PERMISSIONS
+# app/models/user.py - UPDATED FOR RBAC SYSTEM
+# Changes: UserRole enum removed, added RBAC fields (role_id, team_members, permissions)
 
 from pydantic import BaseModel, EmailStr, Field, validator
-from typing import Optional, List, Union
+from typing import Optional, List, Union, Dict, Any
 from datetime import datetime
 from enum import Enum
+from bson import ObjectId
 
-class UserRole(str, Enum):
-    """User roles enumeration"""
-    ADMIN = "admin"
-    USER = "user"
+# ============================================================================
+# RBAC: UserRole enum REMOVED - now using dynamic roles from database
+# ============================================================================
 
 class CallingStatus(str, Enum):
     """Calling status enumeration for Smartflo integration"""
@@ -23,9 +24,16 @@ class DepartmentType(str, Enum):
     """Only essential predefined department"""
     ADMIN = "admin"  # Only admin is predefined
 
-# 🆕 NEW: Permission Models for Lead Creation
+# ============================================================================
+# 🆕 RBAC MODELS - Permission System (Keeping old for backward compatibility)
+# ============================================================================
+
 class UserPermissions(BaseModel):
-    """User permissions for lead creation and other actions"""
+    """DEPRECATED: Old 2-permission system - kept for backward compatibility
+    
+    These will be migrated to the new RBAC permission_overrides system.
+    New implementations should use the RBAC permission system instead.
+    """
     can_create_single_lead: bool = False
     can_create_bulk_leads: bool = False
     granted_by: Optional[str] = None
@@ -45,13 +53,73 @@ class UserPermissions(BaseModel):
             }
         }
 
+# ============================================================================
+# 🆕 RBAC MODELS - New Permission Override System
+# ============================================================================
+
+class PermissionOverride(BaseModel):
+    """Individual permission override for a user (grant or deny)"""
+    permission_code: str = Field(..., description="Permission code (e.g., 'lead.create')")
+    granted: bool = Field(..., description="Whether permission is granted (True) or denied (False)")
+    granted_by: Optional[str] = Field(None, description="Who granted this override")
+    granted_at: Optional[datetime] = Field(None, description="When this override was granted")
+    reason: Optional[str] = Field(None, max_length=500, description="Reason for override")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "permission_code": "lead.delete_all",
+                "granted": True,
+                "granted_by": "superadmin@company.com",
+                "granted_at": "2025-01-15T10:30:00Z",
+                "reason": "Temporary access for data cleanup project"
+            }
+        }
+
+# ============================================================================
+# USER BASE MODEL - UPDATED FOR RBAC
+# ============================================================================
+
 class UserBase(BaseModel):
-    """Base user model with common fields"""
+    """Base user model with common fields - UPDATED FOR RBAC"""
     email: EmailStr
     username: str = Field(..., min_length=3, max_length=50)
     first_name: str = Field(..., min_length=1, max_length=50)
     last_name: str = Field(..., min_length=1, max_length=50)
-    role: UserRole = UserRole.USER
+    
+    # ============================================================================
+    # 🔥 RBAC FIELDS (NEW)
+    # ============================================================================
+    
+    # Role Information (replaces old UserRole enum)
+    role_id: Optional[str] = Field(None, description="Reference to roles collection")
+    role_name: Optional[str] = Field(None, description="Cached role name for quick access")
+    is_super_admin: bool = Field(default=False, description="Super admin bypass flag")
+    
+    # Team Hierarchy
+    reports_to: Optional[str] = Field(None, description="Manager's user ID (ObjectId as string)")
+    reports_to_name: Optional[str] = Field(None, description="Manager's full name (cached)")
+    team_members: List[str] = Field(default_factory=list, description="Direct reports user IDs")
+    team_level: int = Field(default=0, description="Hierarchy level: 0=individual, 1=lead, 2=manager, etc.")
+    
+    # Permission System
+    permission_overrides: List[PermissionOverride] = Field(
+        default_factory=list,
+        description="Individual permission overrides (grant/deny)"
+    )
+    effective_permissions: List[str] = Field(
+        default_factory=list,
+        description="Computed final permissions (role + overrides)"
+    )
+    permissions_last_computed: Optional[datetime] = Field(
+        None,
+        description="When effective_permissions were last calculated"
+    )
+    
+    # ============================================================================
+    # EXISTING FIELDS
+    # ============================================================================
+    
     is_active: bool = True
     phone: Optional[str] = None
     
@@ -64,7 +132,8 @@ class UserBase(BaseModel):
     @validator('departments')
     def validate_departments(cls, v, values):
         """Validate departments (admin is always valid, others checked at runtime)"""
-        user_role = values.get('role', UserRole.USER)
+        # RBAC: Role validation removed since we no longer have UserRole enum
+        # Department validation is now done at runtime against database
         
         # Handle both string and list inputs
         if isinstance(v, str):
@@ -77,33 +146,25 @@ class UserBase(BaseModel):
         # Remove empty strings
         departments_list = [dept for dept in departments_list if dept]
         
-        # Role-based validation
-        if user_role == UserRole.ADMIN:
-            # Admin can have single department
-            if len(departments_list) > 1:
-                raise ValueError("Admin users can only have one department")
-            # Default admin department
-            if not departments_list:
-                return "admin"
-            # Admin can only have "admin" department
-            if departments_list[0] != "admin":
-                raise ValueError("Admin users can only have 'admin' department")
-            return departments_list[0]  # Return string for admin
-        else:
-            # Regular users must have at least one department, max 5
-            if not departments_list:
-                raise ValueError("Regular users must have at least one department")
-            if len(departments_list) > 5:
-                raise ValueError("Users cannot have more than 5 departments")
-            
-            # Remove duplicates and return list
-            return list(set(departments_list))
+        # Basic validation - detailed validation done at service layer
+        if not departments_list:
+            return []
+        
+        # Remove duplicates and return
+        return list(set(departments_list))
+
+# ============================================================================
+# USER CREATE MODEL - UPDATED FOR RBAC
+# ============================================================================
 
 class UserCreate(UserBase):
-    """User creation model"""
+    """User creation model - UPDATED FOR RBAC"""
     password: str = Field(..., min_length=8, max_length=100)
     
-    # 🆕 NEW: Optional permissions during user creation (defaults to no permissions)
+    # 🆕 RBAC: Accept role_id instead of role enum
+    role_id: Optional[str] = Field(None, description="Role ID to assign (defaults to 'user' role)")
+    
+    # 🆕 OLD: Optional permissions during user creation (DEPRECATED - use RBAC)
     permissions: Optional[UserPermissions] = UserPermissions()
 
     @validator('password')
@@ -127,24 +188,58 @@ class UserCreate(UserBase):
                 "first_name": "John",
                 "last_name": "Doe",
                 "password": "SecurePass123",
-                "role": "user",
+                "role_id": "507f1f77bcf86cd799439011",  # Reference to roles collection
                 "phone": "+1-555-123-4567",
-                "departments": ["sales", "marketing"],  # Admin creates these first
-                "permissions": {
+                "departments": ["sales", "marketing"],
+                "permissions": {  # DEPRECATED - will be ignored in favor of RBAC
                     "can_create_single_lead": False,
                     "can_create_bulk_leads": False
                 }
             }
         }
 
+# ============================================================================
+# USER RESPONSE MODEL - UPDATED FOR RBAC
+# ============================================================================
+
 class UserResponse(BaseModel):
-    """User response model (without sensitive data)"""
+    """User response model (without sensitive data) - UPDATED FOR RBAC"""
     id: str
     email: str
     username: str
     first_name: str
     last_name: str
-    role: UserRole
+    
+    # ============================================================================
+    # 🔥 RBAC FIELDS (NEW) - Included in response
+    # ============================================================================
+    
+    role_id: Optional[str] = Field(None, description="Role reference")
+    role_name: Optional[str] = Field(None, description="Role display name")
+    is_super_admin: bool = Field(default=False, description="Super admin flag")
+    
+    # Team Hierarchy
+    reports_to: Optional[str] = Field(None, description="Manager user ID")
+    reports_to_name: Optional[str] = Field(None, description="Manager name")
+    team_members: List[str] = Field(default_factory=list, description="Direct reports")
+    team_level: int = Field(default=0, description="Hierarchy level")
+    team_size: Optional[int] = Field(None, description="Total team size (computed)")
+    
+    # Permissions
+    permission_overrides: List[PermissionOverride] = Field(
+        default_factory=list,
+        description="Individual overrides"
+    )
+    effective_permissions: List[str] = Field(
+        default_factory=list,
+        description="Final computed permissions"
+    )
+    permissions_last_computed: Optional[datetime] = Field(None)
+    
+    # ============================================================================
+    # EXISTING FIELDS
+    # ============================================================================
+    
     is_active: bool
     phone: Optional[str] = None
     
@@ -158,7 +253,7 @@ class UserResponse(BaseModel):
         description="Always returns departments as a list for consistency"
     )
     
-    # 🆕 NEW: Include permissions in user response
+    # 🆕 OLD: Include old permissions for backward compatibility
     permissions: Optional[UserPermissions] = UserPermissions()
     
     created_at: datetime
@@ -197,12 +292,22 @@ class UserResponse(BaseModel):
                 "username": "johndoe",
                 "first_name": "John",
                 "last_name": "Doe",
-                "role": "user",
+                "role_id": "507f1f77bcf86cd799439011",
+                "role_name": "Team Lead",
+                "is_super_admin": False,
+                "reports_to": "507f1f77bcf86cd799439012",
+                "reports_to_name": "Jane Manager",
+                "team_members": ["507f1f77bcf86cd799439013", "507f1f77bcf86cd799439014"],
+                "team_level": 1,
+                "team_size": 5,
+                "permission_overrides": [],
+                "effective_permissions": ["lead.create", "lead.read_team", "lead.update_own"],
+                "permissions_last_computed": "2025-01-15T10:30:00Z",
                 "is_active": True,
                 "phone": "+1-555-123-4567",
                 "departments": ["sales", "marketing"],
                 "department_list": ["sales", "marketing"],
-                "permissions": {
+                "permissions": {  # DEPRECATED - kept for backward compatibility
                     "can_create_single_lead": True,
                     "can_create_bulk_leads": False
                 },
@@ -220,16 +325,26 @@ class UserResponse(BaseModel):
                 "ready_to_call": True
             }
         }
+
+# ============================================================================
+# USER UPDATE MODEL - UPDATED FOR RBAC
+# ============================================================================
         
 class UserUpdate(BaseModel):
-    """User update model"""
+    """User update model - UPDATED FOR RBAC"""
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     phone: Optional[str] = None
     departments: Optional[Union[str, List[str]]] = None
     is_active: Optional[bool] = None
     
-    # 🆕 NEW: Allow updating permissions through user update
+    # 🆕 RBAC: Allow updating role
+    role_id: Optional[str] = Field(None, description="New role ID to assign")
+    
+    # 🆕 RBAC: Allow updating team hierarchy
+    reports_to: Optional[str] = Field(None, description="New manager user ID")
+    
+    # 🆕 OLD: Allow updating permissions through user update (DEPRECATED)
     permissions: Optional[UserPermissions] = None
 
     @validator('departments')
@@ -248,9 +363,15 @@ class UserUpdate(BaseModel):
         
         return departments_list if len(departments_list) > 1 else (departments_list[0] if departments_list else None)
 
-# 🆕 NEW: Permission Management Models
+# ============================================================================
+# PERMISSION MANAGEMENT MODELS (DEPRECATED - kept for backward compatibility)
+# ============================================================================
+
 class PermissionUpdateRequest(BaseModel):
-    """Request model for updating user permissions"""
+    """DEPRECATED: Old 2-permission update - use RBAC permission overrides instead
+    
+    Request model for updating user permissions
+    """
     user_email: str = Field(..., description="Email of the user to update permissions for")
     can_create_single_lead: bool = Field(..., description="Allow user to create single leads")
     can_create_bulk_leads: bool = Field(..., description="Allow user to create bulk leads")
@@ -267,7 +388,7 @@ class PermissionUpdateRequest(BaseModel):
         }
 
 class PermissionUpdateResponse(BaseModel):
-    """Response model for permission updates"""
+    """DEPRECATED: Response model for old permission updates"""
     success: bool
     message: str
     user_email: str
@@ -295,7 +416,7 @@ class PermissionUpdateResponse(BaseModel):
         }
 
 class UserPermissionsListResponse(BaseModel):
-    """Response model for listing users with their permissions"""
+    """DEPRECATED: Response model for listing users with old permissions"""
     success: bool
     users: List[UserResponse]
     total: int
@@ -311,7 +432,7 @@ class UserPermissionsListResponse(BaseModel):
                         "email": "john@company.com",
                         "first_name": "John",
                         "last_name": "Smith",
-                        "role": "user",
+                        "role_name": "User",
                         "permissions": {
                             "can_create_single_lead": True,
                             "can_create_bulk_leads": False,
@@ -329,7 +450,58 @@ class UserPermissionsListResponse(BaseModel):
             }
         }
 
-# 🚀 NEW: Department Management Models
+# ============================================================================
+# 🆕 RBAC PERMISSION OVERRIDE MODELS
+# ============================================================================
+
+class PermissionOverrideRequest(BaseModel):
+    """Request to add/update a permission override for a user"""
+    user_email: str = Field(..., description="User to grant/deny permission")
+    permission_code: str = Field(..., description="Permission code (e.g., 'lead.delete_all')")
+    granted: bool = Field(..., description="True to grant, False to deny")
+    reason: Optional[str] = Field(None, max_length=500, description="Reason for override")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "user_email": "john@company.com",
+                "permission_code": "lead.delete_all",
+                "granted": True,
+                "reason": "Temporary access for data cleanup"
+            }
+        }
+
+class PermissionOverrideResponse(BaseModel):
+    """Response for permission override operation"""
+    success: bool
+    message: str
+    user_email: str
+    permission_code: str
+    granted: bool
+    override: PermissionOverride
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "success": True,
+                "message": "Permission override added successfully",
+                "user_email": "john@company.com",
+                "permission_code": "lead.delete_all",
+                "granted": True,
+                "override": {
+                    "permission_code": "lead.delete_all",
+                    "granted": True,
+                    "granted_by": "superadmin@company.com",
+                    "granted_at": "2025-01-15T10:30:00Z",
+                    "reason": "Temporary access for data cleanup"
+                }
+            }
+        }
+
+# ============================================================================
+# DEPARTMENT MANAGEMENT MODELS (UNCHANGED)
+# ============================================================================
+
 class DepartmentCreate(BaseModel):
     """Model for creating new departments"""
     name: str = Field(..., min_length=2, max_length=50)
@@ -372,7 +544,10 @@ class DepartmentUpdate(BaseModel):
     description: Optional[str] = Field(None, max_length=200)
     is_active: Optional[bool] = None
 
-# 🚀 UPDATED: Dynamic Department Helper Functions
+# ============================================================================
+# DEPARTMENT HELPER (UNCHANGED)
+# ============================================================================
+
 class DepartmentHelper:
     """Helper class for department operations"""
     
@@ -404,7 +579,7 @@ class DepartmentHelper:
                 "is_active": True,
                 "description": "Pre-sales and lead qualification"
             },
-                    {
+            {
                 "name": "hr",
                 "display_name": "HR",
                 "is_predefined": True,
@@ -479,19 +654,26 @@ class DepartmentHelper:
         return count
     
     @staticmethod
-    def normalize_departments(departments: Union[str, List[str]], role: str) -> Union[str, List[str]]:
-        """Normalize departments based on role"""
+    def normalize_departments(departments: Union[str, List[str]], role_name: str) -> Union[str, List[str]]:
+        """Normalize departments based on role
+        
+        NOTE: In RBAC, we check role_name instead of role enum
+        """
         if isinstance(departments, str):
             departments_list = [departments]
         else:
             departments_list = departments or []
         
-        if role == "admin":
-            return "admin"  # Admin always gets "admin"
+        # Admin role gets "admin" department
+        if role_name and role_name.lower() in ["admin", "super_admin"]:
+            return "admin"
         else:
             return list(set(departments_list)) if departments_list else []
 
-# 🚀 NEW: Initial Setup Helper
+# ============================================================================
+# DEPARTMENT SETUP HELPER (UNCHANGED)
+# ============================================================================
+
 class DepartmentSetupHelper:
     """Helper for setting up initial departments"""
     

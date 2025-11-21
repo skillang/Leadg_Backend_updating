@@ -1,48 +1,144 @@
-# app/routers/contacts.py - Fixed Router with All Existing Services
+# app/routers/contacts.py - RBAC-Enabled Contact Management Router
+# 🔄 UPDATED: Role checks replaced with RBAC permission checks
+# ✅ All endpoints now use permission-based access control
+
 from fastapi import APIRouter, Depends, HTTPException, status, Query  
 from typing import Dict, Any, List
 import logging
 from datetime import datetime
 
-# Fixed imports - only import what exists
+# Services
+from app.services.contact_service import contact_service
+from app.services.rbac_service import RBACService  # 🆕 NEW
+
+# Dependencies
+from app.utils.dependencies import (
+    get_current_active_user,
+    get_user_with_permission  # 🆕 NEW - RBAC dependency
+)
+
+# Decorators
 from app.decorators.timezone_decorator import convert_dates_to_ist
+
+# Models
 from app.models.contact import (
     ContactCreate, 
     ContactUpdate, 
     ContactResponse, 
     ContactListResponse, 
-    SetPrimaryContactRequest  # Now exists in models
+    SetPrimaryContactRequest
 )
-from app.services.contact_service import contact_service  # Import the service instance
-from app.utils.dependencies import get_current_user
+
+# Database
+from app.config.database import get_database
 
 logger = logging.getLogger(__name__)
 
-# Create router without tags (tags will be added in main.py)
+# Create router
 router = APIRouter()
 
-# =====================================================================
-# CONTACT CRUD OPERATIONS (All Existing Services Preserved)
-# =====================================================================
+# 🆕 Initialize RBAC service
+rbac_service = RBACService()
+
+
+# ============================================================================
+# 🆕 RBAC HELPER FUNCTIONS
+# ============================================================================
+
+async def check_contact_access(contact: Dict, user_email: str, current_user: Dict) -> bool:
+    """
+    🆕 Check if user has access to a specific contact using RBAC
+    
+    Returns True if:
+    - User has contact.read_all permission, OR
+    - Contact's lead is assigned to user (primary or co-assignee)
+    """
+    # Check if user has read_all permission
+    has_read_all = await rbac_service.check_permission(current_user, "contact.read_all")
+    if has_read_all:
+        return True
+    
+    # Check if user has access to the contact's lead
+    db = get_database()
+    lead_id = contact.get("lead_id")
+    
+    if not lead_id:
+        return False
+    
+    lead = await db.leads.find_one({"lead_id": lead_id})
+    if not lead:
+        return False
+    
+    # Check if user is assigned to the lead (primary or co-assignee)
+    assigned_to = lead.get("assigned_to")
+    co_assignees = lead.get("co_assignees", [])
+    
+    return user_email in ([assigned_to] + co_assignees)
+
+
+async def check_lead_access_for_contact(lead_id: str, user_email: str, current_user: Dict) -> bool:
+    """
+    🆕 Check if user has access to a lead (for contact operations)
+    """
+    # Check if user has read_all permission
+    has_read_all = await rbac_service.check_permission(current_user, "contact.read_all")
+    if has_read_all:
+        return True
+    
+    # Check if user has access to the lead
+    db = get_database()
+    lead = await db.leads.find_one({"lead_id": lead_id})
+    
+    if not lead:
+        return False
+    
+    # Check if user is assigned to the lead
+    assigned_to = lead.get("assigned_to")
+    co_assignees = lead.get("co_assignees", [])
+    
+    return user_email in ([assigned_to] + co_assignees)
+
+
+# ============================================================================
+# 🔄 RBAC-ENABLED CONTACT CRUD OPERATIONS
+# ============================================================================
 
 @router.post("/leads/{lead_id}/contacts", status_code=status.HTTP_201_CREATED)
 async def create_contact(
     lead_id: str,
     contact_data: ContactCreate,
-    current_user: Dict[str, Any] = Depends(get_current_user)
+    # 🔄 UPDATED: Use RBAC permission check
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("contact.create"))
 ):
     """
-    Create a new contact for a specific lead.
-    Auto-logs activity to lead_activities collection.
-    Handles permissions and duplicate prevention.
+    🔄 RBAC-ENABLED: Create a new contact for a specific lead
+    
+    **Required Permission:** `contact.create`
+    
+    Features:
+    - Auto-logs activity to lead_activities collection
+    - Handles duplicate prevention
+    - Permission checking for lead access
     """
     try:
+        # 🆕 Check if user has access to this lead
+        user_email = current_user.get("email")
+        has_access = await check_lead_access_for_contact(lead_id, user_email, current_user)
+        
+        if not has_access:
+            raise HTTPException(
+                status_code=403,
+                detail="You don't have permission to add contacts to this lead"
+            )
+        
         result = await contact_service.create_contact(lead_id, contact_data, current_user)
+        
         return {
             "success": True,
             "data": result,
             "timestamp": datetime.utcnow().isoformat()
         }
+        
     except HTTPException:
         raise
     except Exception as e:
@@ -52,19 +148,36 @@ async def create_contact(
             detail=f"Internal server error: {str(e)}"
         )
 
+
 @router.get("/leads/{lead_id}/contacts")
 @convert_dates_to_ist()
 async def get_lead_contacts(
     lead_id: str,
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
-    current_user: Dict[str, Any] = Depends(get_current_user)
+    # 🔄 UPDATED: Use RBAC permission check
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("contact.read_own"))
 ):
     """
-    Get all contacts for a specific lead with pagination.
+    🔄 RBAC-ENABLED: Get all contacts for a specific lead with pagination
+    
+    **Required Permission:**
+    - `contact.read_own` - See contacts for assigned leads
+    - `contact.read_all` - See all contacts (admin)
+    
     Returns contacts with summary statistics and lead info.
     """
     try:
+        # 🆕 Check if user has access to this lead
+        user_email = current_user.get("email")
+        has_access = await check_lead_access_for_contact(lead_id, user_email, current_user)
+        
+        if not has_access:
+            raise HTTPException(
+                status_code=403,
+                detail="You don't have permission to view contacts for this lead"
+            )
+        
         result = await contact_service.get_lead_contacts(lead_id, current_user, page, limit)
         
         # Extract data from service result
@@ -90,6 +203,7 @@ async def get_lead_contacts(
             },
             "timestamp": datetime.utcnow().isoformat()
         }
+        
     except HTTPException:
         raise
     except Exception as e:
@@ -99,23 +213,46 @@ async def get_lead_contacts(
             detail=f"Internal server error: {str(e)}"
         )
 
-# 🔧 FIXED: Put specific routes BEFORE general routes to avoid conflicts
+
 @router.patch("/{contact_id}/primary")
 async def set_primary_contact(
     contact_id: str,
-    current_user: Dict[str, Any] = Depends(get_current_user)
+    # 🔄 UPDATED: Use RBAC permission check
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("contact.update"))
 ):
     """
-    Set a contact as the primary contact for their lead.
+    🔄 RBAC-ENABLED: Set a contact as the primary contact for their lead
+    
+    **Required Permission:** `contact.update`
+    
     Removes primary status from other contacts for the same lead.
     """
     try:
+        db = get_database()
+        
+        # Get the contact to check permissions
+        contact = await db.contacts.find_one({"contact_id": contact_id})
+        if not contact:
+            raise HTTPException(status_code=404, detail="Contact not found")
+        
+        # 🆕 Check if user has access to this contact
+        user_email = current_user.get("email")
+        has_access = await check_contact_access(contact, user_email, current_user)
+        
+        if not has_access:
+            raise HTTPException(
+                status_code=403,
+                detail="You don't have permission to modify this contact"
+            )
+        
         result = await contact_service.set_primary_contact(contact_id, current_user)
+        
         return {
             "success": True,
             "data": result,
             "timestamp": datetime.utcnow().isoformat()
         }
+        
     except HTTPException:
         raise
     except Exception as e:
@@ -125,23 +262,49 @@ async def set_primary_contact(
             detail=f"Internal server error: {str(e)}"
         )
 
+
 @router.get("/{contact_id}")
 @convert_dates_to_ist()
 async def get_contact(
     contact_id: str,
-    current_user: Dict[str, Any] = Depends(get_current_user)
+    # 🔄 UPDATED: Use RBAC permission check
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("contact.read_own"))
 ):
     """
-    Get a specific contact by ID.
+    🔄 RBAC-ENABLED: Get a specific contact by ID
+    
+    **Required Permission:**
+    - `contact.read_own` - See contacts for assigned leads
+    - `contact.read_all` - See all contacts (admin)
+    
     Includes all contact details and linked leads.
     """
     try:
+        db = get_database()
+        
+        # Get the contact to check permissions
+        contact = await db.contacts.find_one({"contact_id": contact_id})
+        if not contact:
+            raise HTTPException(status_code=404, detail="Contact not found")
+        
+        # 🆕 Check if user has access to this contact
+        user_email = current_user.get("email")
+        has_access = await check_contact_access(contact, user_email, current_user)
+        
+        if not has_access:
+            raise HTTPException(
+                status_code=403,
+                detail="You don't have permission to view this contact"
+            )
+        
         result = await contact_service.get_contact_by_id(contact_id, current_user)
+        
         return {
             "success": True,
             "data": result,
             "timestamp": datetime.utcnow().isoformat()
         }
+        
     except HTTPException:
         raise
     except Exception as e:
@@ -151,24 +314,50 @@ async def get_contact(
             detail=f"Internal server error: {str(e)}"
         )
 
+
 @router.put("/{contact_id}")
 async def update_contact(
     contact_id: str,
     contact_data: ContactUpdate,
-    current_user: Dict[str, Any] = Depends(get_current_user)
+    # 🔄 UPDATED: Use RBAC permission check
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("contact.update"))
 ):
     """
-    Update a contact's information.
-    Handles duplicate prevention and permission checking.
-    Auto-logs activity to lead_activities collection.
+    🔄 RBAC-ENABLED: Update a contact's information
+    
+    **Required Permission:** `contact.update`
+    
+    Features:
+    - Handles duplicate prevention
+    - Permission checking for lead access
+    - Auto-logs activity to lead_activities collection
     """
     try:
+        db = get_database()
+        
+        # Get the contact to check permissions
+        contact = await db.contacts.find_one({"contact_id": contact_id})
+        if not contact:
+            raise HTTPException(status_code=404, detail="Contact not found")
+        
+        # 🆕 Check if user has access to this contact
+        user_email = current_user.get("email")
+        has_access = await check_contact_access(contact, user_email, current_user)
+        
+        if not has_access:
+            raise HTTPException(
+                status_code=403,
+                detail="You don't have permission to update this contact"
+            )
+        
         result = await contact_service.update_contact(contact_id, contact_data, current_user)
+        
         return {
             "success": True,
             "data": result,
             "timestamp": datetime.utcnow().isoformat()
         }
+        
     except HTTPException:
         raise
     except Exception as e:
@@ -178,23 +367,48 @@ async def update_contact(
             detail=f"Internal server error: {str(e)}"
         )
 
+
 @router.delete("/{contact_id}")
 async def delete_contact(
     contact_id: str,
-    current_user: Dict[str, Any] = Depends(get_current_user)
+    # 🔄 UPDATED: Use RBAC permission check
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("contact.delete"))
 ):
     """
-    Delete a contact.
-    Auto-logs activity to lead_activities collection.
-    Returns confirmation with deleted contact info.
+    🔄 RBAC-ENABLED: Delete a contact
+    
+    **Required Permission:** `contact.delete`
+    
+    Features:
+    - Auto-logs activity to lead_activities collection
+    - Returns confirmation with deleted contact info
     """
     try:
+        db = get_database()
+        
+        # Get the contact to check permissions
+        contact = await db.contacts.find_one({"contact_id": contact_id})
+        if not contact:
+            raise HTTPException(status_code=404, detail="Contact not found")
+        
+        # 🆕 Check if user has access to this contact
+        user_email = current_user.get("email")
+        has_access = await check_contact_access(contact, user_email, current_user)
+        
+        if not has_access:
+            raise HTTPException(
+                status_code=403,
+                detail="You don't have permission to delete this contact"
+            )
+        
         result = await contact_service.delete_contact(contact_id, current_user)
+        
         return {
             "success": True,
             "data": result,
             "timestamp": datetime.utcnow().isoformat()
         }
+        
     except HTTPException:
         raise
     except Exception as e:
@@ -204,9 +418,97 @@ async def delete_contact(
             detail=f"Internal server error: {str(e)}"
         )
 
-# =====================================================================
-# DEBUG & TESTING ENDPOINTS (All Existing Debug Services Preserved)
-# =====================================================================
+
+# ============================================================================
+# STATISTICS ENDPOINT (RBAC-ENABLED)
+# ============================================================================
+
+@router.get("/stats")
+@convert_dates_to_ist()
+async def get_contact_statistics(
+    # 🔄 UPDATED: Use RBAC permission check
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("contact.read_own"))
+):
+    """
+    🔄 RBAC-ENABLED: Get contact statistics
+    
+    **Required Permission:** `contact.read_own`
+    
+    Statistics are filtered based on user's permission level:
+    - contact.read_own: See stats for own lead contacts
+    - contact.read_all: See all contact stats
+    """
+    try:
+        db = get_database()
+        user_email = current_user.get("email")
+        
+        # Build query based on permissions
+        has_read_all = await rbac_service.check_permission(current_user, "contact.read_all")
+        
+        if has_read_all:
+            # Admin - see all contacts
+            base_query = {}
+        else:
+            # Regular user - only see contacts for assigned leads
+            user_leads = await db.leads.find({
+                "$or": [
+                    {"assigned_to": user_email},
+                    {"co_assignees": user_email}
+                ]
+            }, {"lead_id": 1}).to_list(None)
+            
+            user_lead_ids = [lead["lead_id"] for lead in user_leads]
+            base_query = {"lead_id": {"$in": user_lead_ids}}
+        
+        # Get statistics
+        total_contacts = await db.contacts.count_documents(base_query)
+        
+        # Get contacts by role
+        role_pipeline = [
+            {"$match": base_query},
+            {"$group": {"_id": "$role", "count": {"$sum": 1}}},
+            {"$sort": {"count": -1}}
+        ]
+        role_result = await db.contacts.aggregate(role_pipeline).to_list(None)
+        contacts_by_role = {item["_id"]: item["count"] for item in role_result if item["_id"]}
+        
+        # Get contacts by relationship
+        relationship_pipeline = [
+            {"$match": base_query},
+            {"$group": {"_id": "$relationship", "count": {"$sum": 1}}},
+            {"$sort": {"count": -1}}
+        ]
+        relationship_result = await db.contacts.aggregate(relationship_pipeline).to_list(None)
+        contacts_by_relationship = {item["_id"]: item["count"] for item in relationship_result if item["_id"]}
+        
+        # Get primary contacts count
+        primary_query = {**base_query, "is_primary": True}
+        primary_contacts = await db.contacts.count_documents(primary_query)
+        
+        return {
+            "success": True,
+            "data": {
+                "total_contacts": total_contacts,
+                "primary_contacts": primary_contacts,
+                "contacts_by_role": contacts_by_role,
+                "contacts_by_relationship": contacts_by_relationship,
+                "user": user_email,
+                "scope": "all" if has_read_all else "own_leads"
+            },
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting contact statistics: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get statistics: {str(e)}"
+        )
+
+
+# ============================================================================
+# DEBUG & TESTING ENDPOINTS (Keep as-is - no RBAC needed)
+# ============================================================================
 
 @router.get("/debug/test")
 @convert_dates_to_ist()
@@ -214,6 +516,8 @@ async def debug_test():
     """
     Debug endpoint to test contact service availability and database connectivity.
     Tests the health of the contact service.
+    
+    **No authentication required** - Debug endpoint
     """
     try:
         result = await contact_service.test_service()
@@ -230,12 +534,15 @@ async def debug_test():
             "timestamp": datetime.utcnow().isoformat()
         }
 
+
 @router.get("/debug/test-method")
 @convert_dates_to_ist()
 async def test_contact_method():
     """
     Debug endpoint to test method existence.
     Verifies all required contact service methods are available.
+    
+    **No authentication required** - Debug endpoint
     """
     try:
         result = await contact_service.test_method_existence()
@@ -252,9 +559,6 @@ async def test_contact_method():
             "timestamp": datetime.utcnow().isoformat()
         }
 
-# =====================================================================
-# HEALTH CHECK ENDPOINT
-# =====================================================================
 
 @router.get("/health")
 @convert_dates_to_ist()
@@ -262,52 +566,32 @@ async def health_check():
     """
     Simple health check endpoint for monitoring.
     Returns basic service status and version info.
+    
+    **No authentication required** - Health check endpoint
     """
     return {
         "status": "healthy",
         "service": "contact_service",
+        "rbac_enabled": True,  # 🆕 Indicate RBAC is active
         "timestamp": datetime.utcnow().isoformat(),
-        "version": "1.0.0",
+        "version": "2.0.0",  # 🔄 Version bump for RBAC
         "endpoints": {
-            "create_contact": "POST /leads/{lead_id}/contacts",
-            "get_lead_contacts": "GET /leads/{lead_id}/contacts", 
-            "get_contact": "GET /{contact_id}",
-            "update_contact": "PUT /{contact_id}",
-            "delete_contact": "DELETE /{contact_id}",
-            "set_primary_contact": "PATCH /{contact_id}/primary",
-            "debug_test": "GET /debug/test",
-            "test_methods": "GET /debug/test-method",
-            "health_check": "GET /health"
-        }
+            "create_contact": "POST /leads/{lead_id}/contacts [contact.create]",
+            "get_lead_contacts": "GET /leads/{lead_id}/contacts [contact.read_own]", 
+            "get_contact": "GET /{contact_id} [contact.read_own]",
+            "update_contact": "PUT /{contact_id} [contact.update]",
+            "delete_contact": "DELETE /{contact_id} [contact.delete]",
+            "set_primary_contact": "PATCH /{contact_id}/primary [contact.update]",
+            "get_statistics": "GET /stats [contact.read_own]",
+            "debug_test": "GET /debug/test [no auth]",
+            "test_methods": "GET /debug/test-method [no auth]",
+            "health_check": "GET /health [no auth]"
+        },
+        "required_permissions": [
+            "contact.create",
+            "contact.read_own",
+            "contact.read_all",
+            "contact.update",
+            "contact.delete"
+        ]
     }
-
-# =====================================================================
-# ADDITIONAL UTILITY ENDPOINTS (Enhanced Functionality)
-# =====================================================================
-
-@router.get("/stats")
-@convert_dates_to_ist()
-async def get_contact_statistics(
-    current_user: Dict[str, Any] = Depends(get_current_user)
-):
-    """
-    Get contact statistics for the current user.
-    Shows contact counts by role, relationship, etc.
-    """
-    try:
-        # This would need to be implemented in the service if needed
-        # For now, return a placeholder
-        return {
-            "success": True,
-            "data": {
-                "message": "Contact statistics endpoint - implement in service if needed",
-                "user": current_user.get("email", "unknown")
-            },
-            "timestamp": datetime.utcnow().isoformat()
-        }
-    except Exception as e:
-        logger.error(f"Error getting contact statistics: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get statistics: {str(e)}"
-        )

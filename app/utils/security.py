@@ -1,3 +1,6 @@
+# app/utils/security.py - UPDATED FOR RBAC SYSTEM
+# Changes: Added RBAC user management methods
+
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 import jwt
@@ -105,14 +108,183 @@ class SecurityManager:
         except Exception as e:
             logger.error(f"Failed to blacklist token: {e}")
 
+    # ============================================================================
+    # 🆕 RBAC USER MANAGEMENT METHODS
+    # ============================================================================
 
+    async def assign_role_to_user(
+        self,
+        user_email: str,
+        role_id: str,
+        admin_email: str
+    ) -> Dict[str, Any]:
+        """
+        Assign a role to a user and recompute their permissions
+        
+        Args:
+            user_email: Email of user to update
+            role_id: ID of role to assign
+            admin_email: Email of admin making the change
+            
+        Returns:
+            Updated user dict with new role
+        """
+        try:
+            db = get_database()
+            
+            # Get user
+            user = await db.users.find_one({"email": user_email, "is_active": True})
+            if not user:
+                raise ValueError(f"User {user_email} not found or inactive")
+            
+            # Get role
+            role = await db.roles.find_one({"_id": ObjectId(role_id)})
+            if not role:
+                raise ValueError(f"Role {role_id} not found")
+            
+            # Update user with new role
+            result = await db.users.update_one(
+                {"email": user_email},
+                {
+                    "$set": {
+                        "role_id": role_id,
+                        "role_name": role.get("name"),
+                        "permissions_last_computed": None,  # Force recompute
+                        "updated_at": datetime.utcnow()
+                    }
+                }
+            )
+            
+            if result.modified_count == 0:
+                raise ValueError("Failed to update user role")
+            
+            # Update role's user count
+            await db.roles.update_one(
+                {"_id": ObjectId(role_id)},
+                {"$inc": {"users_count": 1}}
+            )
+            
+            # Decrease old role's user count (if had one)
+            old_role_id = user.get("role_id")
+            if old_role_id:
+                await db.roles.update_one(
+                    {"_id": ObjectId(old_role_id)},
+                    {"$inc": {"users_count": -1}}
+                )
+            
+            # Get updated user
+            updated_user = await db.users.find_one({"email": user_email})
+            updated_user["_id"] = str(updated_user["_id"])
+            
+            logger.info(f"✅ Assigned role {role.get('name')} to {user_email} by {admin_email}")
+            
+            return updated_user
+            
+        except Exception as e:
+            logger.error(f"Error assigning role to user: {e}")
+            raise
 
+    async def recompute_user_permissions(self, user_email: str) -> Dict[str, Any]:
+        """
+        Recompute effective permissions for a user
+        
+        This will be called by rbac_service.compute_effective_permissions()
+        
+        Args:
+            user_email: User to recompute permissions for
+            
+        Returns:
+            Updated user with recomputed permissions
+        """
+        try:
+            # Import here to avoid circular import
+            from ..services.rbac_service import rbac_service
+            
+            db = get_database()
+            
+            # Get user
+            user = await db.users.find_one({"email": user_email})
+            if not user:
+                raise ValueError(f"User {user_email} not found")
+            
+            # Compute effective permissions using rbac_service
+            effective_permissions = await rbac_service.compute_effective_permissions(
+                user_id=str(user["_id"]),
+                db=db
+            )
+            
+            # Update user
+            result = await db.users.update_one(
+                {"email": user_email},
+                {
+                    "$set": {
+                        "effective_permissions": effective_permissions,
+                        "permissions_last_computed": datetime.utcnow()
+                    }
+                }
+            )
+            
+            if result.modified_count == 0:
+                logger.warning(f"No changes made when recomputing permissions for {user_email}")
+            
+            # Get updated user
+            updated_user = await db.users.find_one({"email": user_email})
+            updated_user["_id"] = str(updated_user["_id"])
+            
+            logger.info(f"✅ Recomputed permissions for {user_email}: {len(effective_permissions)} permissions")
+            
+            return updated_user
+            
+        except Exception as e:
+            logger.error(f"Error recomputing user permissions: {e}")
+            raise
 
-    # 🆕 NEW: Enhanced user fetching with permissions
+    async def set_user_manager(
+        self,
+        user_email: str,
+        manager_email: str,
+        admin_email: str
+    ) -> Dict[str, Any]:
+        """
+        Set a manager for a user (team hierarchy)
+        
+        Args:
+            user_email: User to assign manager to
+            manager_email: Manager's email
+            admin_email: Admin making the change
+            
+        Returns:
+            Updated user with manager info
+        """
+        try:
+            # Import here to avoid circular import
+            from ..services.team_service import team_service
+            
+            db = get_database()
+            
+            # Use team_service to handle hierarchy logic
+            result = await team_service.set_manager(
+                user_email=user_email,
+                manager_email=manager_email,
+                db=db
+            )
+            
+            logger.info(f"✅ Set manager {manager_email} for {user_email} by {admin_email}")
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error setting user manager: {e}")
+            raise
+
+    # ============================================================================
+    # 🔄 UPDATED: Enhanced user fetching with RBAC fields
+    # ============================================================================
+
     async def get_user_with_permissions(self, user_id: str) -> Optional[Dict[str, Any]]:
         """
-        Get user from database with permissions included
-        Ensures backward compatibility by adding default permissions if missing
+        Get user from database with RBAC fields included
+        Ensures backward compatibility by adding default values if missing
         """
         try:
             db = get_database()
@@ -121,9 +293,42 @@ class SecurityManager:
             if user_data is None:
                 return None
             
-            # 🆕 NEW: Ensure permissions field exists for backward compatibility
+            # ============================================================================
+            # 🆕 RBAC: Ensure new RBAC fields exist
+            # ============================================================================
+            
+            # Role fields
+            if "role_id" not in user_data:
+                user_data["role_id"] = None
+            if "role_name" not in user_data:
+                user_data["role_name"] = None
+            if "is_super_admin" not in user_data:
+                user_data["is_super_admin"] = False
+            
+            # Team hierarchy fields
+            if "reports_to" not in user_data:
+                user_data["reports_to"] = None
+            if "reports_to_name" not in user_data:
+                user_data["reports_to_name"] = None
+            if "team_members" not in user_data:
+                user_data["team_members"] = []
+            if "team_level" not in user_data:
+                user_data["team_level"] = 0
+            
+            # Permission fields
+            if "permission_overrides" not in user_data:
+                user_data["permission_overrides"] = []
+            if "effective_permissions" not in user_data:
+                user_data["effective_permissions"] = []
+            if "permissions_last_computed" not in user_data:
+                user_data["permissions_last_computed"] = None
+            
+            # ============================================================================
+            # 🔄 OLD: Ensure old permissions field exists for backward compatibility
+            # ============================================================================
+            
             if "permissions" not in user_data:
-                # Add default permissions
+                # Add default old permissions
                 default_permissions = {
                     "can_create_single_lead": False,
                     "can_create_bulk_leads": False,
@@ -134,18 +339,41 @@ class SecurityManager:
                 }
                 
                 # Update user in database with default permissions
+                update_doc = {
+                    "permissions": default_permissions,
+                    # Also add RBAC fields if missing
+                    "role_id": user_data.get("role_id"),
+                    "role_name": user_data.get("role_name"),
+                    "is_super_admin": user_data.get("is_super_admin", False),
+                    "reports_to": user_data.get("reports_to"),
+                    "reports_to_name": user_data.get("reports_to_name"),
+                    "team_members": user_data.get("team_members", []),
+                    "team_level": user_data.get("team_level", 0),
+                    "permission_overrides": user_data.get("permission_overrides", []),
+                    "effective_permissions": user_data.get("effective_permissions", []),
+                    "permissions_last_computed": user_data.get("permissions_last_computed")
+                }
+                
                 await db.users.update_one(
                     {"_id": ObjectId(user_id)},
-                    {"$set": {"permissions": default_permissions}}
+                    {"$set": update_doc}
                 )
                 
                 # Add to current user data
                 user_data["permissions"] = default_permissions
                 
-                logger.info(f"Added default permissions for user {user_data.get('email')}")
+                logger.info(f"Added default RBAC fields for user {user_data.get('email')}")
             
             # Convert ObjectId to string for JSON serialization
             user_data["_id"] = str(user_data["_id"])
+            
+            # Convert team_members ObjectIds to strings
+            if user_data.get("team_members"):
+                user_data["team_members"] = [str(tm) if isinstance(tm, ObjectId) else tm for tm in user_data["team_members"]]
+            
+            # Convert reports_to ObjectId to string
+            if user_data.get("reports_to") and isinstance(user_data["reports_to"], ObjectId):
+                user_data["reports_to"] = str(user_data["reports_to"])
             
             return user_data
             
@@ -153,7 +381,10 @@ class SecurityManager:
             logger.error(f"Error fetching user with permissions: {e}")
             return None
 
-    # 🆕 NEW: Update user permissions
+    # ============================================================================
+    # 🔄 OLD METHODS - Kept for backward compatibility
+    # ============================================================================
+
     async def update_user_permissions(
         self, 
         user_email: str, 
@@ -161,8 +392,9 @@ class SecurityManager:
         admin_email: str
     ) -> bool:
         """
-        Update user permissions in database
-        Used by permission management service
+        DEPRECATED: Update old 2-permission system
+        
+        This is kept for backward compatibility but should use permission overrides instead
         """
         try:
             db = get_database()
@@ -189,7 +421,7 @@ class SecurityManager:
             
             success = result.modified_count > 0
             if success:
-                logger.info(f"Updated permissions for {user_email} by {admin_email}")
+                logger.info(f"[DEPRECATED] Updated old permissions for {user_email} by {admin_email}")
             else:
                 logger.warning(f"No user found or no changes made for {user_email}")
             
@@ -199,10 +431,9 @@ class SecurityManager:
             logger.error(f"Error updating user permissions: {e}")
             return False
 
-    # 🆕 NEW: Get users with permissions for admin interface
     async def get_all_users_with_permissions(self) -> list:
         """
-        Get all active users with their permissions for admin management interface
+        Get all active users with their permissions (old + new RBAC)
         """
         try:
             db = get_database()
@@ -213,8 +444,14 @@ class SecurityManager:
                     "email": 1,
                     "first_name": 1,
                     "last_name": 1,
-                    "role": 1,
-                    "permissions": 1,
+                    "role": 1,  # Old field
+                    "role_id": 1,  # New RBAC
+                    "role_name": 1,  # New RBAC
+                    "is_super_admin": 1,  # New RBAC
+                    "permissions": 1,  # Old system
+                    "permission_overrides": 1,  # New RBAC
+                    "effective_permissions": 1,  # New RBAC
+                    "team_level": 1,  # New RBAC
                     "created_at": 1,
                     "last_login": 1
                 }
@@ -222,8 +459,9 @@ class SecurityManager:
             
             users = await cursor.to_list(None)
             
-            # Ensure all users have permissions field
+            # Ensure all users have both old and new permission fields
             for user in users:
+                # Old permissions
                 if "permissions" not in user:
                     user["permissions"] = {
                         "can_create_single_lead": False,
@@ -234,6 +472,20 @@ class SecurityManager:
                         "last_modified_at": None
                     }
                 
+                # New RBAC fields
+                if "role_id" not in user:
+                    user["role_id"] = None
+                if "role_name" not in user:
+                    user["role_name"] = None
+                if "is_super_admin" not in user:
+                    user["is_super_admin"] = False
+                if "permission_overrides" not in user:
+                    user["permission_overrides"] = []
+                if "effective_permissions" not in user:
+                    user["effective_permissions"] = []
+                if "team_level" not in user:
+                    user["team_level"] = 0
+                
                 # Convert ObjectId to string
                 user["_id"] = str(user["_id"])
             
@@ -242,6 +494,10 @@ class SecurityManager:
         except Exception as e:
             logger.error(f"Error fetching users with permissions: {e}")
             return []
+
+    # ============================================================================
+    # PASSWORD RESET METHODS (UNCHANGED)
+    # ============================================================================
 
     def generate_reset_token(self) -> str:
         """Generate secure password reset token"""
@@ -282,10 +538,17 @@ class SecurityManager:
             logger.warning(f"Password reset token validation failed: {e}")
             return None
 
+# ============================================================================
+# GLOBAL INSTANCE & UTILITY FUNCTIONS
+# ============================================================================
+
 # Global security manager instance
 security = SecurityManager()
 
-# Utility functions (keeping existing + adding new)
+# ============================================================================
+# TOKEN & PASSWORD UTILITIES (UNCHANGED)
+# ============================================================================
+
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     return security.verify_password(plain_password, hashed_password)
 
@@ -310,23 +573,64 @@ def create_password_reset_token(data: Dict[str, Any], expire_minutes: int = 30) 
 def verify_reset_token(token: str) -> Optional[Dict[str, Any]]:
     return security.verify_reset_token(token)
 
-# 🆕 NEW: Permission-related utility functions
+# ============================================================================
+# 🆕 RBAC USER MANAGEMENT UTILITIES
+# ============================================================================
+
+async def assign_role_to_user(user_email: str, role_id: str, admin_email: str) -> Dict[str, Any]:
+    """Assign a role to a user"""
+    return await security.assign_role_to_user(user_email, role_id, admin_email)
+
+async def recompute_user_permissions(user_email: str) -> Dict[str, Any]:
+    """Recompute effective permissions for a user"""
+    return await security.recompute_user_permissions(user_email)
+
+async def set_user_manager(user_email: str, manager_email: str, admin_email: str) -> Dict[str, Any]:
+    """Set a manager for a user"""
+    return await security.set_user_manager(user_email, manager_email, admin_email)
+
+# ============================================================================
+# 🔄 OLD PERMISSION UTILITIES (DEPRECATED but kept for compatibility)
+# ============================================================================
+
 async def get_user_with_permissions(user_id: str) -> Optional[Dict[str, Any]]:
-    """Get user with permissions included"""
+    """Get user with permissions included (old + new RBAC)"""
     return await security.get_user_with_permissions(user_id)
 
 async def update_user_permissions(user_email: str, permissions: Dict[str, Any], admin_email: str) -> bool:
-    """Update user permissions"""
+    """DEPRECATED: Update old 2-permission system"""
     return await security.update_user_permissions(user_email, permissions, admin_email)
 
 async def get_all_users_with_permissions() -> list:
     """Get all users with permissions for admin interface"""
     return await security.get_all_users_with_permissions()
 
-# 🆕 NEW: Permission checking utilities
-def check_user_has_permission(user_data: Dict[str, Any], permission_name: str) -> bool:
+# ============================================================================
+# 🆕 RBAC PERMISSION CHECKING UTILITIES
+# ============================================================================
+
+def check_user_has_permission(user_data: Dict[str, Any], permission_code: str) -> bool:
     """
-    Check if user has specific permission
+    Check if user has specific permission (NEW RBAC system)
+    
+    Args:
+        user_data: User data from database
+        permission_code: Permission code to check (e.g., 'lead.create')
+    
+    Returns:
+        bool: True if user has permission
+    """
+    # Super admins have all permissions
+    if user_data.get("is_super_admin", False):
+        return True
+    
+    # Check effective permissions
+    effective_permissions = user_data.get("effective_permissions", [])
+    return permission_code in effective_permissions
+
+def check_user_has_old_permission(user_data: Dict[str, Any], permission_name: str) -> bool:
+    """
+    DEPRECATED: Check if user has old 2-permission system permission
     
     Args:
         user_data: User data from database
@@ -335,17 +639,17 @@ def check_user_has_permission(user_data: Dict[str, Any], permission_name: str) -
     Returns:
         bool: True if user has permission
     """
-    # Admins always have all permissions
-    if user_data.get("role") == "admin":
+    # Super admins have all permissions
+    if user_data.get("is_super_admin", False):
         return True
     
-    # Check user permissions
+    # Check old permissions
     permissions = user_data.get("permissions", {})
     return permissions.get(permission_name, False)
 
 def get_user_permission_summary(user_data: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Get summary of user's permissions for UI display
+    Get summary of user's permissions for UI display (old + new system)
     
     Args:
         user_data: User data from database
@@ -353,24 +657,40 @@ def get_user_permission_summary(user_data: Dict[str, Any]) -> Dict[str, Any]:
     Returns:
         dict: Permission summary
     """
-    role = user_data.get("role")
-    permissions = user_data.get("permissions", {})
+    # New RBAC system
+    is_super_admin = user_data.get("is_super_admin", False)
+    role_name = user_data.get("role_name")
+    effective_permissions = user_data.get("effective_permissions", [])
+    permission_overrides = user_data.get("permission_overrides", [])
     
-    if role == "admin":
+    # Old system
+    old_permissions = user_data.get("permissions", {})
+    
+    if is_super_admin:
         return {
-            "is_admin": True,
-            "can_create_single_lead": True,
-            "can_create_bulk_leads": True,
+            "is_super_admin": True,
+            "role_name": "Super Admin",
+            "permission_count": "All (69)",
+            "has_overrides": len(permission_overrides) > 0,
+            "can_create_single_lead": True,  # Old system compatibility
+            "can_create_bulk_leads": True,  # Old system compatibility
             "can_manage_permissions": True,
-            "permission_source": "admin_role"
+            "permission_source": "super_admin"
         }
     
     return {
-        "is_admin": False,
-        "can_create_single_lead": permissions.get("can_create_single_lead", False),
-        "can_create_bulk_leads": permissions.get("can_create_bulk_leads", False),
-        "can_manage_permissions": False,
-        "permission_source": "user_permissions",
-        "granted_by": permissions.get("granted_by"),
-        "granted_at": permissions.get("granted_at")
+        "is_super_admin": False,
+        "role_name": role_name or "Unknown",
+        "permission_count": len(effective_permissions),
+        "has_overrides": len(permission_overrides) > 0,
+        
+        # Old system permissions (for backward compatibility)
+        "can_create_single_lead": old_permissions.get("can_create_single_lead", False),
+        "can_create_bulk_leads": old_permissions.get("can_create_bulk_leads", False),
+        
+        # New RBAC info
+        "effective_permissions": effective_permissions,
+        "permission_source": "role_based" if role_name else "none",
+        "granted_by": old_permissions.get("granted_by"),
+        "granted_at": old_permissions.get("granted_at")
     }
