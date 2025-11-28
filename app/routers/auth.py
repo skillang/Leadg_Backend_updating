@@ -1,5 +1,8 @@
 # app/routers/auth.py
 # Updated with Tata Tele Auto-Sync Integration - LOGGER FIXED
+# Add this import
+from ..services.rbac_service import  RBACService
+from ..services.role_service import role_service
 
 from fastapi import APIRouter, HTTPException, status, Request, Depends, Query # type: ignore
 from datetime import datetime, timedelta
@@ -62,8 +65,10 @@ async def register_user(
     """
     try:
         db = get_database()
+
+
         rbac_service = RBACService()
-        role_service = RoleService()
+
         
         logger.info(f"Admin {current_user.get('email')} registering new user: {user_data.email}")
         
@@ -219,9 +224,6 @@ async def register_user(
             detail=f"Registration failed: {str(e)}"
         )
 
-# =============================================================================
-# 🆕 ENHANCED LOGIN WITH TATA AUTO-SYNC
-# =============================================================================
 @router.post("/login", response_model=LoginResponse)
 async def login_user(request: Request, login_data: LoginRequest):
     """
@@ -232,6 +234,8 @@ async def login_user(request: Request, login_data: LoginRequest):
     - Includes role_id, role_name, is_super_admin in JWT token
     - Returns effective_permissions in login response
     - Computes permissions if not cached or stale
+    
+    ✅ FIXED: Properly extracts permissions list from RBAC service response
     """
     db = get_database()
     rbac_service = RBACService()
@@ -253,7 +257,8 @@ async def login_user(request: Request, login_data: LoginRequest):
         )
     
     # Verify password
-    if not verify_password(login_data.password, user["hashed_password"]):
+    password_hash = user.get("hashed_password") or user.get("password")
+    if not password_hash or not verify_password(login_data.password, password_hash):
         # Increment failed login attempts
         failed_attempts = user.get("failed_login_attempts", 0) + 1
         update_data = {"failed_login_attempts": failed_attempts}
@@ -281,8 +286,19 @@ async def login_user(request: Request, login_data: LoginRequest):
         )
     
     # 🆕 RBAC: Compute or refresh effective permissions
-    effective_permissions = user.get("effective_permissions", [])
+    effective_permissions_raw = user.get("effective_permissions", [])
     permissions_last_computed = user.get("permissions_last_computed")
+    
+    # ✅ FIX: Handle both dict and list formats from database
+    if isinstance(effective_permissions_raw, dict):
+        # Extract nested list from dict response
+        effective_permissions = effective_permissions_raw.get("effective_permissions", [])
+    elif isinstance(effective_permissions_raw, list):
+        # Already a list, use as-is
+        effective_permissions = effective_permissions_raw
+    else:
+        # Fallback to empty list
+        effective_permissions = []
     
     # Recompute if permissions are stale (older than 24 hours) or missing
     should_recompute = (
@@ -293,14 +309,25 @@ async def login_user(request: Request, login_data: LoginRequest):
     
     if should_recompute:
         logger.info(f"Recomputing permissions for user {user['email']} during login")
-        effective_permissions = await rbac_service.get_user_permissions(str(user["_id"]))
+        effective_permissions_result = await rbac_service.get_user_permissions(str(user["_id"]))
         
-        # Update user with fresh permissions
+        # ✅ FIX: Extract the list from the response (handles both dict and list)
+        if isinstance(effective_permissions_result, dict):
+            # RBAC service returned a dict with metadata
+            effective_permissions = effective_permissions_result.get("effective_permissions", [])
+        elif isinstance(effective_permissions_result, list):
+            # RBAC service returned just the list
+            effective_permissions = effective_permissions_result
+        else:
+            # Fallback
+            effective_permissions = []
+        
+        # ✅ FIX: Save as list (not dict) to database
         await db.users.update_one(
             {"_id": user["_id"]},
             {
                 "$set": {
-                    "effective_permissions": effective_permissions,
+                    "effective_permissions": effective_permissions,  # Save as list
                     "permissions_last_computed": datetime.utcnow()
                 }
             }
@@ -429,7 +456,7 @@ async def login_user(request: Request, login_data: LoginRequest):
         "role_id": str(role_id) if role_id else None,
         "role_name": role_name,
         "is_super_admin": is_super_admin,
-        "effective_permissions": effective_permissions,  # Full permissions list
+        "effective_permissions": effective_permissions,  # ✅ Now always a list
         "permissions_count": len(effective_permissions),
         
         # Team hierarchy
@@ -458,8 +485,6 @@ async def login_user(request: Request, login_data: LoginRequest):
         calling_status=calling_status.get("sync_status", "unknown"),
         message=calling_status.get("message") if not calling_status.get("enabled") else None
     )
-
-
 # =============================================================================
 # EXISTING ENDPOINTS - UNCHANGED (keeping all your existing code)
 # =============================================================================
@@ -492,7 +517,6 @@ async def logout_user(
             message="Logged out"
         )
 
-
 @router.get("/me", response_model=UserResponse)
 @convert_user_dates()
 async def get_current_user_info(
@@ -506,6 +530,8 @@ async def get_current_user_info(
     - Returns role_id, role_name, is_super_admin
     - Returns team hierarchy (reports_to, team_level)
     - Returns permission overrides if any
+    
+    ✅ FIXED: Properly extracts permissions list from database (handles both dict and list)
     """
     try:
         # Handle departments (unchanged)
@@ -562,7 +588,23 @@ async def get_current_user_info(
         role_id = current_user.get("role_id")
         role_name = current_user.get("role_name", current_user.get("role", "user"))
         is_super_admin = current_user.get("is_super_admin", False)
-        effective_permissions = current_user.get("effective_permissions", [])
+        
+        # ✅ FIX: Extract permissions list from dict if needed
+        effective_permissions_raw = current_user.get("effective_permissions", [])
+        
+        # Handle both dict (from database with metadata) and list (clean format) 
+        if isinstance(effective_permissions_raw, dict):
+            # Extract the nested list from the dict
+            effective_permissions = effective_permissions_raw.get("effective_permissions", [])
+            logger.debug(f"Extracted {len(effective_permissions)} permissions from dict for user {current_user.get('email')}")
+        elif isinstance(effective_permissions_raw, list):
+            # Already a list, use as-is
+            effective_permissions = effective_permissions_raw
+        else:
+            # Fallback to empty list
+            logger.warning(f"Unexpected effective_permissions type for user {current_user.get('email')}: {type(effective_permissions_raw)}")
+            effective_permissions = []
+        
         permission_overrides = current_user.get("permission_overrides", [])
         
         # 🆕 RBAC: Team hierarchy info
@@ -598,11 +640,11 @@ async def get_current_user_info(
             sync_status=sync_status,
             ready_to_call=ready_to_call,
             
-            # 🆕 RBAC: Add these fields to response
+            # 🆕 RBAC: Add these fields to response - ✅ NOW WITH CORRECT FORMAT
             role_id=str(role_id) if role_id else None,
             role_name=role_name,
             is_super_admin=is_super_admin,
-            effective_permissions=effective_permissions,
+            effective_permissions=effective_permissions,  # ✅ Now always a list
             permission_overrides=permission_overrides,
             permissions_count=len(effective_permissions),
             
@@ -619,6 +661,14 @@ async def get_current_user_info(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to get user information"
         )
+
+
+
+
+
+
+
+
 
 # =============================================================================
 # EMERGENCY ADMIN AND DEBUG ENDPOINTS - UNCHANGED
