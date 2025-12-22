@@ -114,6 +114,30 @@ async def register_user(
             effective_permissions = [p["permission_code"] for p in role.get("permissions", []) if p.get("granted", False)]
             is_super_admin = role.get("type") == "system" and role.get("name") == "super_admin"
         
+        team_id = getattr(user_data, 'team_id', None)
+        team_name = None
+        is_team_lead = False
+        
+        if team_id:
+            # Validate team exists
+            if ObjectId.is_valid(team_id):
+                team = await db.teams.find_one({"_id": ObjectId(team_id), "is_active": True})
+            else:
+                team = await db.teams.find_one({"team_id": team_id, "is_active": True})
+            
+            if team:
+                team_id = team["_id"]
+                team_name = team["name"]
+                
+                # Check if this user is the team lead
+                is_team_lead = (team.get("team_lead_email") == user_data.email)
+                
+                logger.info(f"Assigning user to team: {team_name} (is_team_lead: {is_team_lead})")
+            else:
+                logger.warning(f"Team {team_id} not found, user will not be assigned to a team")
+                team_id = None
+
+
         # Prepare user document with RBAC fields
         user_doc = {
             "email": user_data.email,
@@ -136,11 +160,10 @@ async def register_user(
             "permission_overrides": [],  # Individual permission overrides
             "permissions_last_computed": datetime.utcnow(),
             
-            # 🆕 RBAC: Team hierarchy fields
-            "reports_to": None,  # Manager's ObjectId
-            "reports_to_email": None,  # Manager's email
-            "team_members": [],  # List of subordinate emails
-            "team_level": 0,  # Hierarchy level (0 = no manager)
+            # 🔄 UPDATED: Simplified team fields (NO HIERARCHY)
+            "team_id": team_id,
+            "team_name": team_name,
+            "is_team_lead": is_team_lead,
             
             # Standard user fields
             "phone": user_data.phone,
@@ -187,6 +210,11 @@ async def register_user(
             "is_super_admin": updated_user.get("is_super_admin", False),
             "permissions_count": len(updated_user.get("effective_permissions", [])),
             
+            # 🔄 UPDATED: Team fields in response
+            "team_id": str(updated_user.get("team_id")) if updated_user.get("team_id") else None,
+            "team_name": updated_user.get("team_name"),
+            "is_team_lead": updated_user.get("is_team_lead", False),
+            
             "phone": updated_user["phone"],
             "department": updated_user["department"],
             "is_active": updated_user["is_active"],
@@ -196,8 +224,10 @@ async def register_user(
             "created_at": updated_user["created_at"].isoformat()
         }
         
-        success_message = f"User registered successfully with role: {role_name}! 📞 Tata calling will be enabled on first login"
-        
+        team_info = f" | Team: {team_name}" if team_name else ""
+        team_lead_badge = " (Team Lead)" if is_team_lead else ""
+        success_message = f"User registered successfully with role: {role_name}{team_info}{team_lead_badge}! 📞 Tata calling will be enabled on first login"
+                
         response = {
             "success": True,
             "message": success_message,
@@ -207,6 +237,11 @@ async def register_user(
                 "permissions_granted": len(effective_permissions),
                 "is_super_admin": is_super_admin
             },
+            "team_info": {
+                "team_id": str(team_id) if team_id else None,
+                "team_name": team_name,
+                "is_team_lead": is_team_lead
+            } if team_id else None,
             "note": "User will be auto-synced with Tata agents on first login"
         }
         
@@ -459,9 +494,10 @@ async def login_user(request: Request, login_data: LoginRequest):
         "effective_permissions": effective_permissions,  # ✅ Now always a list
         "permissions_count": len(effective_permissions),
         
-        # Team hierarchy
-        "reports_to": user.get("reports_to_email"),
-        "team_level": user.get("team_level", 0),
+        # 🔄 UPDATED: Simplified team fields (NO HIERARCHY)
+        "team_id": str(user.get("team_id")) if user.get("team_id") else None,
+        "team_name": user.get("team_name"),
+        "is_team_lead": user.get("is_team_lead", False),
         
         # Calling fields
         "calling_enabled": calling_status.get("enabled", False),
@@ -607,11 +643,6 @@ async def get_current_user_info(
         
         permission_overrides = current_user.get("permission_overrides", [])
         
-        # 🆕 RBAC: Team hierarchy info
-        reports_to_email = current_user.get("reports_to_email")
-        team_level = current_user.get("team_level", 0)
-        team_members = current_user.get("team_members", [])
-        
         return UserResponse(
             id=str(current_user["_id"]),
             email=current_user["email"],
@@ -640,7 +671,7 @@ async def get_current_user_info(
             sync_status=sync_status,
             ready_to_call=ready_to_call,
             
-            # 🆕 RBAC: Add these fields to response - ✅ NOW WITH CORRECT FORMAT
+            # 🆕 RBAC: Role and permission fields
             role_id=str(role_id) if role_id else None,
             role_name=role_name,
             is_super_admin=is_super_admin,
@@ -648,10 +679,10 @@ async def get_current_user_info(
             permission_overrides=permission_overrides,
             permissions_count=len(effective_permissions),
             
-            # 🆕 RBAC: Team hierarchy
-            reports_to=reports_to_email,
-            team_level=team_level,
-            team_members_count=len(team_members)
+            # 🔄 UPDATED: Simplified team fields (NO HIERARCHY)
+            team_id=str(current_user.get("team_id")) if current_user.get("team_id") else None,
+            team_name=current_user.get("team_name"),
+            is_team_lead=current_user.get("is_team_lead", False)
         )
         
     except Exception as e:

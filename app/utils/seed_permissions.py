@@ -855,14 +855,25 @@ def get_all_permissions() -> List[Dict[str, Any]]:
     ]
     
     # ========================================
-    # CATEGORY 9: TEAM MANAGEMENT (6 permissions)
+    # CATEGORY 9: TEAM MANAGEMENT (8 permissions) 🔄 UPDATED
     # ========================================
     
     team_permissions = [
         {
+            "code": "team.create",
+            "name": "Create Teams",
+            "description": "Can create new teams",
+            "category": "team_management",
+            "resource": "team",
+            "action": "create",
+            "scope": "all",
+            "is_system": True,
+            "metadata": {"ui_group": "Team Operations", "icon": "plus"}
+        },
+        {
             "code": "team.view_structure",
             "name": "View Team Structure",
-            "description": "Can view organizational team hierarchy",
+            "description": "Can view organizational team structure",
             "category": "team_management",
             "resource": "team",
             "action": "view_structure",
@@ -871,28 +882,52 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "metadata": {"ui_group": "Team Operations"}
         },
         {
-            "code": "team.manage_hierarchy",
-            "name": "Manage Team Hierarchy",
-            "description": "Can set manager-subordinate relationships",
+            "code": "team.update",
+            "name": "Update Teams",
+            "description": "Can edit team information and settings",
             "category": "team_management",
             "resource": "team",
-            "action": "manage_hierarchy",
-            "scope": "all",
-            "is_system": True,
-            "requires_permissions": ["team.view_structure", "user.update"],
-            "metadata": {"ui_group": "Team Operations", "dangerous": True}
-        },
-        {
-            "code": "team.assign_members",
-            "name": "Assign Team Members",
-            "description": "Can add or remove users from teams",
-            "category": "team_management",
-            "resource": "team",
-            "action": "assign_members",
+            "action": "update",
             "scope": "all",
             "is_system": True,
             "requires_permissions": ["team.view_structure"],
             "metadata": {"ui_group": "Team Operations"}
+        },
+        {
+            "code": "team.delete",
+            "name": "Delete Teams",
+            "description": "Can delete teams",
+            "category": "team_management",
+            "resource": "team",
+            "action": "delete",
+            "scope": "all",
+            "is_system": True,
+            "requires_permissions": ["team.view_structure"],
+            "metadata": {"ui_group": "Team Operations", "dangerous": True}
+        },
+        {
+            "code": "team.manage_members",
+            "name": "Manage Team Members",
+            "description": "Can add or remove users from teams",
+            "category": "team_management",
+            "resource": "team",
+            "action": "manage_members",
+            "scope": "all",
+            "is_system": True,
+            "requires_permissions": ["team.view_structure"],
+            "metadata": {"ui_group": "Team Operations"}
+        },
+        {
+            "code": "team.change_lead",
+            "name": "Change Team Lead",
+            "description": "Can change team lead for teams",
+            "category": "team_management",
+            "resource": "team",
+            "action": "change_lead",
+            "scope": "all",
+            "is_system": True,
+            "requires_permissions": ["team.manage_members"],
+            "metadata": {"ui_group": "Team Operations", "dangerous": True}
         },
         {
             "code": "team.view_performance",
@@ -916,21 +951,9 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "is_system": True,
             "requires_permissions": ["team.view_performance"],
             "metadata": {"ui_group": "Team Operations"}
-        },
-        {
-            "code": "team.transfer_ownership",
-            "name": "Transfer Team Ownership",
-            "description": "Can transfer team ownership and reassign all members",
-            "category": "team_management",
-            "resource": "team",
-            "action": "transfer_ownership",
-            "scope": "all",
-            "is_system": True,
-            "requires_permissions": ["team.manage_hierarchy"],
-            "metadata": {"ui_group": "Team Operations", "dangerous": True}
         }
     ]
-    
+ 
     # ========================================
     # COMBINE ALL PERMISSIONS
     # ========================================

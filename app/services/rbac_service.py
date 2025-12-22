@@ -317,14 +317,14 @@ class RBACService:
     async def get_team_members(
         self,
         user_id: str,
-        include_nested: bool = False
+        include_inactive: bool = False
     ) -> List[Dict[str, Any]]:
         """
-        Get team members (direct reports) for a user
+        Get team members for a user (based on team_id, not hierarchy)
         
         Args:
-            user_id: Manager's user ID
-            include_nested: Include nested subordinates (subordinates of subordinates)
+            user_id: User ID to get team members for
+            include_inactive: Include inactive users
             
         Returns:
             List of team member dicts
@@ -332,30 +332,22 @@ class RBACService:
         try:
             db = self._get_db()
             
+            # Get user to find their team
             user = await db.users.find_one({"_id": ObjectId(user_id)})
             if not user:
                 return []
             
-            team_member_ids = user.get("team_members", [])
-            
-            if not team_member_ids:
+            team_id = user.get("team_id")
+            if not team_id:
                 return []
             
-            # Get direct reports
-            team_members = await db.users.find(
-                {"_id": {"$in": [ObjectId(tid) for tid in team_member_ids]}}
-            ).to_list(length=None)
+            # Build query for team members
+            query = {"team_id": team_id}
+            if not include_inactive:
+                query["is_active"] = True
             
-            # If nested, recursively get their teams
-            if include_nested:
-                all_members = team_members.copy()
-                for member in team_members:
-                    nested = await self.get_team_members(
-                        str(member["_id"]),
-                        include_nested=True
-                    )
-                    all_members.extend(nested)
-                return all_members
+            # Get all members in the same team
+            team_members = await db.users.find(query).to_list(length=None)
             
             return team_members
             
@@ -363,17 +355,18 @@ class RBACService:
             logger.error(f"Error getting team members: {e}")
             return []
     
+    
     async def can_manage_user(
         self,
         manager_id: str,
         target_user_id: str
     ) -> bool:
         """
-        Check if manager can manage target user
+        Check if manager can manage target user (simplified - no hierarchy)
         
         Manager can manage if:
         1. Manager is super admin, OR
-        2. Target user is in manager's team hierarchy, OR
+        2. Manager is team lead of target user's team, OR
         3. Manager has user.update permission
         
         Args:
@@ -396,11 +389,12 @@ class RBACService:
             if manager.get("is_super_admin", False):
                 return True
             
-            # Check if target is in manager's team
-            team_members = await self.get_team_members(manager_id, include_nested=True)
-            team_member_ids = [str(m["_id"]) for m in team_members]
+            # Check if manager is team lead of target's team
+            manager_team_id = manager.get("team_id")
+            target_team_id = target.get("team_id")
+            manager_is_team_lead = manager.get("is_team_lead", False)
             
-            if target_user_id in team_member_ids:
+            if manager_team_id and target_team_id and manager_team_id == target_team_id and manager_is_team_lead:
                 return True
             
             # Check if manager has user.update permission
@@ -410,59 +404,6 @@ class RBACService:
         except Exception as e:
             logger.error(f"Error checking if manager can manage user: {e}")
             return False
-    
-    async def get_team_structure(
-        self,
-        user_id: str,
-        max_depth: int = 5
-    ) -> Dict[str, Any]:
-        """
-        Get hierarchical team structure for a user
-        
-        Returns tree structure of team members.
-        
-        Args:
-            user_id: Root user ID
-            max_depth: Maximum depth to traverse
-            
-        Returns:
-            dict: Hierarchical team structure
-        """
-        try:
-            if max_depth <= 0:
-                return {}
-            
-            db = self._get_db()
-            
-            user = await db.users.find_one({"_id": ObjectId(user_id)})
-            if not user:
-                return {}
-            
-            structure = {
-                "user_id": str(user["_id"]),
-                "email": user.get("email"),
-                "name": f"{user.get('first_name', '')} {user.get('last_name', '')}".strip(),
-                "role_name": user.get("role_name"),
-                "team_level": user.get("team_level", 0),
-                "team_members_count": len(user.get("team_members", [])),
-                "subordinates": []
-            }
-            
-            # Get direct reports
-            team_member_ids = user.get("team_members", [])
-            for member_id in team_member_ids:
-                member_structure = await self.get_team_structure(
-                    str(member_id),
-                    max_depth=max_depth - 1
-                )
-                if member_structure:
-                    structure["subordinates"].append(member_structure)
-            
-            return structure
-            
-        except Exception as e:
-            logger.error(f"Error getting team structure: {e}")
-            return {}
     
     # ========================================
     # HELPER METHODS

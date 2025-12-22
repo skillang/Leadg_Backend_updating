@@ -71,7 +71,11 @@ async def create_indexes():
         await db.users.create_index([("departments", 1), ("is_active", 1)])
         await db.users.create_index([("email", 1), ("is_active", 1)])  # Fast user validation
         await db.users.create_index("fcm_token")  # For FCM push notifications
-        
+        await db.users.create_index("team_id")  # Reference to teams collection
+        await db.users.create_index("is_team_lead")  # Filter team leads
+        await db.users.create_index([("team_id", 1), ("is_team_lead", 1)])  # Team + leadership
+        await db.users.create_index([("team_id", 1), ("is_active", 1)])  # Active team members
+                
         logger.info("✅ Enhanced Users indexes created")
         
         # ============================================================================
@@ -424,6 +428,41 @@ async def create_indexes():
         
         logger.info("✅ Lead Groups indexes created")
 
+        logger.info("👥 Creating Teams collection indexes...")
+        
+        teams_collection = db.teams
+        
+        # Essential indexes for team management
+        await teams_collection.create_index("team_id", unique=True)  # Unique team identifier
+        await teams_collection.create_index("name", unique=True)  # Unique team names
+        await teams_collection.create_index("team_lead_id")  # Query by team lead
+        await teams_collection.create_index("is_active")  # Filter active teams
+        await teams_collection.create_index("created_at")  # Sort by creation time
+        await teams_collection.create_index("updated_at")  # Sort by last update
+        
+        # Member management indexes
+        await teams_collection.create_index("member_ids")  # Find teams containing specific members
+        await teams_collection.create_index("member_count")  # Sort by team size
+        
+        # Department and organization indexes
+        await teams_collection.create_index("department")  # Filter by department
+        await teams_collection.create_index([("department", 1), ("is_active", 1)])  # Active teams by department
+        
+        # Performance indexes for team listing
+        await teams_collection.create_index([("is_active", 1), ("created_at", -1)])  # Active teams by date
+        await teams_collection.create_index([("team_lead_id", 1), ("is_active", 1)])  # Team lead's teams
+        await teams_collection.create_index([("name", 1), ("is_active", 1)])  # Search by name
+        
+        # Compound indexes for complex queries
+        await teams_collection.create_index([("department", 1), ("team_lead_id", 1)])  # Department teams by lead
+        await teams_collection.create_index([("is_active", 1), ("member_count", 1)])  # Active teams by size
+        
+        # Creator tracking
+        await teams_collection.create_index("created_by")  # Track who created teams
+        await teams_collection.create_index([("created_by", 1), ("created_at", -1)])  # Creator timeline
+        
+        logger.info("✅ Teams collection indexes created")
+
 
         # ============================================================================
 # 🆕 NEW: CV EXTRACTIONS COLLECTION INDEXES
@@ -560,7 +599,8 @@ async def get_collection_stats():
             "lead_statuses",
             "course_levels",
             "sources",
-            "lead_groups"
+            "lead_groups",
+            "teams",
             "lead_tasks",
             "lead_activities",
             "lead_counters",
@@ -762,7 +802,8 @@ async def init_database():
         logger.info(f"📍 Sources: {stats.get('sources', 0)} total, {stats.get('sources_active', 0)} active")
     if stats.get('lead_groups', 0) > 0:
         logger.info(f"👥 Groups: {stats.get('lead_groups', 0)} total, {stats.get('lead_groups_non_empty', 0)} with leads, {stats.get('lead_groups_empty', 0)} empty")
-    
+    if stats.get('teams', 0) > 0:
+        logger.info(f"🏢 Teams: {stats.get('teams', 0)} total")
     # WhatsApp messages stats
     if stats.get('whatsapp_messages', 0) > 0:
         logger.info(f"💬 WhatsApp: {stats.get('whatsapp_messages', 0)} total messages, {stats.get('whatsapp_messages_incoming', 0)} incoming, {stats.get('whatsapp_messages_outgoing', 0)} outgoing")

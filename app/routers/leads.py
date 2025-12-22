@@ -92,11 +92,11 @@ def convert_objectid_to_str(obj):
 DEFAULT_NEW_LEAD_STATUS = "Initial"
 async def build_lead_query_with_rbac(current_user: Dict, db) -> Dict:
     """
-    🆕 Build MongoDB query based on user's RBAC permissions
+    🔄 UPDATED: Build MongoDB query based on user's RBAC permissions (SIMPLIFIED - NO HIERARCHY)
     
     Permission hierarchy:
     - lead.read_all: See ALL leads (no restrictions)
-    - lead.read_team: See team members' leads
+    - lead.read_team: See same team's leads (team_id match)
     - lead.read_own: See only assigned leads (default)
     """
     user_email = current_user.get("email")
@@ -108,7 +108,7 @@ async def build_lead_query_with_rbac(current_user: Dict, db) -> Dict:
     
     has_read_team = await rbac_service.check_permission(current_user, "lead.read_team")
     if has_read_team:
-        # Get team members reporting to this user
+        # Get team members from same team
         team_members = await get_user_team_members(current_user, db)
         return {
             "$or": [
@@ -128,13 +128,31 @@ async def build_lead_query_with_rbac(current_user: Dict, db) -> Dict:
 
 
 async def get_user_team_members(current_user: Dict, db) -> List[str]:
-    """Get emails of all team members reporting to this user"""
+    """
+    🔄 UPDATED: Get emails of all team members (SIMPLIFIED - NO HIERARCHY)
+    Returns all members in the same team
+    """
     user_email = current_user.get("email")
+    team_id = current_user.get("team_id")
+    
+    # Start with user's own email
+    team_emails = [user_email]
+    
+    if not team_id:
+        # No team assigned
+        logger.warning(f"⚠️ User {user_email} has no team_id")
+        return team_emails
+    
+    # Get all members in the same team
     team_members = await db.users.find(
-        {"reports_to_email": user_email},
+        {"team_id": team_id, "is_active": True},
         {"email": 1}
     ).to_list(None)
-    return [member["email"] for member in team_members]
+    
+    team_emails.extend([member["email"] for member in team_members])
+    
+    # Remove duplicates and return
+    return list(set(team_emails))
 
 
 async def check_lead_access(lead: Dict, user_email: str, current_user: Dict) -> bool:

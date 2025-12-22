@@ -1,694 +1,716 @@
+# app/services/team_service.py - SIMPLIFIED TEAM MANAGEMENT (NO HIERARCHY)
 
-import logging
-from typing import List, Dict, Any, Optional
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 from bson import ObjectId
-from fastapi import HTTPException, status
+import logging
 
 from ..config.database import get_database
-from ..config.settings import settings
-from .rbac_service import rbac_service
 
 logger = logging.getLogger(__name__)
 
-
 class TeamService:
-    """
-    Service for team hierarchy management
-    """
+    """Service for managing teams (simplified - no hierarchy)"""
     
     def __init__(self):
-        """Initialize team service"""
-        self._db = None
-        self._max_hierarchy_depth = getattr(settings, 'max_hierarchy_depth', 5)
+        self.db = None
     
-    def _get_db(self):
-        """Lazy database connection"""
-        if self._db is None:
-            self._db = get_database()
-        return self._db
+    async def _get_db(self):
+        """Get database instance"""
+        if self.db is None:
+            self.db = get_database()
+        return self.db
     
-    # ========================================
-    # MANAGER ASSIGNMENT
-    # ========================================
+    # ============================================================================
+    # CREATE TEAM
+    # ============================================================================
     
-    async def set_manager(
+    async def create_team(
         self,
-        user_email: str,
-        manager_email: str,
-        assigned_by: str,
-        reason: Optional[str] = None
+        name: str,
+        team_lead_email: str,
+        department: Optional[str] = None,
+        description: Optional[str] = None,
+        created_by_email: str = None
     ) -> Dict[str, Any]:
         """
-        Set a manager for a user
-        
-        Creates manager-subordinate relationship.
+        Create a new team
         
         Args:
-            user_email: User email (subordinate)
-            manager_email: Manager email
-            assigned_by: Admin email setting the relationship
-            reason: Optional reason
+            name: Team name (must be unique)
+            team_lead_email: Email of team lead
+            department: Optional department
+            description: Optional description
+            created_by_email: Email of creator
             
         Returns:
-            dict: Operation result
+            Created team document
         """
         try:
-            db = self._get_db()
+            db = await self._get_db()
             
-            # Validate users exist
-            user = await db.users.find_one({"email": user_email})
-            manager = await db.users.find_one({"email": manager_email})
+            # Check if team name already exists
+            existing_team = await db.teams.find_one({"name": name})
+            if existing_team:
+                raise ValueError(f"Team with name '{name}' already exists")
             
-            if not user:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"User {user_email} not found"
-                )
+            # Get team lead user
+            team_lead = await db.users.find_one({"email": team_lead_email})
+            if not team_lead:
+                raise ValueError(f"Team lead user '{team_lead_email}' not found")
             
-            if not manager:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Manager {manager_email} not found"
-                )
+            # Generate team_id
+            team_id = f"TEAM-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
             
-            # Cannot assign self as manager
-            if user_email == manager_email:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="User cannot be their own manager"
-                )
+            # Create team document
+            team_doc = {
+                "team_id": team_id,
+                "name": name,
+                "description": description,
+                "department": department,
+                "team_lead_id": str(team_lead["_id"]),
+                "team_lead_email": team_lead_email,
+                "team_lead_name": f"{team_lead.get('first_name', '')} {team_lead.get('last_name', '')}".strip(),
+                "member_ids": [team_lead["_id"]],  # ✅ Store ObjectId directly
+                "member_count": 1,
+                "is_active": True,
+                "created_at": datetime.utcnow(),
+                "created_by": created_by_email,
+                "updated_at": datetime.utcnow(),
+                "updated_by": created_by_email
+            }
             
-            # Check for circular hierarchy
-            if await self._would_create_circular_hierarchy(str(user["_id"]), str(manager["_id"])):
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Cannot create circular hierarchy - this user is already a manager of the specified manager"
-                )
+            # Insert team
+            result = await db.teams.insert_one(team_doc)
+            team_doc["_id"] = result.inserted_id
             
-            # Check hierarchy depth
-            manager_level = await self._calculate_hierarchy_depth(str(manager["_id"]))
-            if manager_level >= self._max_hierarchy_depth:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Maximum hierarchy depth ({self._max_hierarchy_depth}) would be exceeded"
-                )
-            
-            # Remove from previous manager's team (if any)
-            old_manager_id = user.get("reports_to")
-            if old_manager_id:
-                await db.users.update_one(
-                    {"_id": old_manager_id},
-                    {"$pull": {"team_members": user["_id"]}}
-                )
-            
-            # Update user's manager
-            manager_name = f"{manager.get('first_name', '')} {manager.get('last_name', '')}".strip() or manager_email
-            user_level = manager_level + 1
-            
+            # ✅ FIXED: Update team lead user with ObjectId
             await db.users.update_one(
-                {"_id": user["_id"]},
+                {"_id": team_lead["_id"]},
                 {
                     "$set": {
-                        "reports_to": manager["_id"],
-                        "reports_to_name": manager_name,
-                        "team_level": user_level,
+                        "team_id": result.inserted_id,  # ✅ Store as ObjectId, NOT string!
+                        "team_name": name,
+                        "is_team_lead": True,
                         "updated_at": datetime.utcnow()
                     }
                 }
             )
             
-            # Add to manager's team
-            await db.users.update_one(
-                {"_id": manager["_id"]},
-                {
-                    "$addToSet": {"team_members": user["_id"]},
-                    "$set": {"updated_at": datetime.utcnow()}
-                }
-            )
-            
-            # Log audit
-            await self._log_audit(
-                action_type="manager_assigned",
-                entity_id=str(user["_id"]),
-                entity_name=user_email,
-                performed_by=assigned_by,
-                changes={
-                    "before": {
-                        "reports_to": str(old_manager_id) if old_manager_id else None
-                    },
-                    "after": {
-                        "reports_to": str(manager["_id"]),
-                        "reports_to_name": manager_name,
-                        "team_level": user_level
-                    }
-                }
-            )
-            
-            logger.info(f"✅ Set {manager_email} as manager of {user_email} by {assigned_by}")
+            logger.info(f"✅ Team '{name}' created with ID: {team_id}")
             
             return {
-                "success": True,
-                "message": f"{manager_name} is now the manager of {user.get('first_name', user_email)}",
-                "user_email": user_email,
-                "manager_email": manager_email,
-                "team_level": user_level
+                "id": str(result.inserted_id),
+                "team_id": team_id,
+                "name": name,
+                "description": description,
+                "department": department,
+                "team_lead_email": team_lead_email,
+                "team_lead_name": team_doc["team_lead_name"],
+                "member_count": 1,
+                "created_at": team_doc["created_at"]
             }
             
-        except HTTPException:
+        except ValueError as e:
+            logger.error(f"❌ Validation error creating team: {e}")
             raise
         except Exception as e:
-            logger.error(f"Error setting manager: {e}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=str(e)
-            )
+            logger.error(f"❌ Error creating team: {e}")
+            raise Exception(f"Failed to create team: {str(e)}")
     
-    async def remove_manager(
+    # ============================================================================
+    # GET TEAM
+    # ============================================================================
+    
+    async def get_team(self, team_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get team by ID (MongoDB ObjectId only - industry standard)
+        
+        Args:
+            team_id: Team MongoDB ObjectId string (e.g., "693eaa1e4636923296c0a569")
+            
+        Returns:
+            Team document or None
+            
+        Raises:
+            ValueError: If team_id is not a valid ObjectId format
+        """
+        try:
+            db = await self._get_db()
+            
+            # ✅ ONLY accept valid MongoDB ObjectId (industry standard)
+            if not ObjectId.is_valid(team_id):
+                raise ValueError(f"Invalid team ID format. Expected MongoDB ObjectId, got: {team_id}")
+            
+            # Query by MongoDB _id only
+            team = await db.teams.find_one({"_id": ObjectId(team_id)})
+            
+            if not team:
+                logger.warning(f"Team not found: {team_id}")
+                return None
+            
+            # ✅ Return both 'id' and 'team_id' for backward compatibility
+            return {
+                "id": str(team["_id"]),                          # ✅ PRIMARY - Use in APIs
+                "team_id": team.get("team_id"),                  # ✅ DISPLAY - Human-readable reference
+                "name": team.get("name"),
+                "description": team.get("description"),
+                "department": team.get("department"),
+                "team_lead_id": team.get("team_lead_id"),
+                "team_lead_email": team.get("team_lead_email"),
+                "team_lead_name": team.get("team_lead_name"),
+                "member_ids": team.get("member_ids", []),
+                "member_count": team.get("member_count", 0),
+                "is_active": team.get("is_active", True),
+                "created_at": team.get("created_at"),
+                "created_by": team.get("created_by"),
+                "updated_at": team.get("updated_at"),
+                "updated_by": team.get("updated_by")
+            }
+            
+        except ValueError as e:
+            # Re-raise validation errors
+            logger.error(f"❌ Invalid team ID: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"❌ Error getting team: {e}")
+            raise Exception(f"Failed to get team: {str(e)}")
+   
+    # ============================================================================
+    # LIST TEAMS
+    # ============================================================================
+    
+    async def list_teams(
         self,
-        user_email: str,
-        removed_by: str,
-        reason: Optional[str] = None
-    ) -> Dict[str, Any]:
+        include_inactive: bool = False,
+        department: Optional[str] = None,
+        skip: int = 0,
+        limit: int = 100
+    ) -> List[Dict[str, Any]]:
         """
-        Remove a user's manager
+        List all teams with optional filters
         
         Args:
-            user_email: User email
-            removed_by: Admin email removing the relationship
-            reason: Optional reason
+            include_inactive: Include inactive teams
+            department: Filter by department
+            skip: Pagination skip
+            limit: Pagination limit
             
         Returns:
-            dict: Operation result
+            List of team documents
         """
         try:
-            db = self._get_db()
+            db = await self._get_db()
             
-            user = await db.users.find_one({"email": user_email})
-            if not user:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"User {user_email} not found"
-                )
+            # Build query
+            query = {}
+            if not include_inactive:
+                query["is_active"] = True
+            if department:
+                query["department"] = department
             
-            manager_id = user.get("reports_to")
-            if not manager_id:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"User {user_email} does not have a manager"
-                )
+            # Get teams
+            teams_cursor = db.teams.find(query).sort("created_at", -1).skip(skip).limit(limit)
+            teams = await teams_cursor.to_list(length=limit)
             
-            manager = await db.users.find_one({"_id": manager_id})
-            manager_name = None
-            if manager:
-                manager_name = f"{manager.get('first_name', '')} {manager.get('last_name', '')}".strip()
+            result = []
+            for team in teams:
+                result.append({
+                    "id": str(team["_id"]),
+                    "team_id": team.get("team_id"),
+                    "name": team.get("name"),
+                    "description": team.get("description"),
+                    "department": team.get("department"),
+                    "team_lead_email": team.get("team_lead_email"),
+                    "team_lead_name": team.get("team_lead_name"),
+                    "member_count": team.get("member_count", 0),
+                    "is_active": team.get("is_active", True),
+                    "created_at": team.get("created_at")
+                })
             
-            # Remove from manager's team
-            await db.users.update_one(
-                {"_id": manager_id},
-                {"$pull": {"team_members": user["_id"]}}
-            )
-            
-            # Remove manager from user
-            await db.users.update_one(
-                {"_id": user["_id"]},
-                {
-                    "$unset": {
-                        "reports_to": "",
-                        "reports_to_name": ""
-                    },
-                    "$set": {
-                        "team_level": 0,
-                        "updated_at": datetime.utcnow()
-                    }
-                }
-            )
-            
-            # Log audit
-            await self._log_audit(
-                action_type="manager_removed",
-                entity_id=str(user["_id"]),
-                entity_name=user_email,
-                performed_by=removed_by,
-                changes={
-                    "before": {
-                        "reports_to": str(manager_id),
-                        "reports_to_name": user.get("reports_to_name")
-                    },
-                    "after": {}
-                }
-            )
-            
-            logger.info(f"✅ Removed manager from {user_email} by {removed_by}")
-            
-            return {
-                "success": True,
-                "message": f"Manager removed from {user.get('first_name', user_email)}",
-                "user_email": user_email,
-                "previous_manager": manager_name or "Unknown"
-            }
-            
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(f"Error removing manager: {e}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=str(e)
-            )
-    
-    # ========================================
-    # TEAM QUERIES
-    # ========================================
-    
-    async def get_team_structure(
-        self,
-        user_email: str,
-        max_depth: Optional[int] = None
-    ) -> Dict[str, Any]:
-        """
-        Get hierarchical team structure for a user
-        
-        Returns tree structure showing all subordinates.
-        
-        Args:
-            user_email: Manager email
-            max_depth: Maximum depth to traverse (default: MAX_HIERARCHY_DEPTH)
-            
-        Returns:
-            dict: Hierarchical team structure
-        """
-        try:
-            db = self._get_db()
-            
-            user = await db.users.find_one({"email": user_email})
-            if not user:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"User {user_email} not found"
-                )
-            
-            if max_depth is None:
-                max_depth = self._max_hierarchy_depth
-            
-            structure = await rbac_service.get_team_structure(
-                str(user["_id"]),
-                max_depth=max_depth
-            )
-            
-            return {
-                "success": True,
-                "user_email": user_email,
-                "structure": structure
-            }
-            
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(f"Error getting team structure: {e}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=str(e)
-            )
-    
-    async def get_reportees(
-        self,
-        user_email: str,
-        include_nested: bool = False
-    ) -> Dict[str, Any]:
-        """
-        Get direct reports (or all subordinates) for a user
-        
-        Args:
-            user_email: Manager email
-            include_nested: Include nested subordinates
-            
-        Returns:
-            dict: List of team members
-        """
-        try:
-            db = self._get_db()
-            
-            user = await db.users.find_one({"email": user_email})
-            if not user:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"User {user_email} not found"
-                )
-            
-            team_members = await rbac_service.get_team_members(
-                str(user["_id"]),
-                include_nested=include_nested
-            )
-            
-            # Format team members
-            formatted_members = [
-                {
-                    "id": str(m["_id"]),
-                    "email": m.get("email"),
-                    "name": f"{m.get('first_name', '')} {m.get('last_name', '')}".strip(),
-                    "role_name": m.get("role_name"),
-                    "team_level": m.get("team_level", 0),
-                    "is_active": m.get("is_active", True)
-                }
-                for m in team_members
-            ]
-            
-            return {
-                "success": True,
-                "manager_email": user_email,
-                "reportees": formatted_members,
-                "total": len(formatted_members),
-                "include_nested": include_nested
-            }
-            
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(f"Error getting reportees: {e}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=str(e)
-            )
-    
-    async def get_my_team(self, user_email: str) -> Dict[str, Any]:
-        """
-        Get team information for current user
-        
-        Includes both manager and subordinates.
-        
-        Args:
-            user_email: User email
-            
-        Returns:
-            dict: Complete team information
-        """
-        try:
-            db = self._get_db()
-            
-            user = await db.users.find_one({"email": user_email})
-            if not user:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"User {user_email} not found"
-                )
-            
-            result = {
-                "success": True,
-                "user_email": user_email,
-                "team_level": user.get("team_level", 0),
-                "manager": None,
-                "reportees": [],
-                "total_reportees": 0
-            }
-            
-            # Get manager info
-            manager_id = user.get("reports_to")
-            if manager_id:
-                manager = await db.users.find_one({"_id": manager_id})
-                if manager:
-                    result["manager"] = {
-                        "email": manager.get("email"),
-                        "name": f"{manager.get('first_name', '')} {manager.get('last_name', '')}".strip(),
-                        "role_name": manager.get("role_name")
-                    }
-            
-            # Get reportees
-            team_members = await rbac_service.get_team_members(str(user["_id"]))
-            result["reportees"] = [
-                {
-                    "email": m.get("email"),
-                    "name": f"{m.get('first_name', '')} {m.get('last_name', '')}".strip(),
-                    "role_name": m.get("role_name"),
-                    "is_active": m.get("is_active", True)
-                }
-                for m in team_members
-            ]
-            result["total_reportees"] = len(team_members)
-            
+            logger.info(f"📋 Listed {len(result)} teams")
             return result
             
-        except HTTPException:
-            raise
         except Exception as e:
-            logger.error(f"Error getting my team: {e}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=str(e)
-            )
+            logger.error(f"❌ Error listing teams: {e}")
+            raise Exception(f"Failed to list teams: {str(e)}")
     
-    # ========================================
-    # BULK OPERATIONS
-    # ========================================
+    # ============================================================================
+    # UPDATE TEAM
+    # ============================================================================
     
-    async def reassign_team(
+    async def update_team(
         self,
-        old_manager_email: str,
-        new_manager_email: str,
-        reassigned_by: str,
-        reason: Optional[str] = None
+        team_id: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        department: Optional[str] = None,
+        is_active: Optional[bool] = None,
+        updated_by_email: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Bulk reassign all team members from one manager to another
+        Update team information
         
         Args:
-            old_manager_email: Current manager email
-            new_manager_email: New manager email
-            reassigned_by: Admin performing the reassignment
-            reason: Optional reason
+            team_id: Team ID (ObjectId or team_id)
+            name: New name
+            description: New description
+            department: New department
+            is_active: Active status
+            updated_by_email: Email of updater
             
         Returns:
-            dict: Reassignment result
+            Updated team document
         """
         try:
-            db = self._get_db()
+            db = await self._get_db()
             
-            # Validate managers
-            old_manager = await db.users.find_one({"email": old_manager_email})
-            new_manager = await db.users.find_one({"email": new_manager_email})
+            # Get team
+            team = await self.get_team(team_id)
+            if not team:
+                raise ValueError(f"Team '{team_id}' not found")
             
-            if not old_manager:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Old manager {old_manager_email} not found"
-                )
+            # Build update
+            update_doc = {"updated_at": datetime.utcnow()}
+            if updated_by_email:
+                update_doc["updated_by"] = updated_by_email
+            if name is not None:
+                # Check name uniqueness
+                existing = await db.teams.find_one({"name": name, "_id": {"$ne": ObjectId(team["id"])}})
+                if existing:
+                    raise ValueError(f"Team name '{name}' already exists")
+                update_doc["name"] = name
+            if description is not None:
+                update_doc["description"] = description
+            if department is not None:
+                update_doc["department"] = department
+            if is_active is not None:
+                update_doc["is_active"] = is_active
             
-            if not new_manager:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"New manager {new_manager_email} not found"
-                )
-            
-            if old_manager_email == new_manager_email:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Old and new manager cannot be the same"
-                )
-            
-            # Get all team members
-            team_member_ids = old_manager.get("team_members", [])
-            
-            if not team_member_ids:
-                return {
-                    "success": True,
-                    "message": f"{old_manager_email} has no team members to reassign",
-                    "reassigned_count": 0
-                }
-            
-            # Calculate new manager level
-            new_manager_level = await self._calculate_hierarchy_depth(str(new_manager["_id"]))
-            new_manager_name = f"{new_manager.get('first_name', '')} {new_manager.get('last_name', '')}".strip()
-            
-            # Reassign each team member
-            reassigned_count = 0
-            for member_id in team_member_ids:
-                try:
-                    await db.users.update_one(
-                        {"_id": member_id},
-                        {
-                            "$set": {
-                                "reports_to": new_manager["_id"],
-                                "reports_to_name": new_manager_name,
-                                "team_level": new_manager_level + 1,
-                                "updated_at": datetime.utcnow()
-                            }
-                        }
-                    )
-                    reassigned_count += 1
-                except Exception as e:
-                    logger.error(f"Error reassigning member {member_id}: {e}")
-            
-            # Update old manager's team_members
-            await db.users.update_one(
-                {"_id": old_manager["_id"]},
-                {"$set": {"team_members": []}}
+            # Update team
+            await db.teams.update_one(
+                {"_id": ObjectId(team["id"])},
+                {"$set": update_doc}
             )
             
-            # Update new manager's team_members
-            await db.users.update_one(
-                {"_id": new_manager["_id"]},
-                {"$addToSet": {"team_members": {"$each": team_member_ids}}}
-            )
+            # ✅ FIXED: If name changed, update all members with ObjectId query
+            if name is not None:
+                result = await db.users.update_many(
+                    {"team_id": ObjectId(team["id"])},  # ✅ Query with ObjectId!
+                    {"$set": {"team_name": name}}
+                )
+                logger.info(f"   Updated team_name for {result.modified_count} members")
             
-            # Log audit
-            await self._log_audit(
-                action_type="team_reassigned",
-                entity_id=str(old_manager["_id"]),
-                entity_name=old_manager_email,
-                performed_by=reassigned_by,
-                changes={
-                    "before": {
-                        "manager": old_manager_email,
-                        "team_size": len(team_member_ids)
-                    },
-                    "after": {
-                        "manager": new_manager_email,
-                        "reassigned_count": reassigned_count
+            logger.info(f"✅ Team '{team['name']}' updated")
+            
+            # Return updated team
+            return await self.get_team(team["id"])
+            
+        except ValueError as e:
+            logger.error(f"❌ Validation error updating team: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"❌ Error updating team: {e}")
+            raise Exception(f"Failed to update team: {str(e)}")
+    
+    # ============================================================================
+    # DELETE TEAM
+    # ============================================================================
+    
+    async def delete_team(self, team_id: str) -> bool:
+        """
+        Delete a team (soft delete - marks as inactive and removes members)
+        
+        Args:
+            team_id: Team ID
+            
+        Returns:
+            True if successful
+        """
+        try:
+            db = await self._get_db()
+            
+            # Get team
+            team = await self.get_team(team_id)
+            if not team:
+                raise ValueError(f"Team '{team_id}' not found")
+            
+            # ✅ FIXED: Convert string ID to ObjectId for query
+            team_obj_id = ObjectId(team["id"])
+            
+            # Remove all members from team
+            result = await db.users.update_many(
+                {"team_id": team_obj_id},  # ✅ Query with ObjectId!
+                {
+                    "$set": {
+                        "team_id": None,
+                        "team_name": None,
+                        "is_team_lead": False,
+                        "updated_at": datetime.utcnow()
                     }
                 }
             )
             
-            logger.info(f"✅ Reassigned {reassigned_count} team members from {old_manager_email} to {new_manager_email}")
+            logger.info(f"   Unassigned {result.modified_count} users from team")
             
-            return {
-                "success": True,
-                "message": f"Reassigned {reassigned_count} team members",
-                "old_manager": old_manager_email,
-                "new_manager": new_manager_email,
-                "reassigned_count": reassigned_count,
-                "total_members": len(team_member_ids)
-            }
+            # Mark team as inactive
+            await db.teams.update_one(
+                {"_id": team_obj_id},  # ✅ Use ObjectId
+                {
+                    "$set": {
+                        "is_active": False,
+                        "member_ids": [],
+                        "member_count": 0,
+                        "updated_at": datetime.utcnow()
+                    }
+                }
+            )
             
-        except HTTPException:
+            logger.info(f"✅ Team '{team['name']}' deleted successfully")
+            return True
+            
+        except ValueError as e:
+            logger.error(f"❌ Validation error deleting team: {e}")
             raise
         except Exception as e:
-            logger.error(f"Error reassigning team: {e}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=str(e)
+            logger.error(f"❌ Error deleting team: {e}")
+            raise Exception(f"Failed to delete team: {str(e)}")
+    
+    # ============================================================================
+    # ADD MEMBER
+    # ============================================================================
+    
+    async def add_member(
+    self,
+    team_id: str,
+    user_email: str,
+    updated_by_email: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Add a member to a team
+        
+        Args:
+            team_id: Team ID
+            user_email: Email of user to add
+            updated_by_email: Email of updater
+            
+        Returns:
+            Updated team document
+        """
+        try:
+            db = await self._get_db()
+            
+            # Get team
+            team = await self.get_team(team_id)
+            if not team:
+                raise ValueError(f"Team '{team_id}' not found")
+            
+            # Get user
+            user = await db.users.find_one({"email": user_email})
+            if not user:
+                raise ValueError(f"User '{user_email}' not found")
+            
+            user_id = user["_id"]  # ✅ Keep as ObjectId
+            
+            # Check if already in team
+            if user_id in team["member_ids"]:
+                raise ValueError(f"User '{user_email}' is already in team '{team['name']}'")
+            
+            # Check if user is in another team
+            if user.get("team_id"):
+                raise ValueError(f"User '{user_email}' is already in another team. Remove them first.")
+            
+            # Add to team
+            await db.teams.update_one(
+                {"_id": ObjectId(team["id"])},
+                {
+                    "$push": {"member_ids": user_id},  # ✅ Store ObjectId
+                    "$inc": {"member_count": 1},
+                    "$set": {
+                        "updated_at": datetime.utcnow(),
+                        "updated_by": updated_by_email
+                    }
+                }
             )
+            
+            # ✅ FIXED: Update user with ObjectId
+            await db.users.update_one(
+                {"_id": user_id},
+                {
+                    "$set": {
+                        "team_id": ObjectId(team["id"]),  # ✅ Store as ObjectId!
+                        "team_name": team["name"],
+                        "updated_at": datetime.utcnow()
+                    }
+                }
+            )
+            
+            logger.info(f"✅ User '{user_email}' added to team '{team['name']}'")
+            
+            return await self.get_team(team["id"])
+            
+        except ValueError as e:
+            logger.error(f"❌ Validation error adding member: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"❌ Error adding member: {e}")
+            raise Exception(f"Failed to add member: {str(e)}")
     
-    # ========================================
-    # VALIDATION HELPERS
-    # ========================================
+    # ============================================================================
+    # REMOVE MEMBER
+    # ============================================================================
     
-    async def _would_create_circular_hierarchy(
+    async def remove_member(
         self,
-        user_id: str,
-        potential_manager_id: str
-    ) -> bool:
+        team_id: str,
+        user_email: str,
+        updated_by_email: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
-        Check if assigning a manager would create a circular hierarchy
-        
-        Example: If John manages Sarah, Sarah cannot manage John
+        Remove a member from a team
         
         Args:
-            user_id: User ObjectId as string
-            potential_manager_id: Potential manager ObjectId as string
+            team_id: Team ID
+            user_email: Email of user to remove
+            updated_by_email: Email of updater
             
         Returns:
-            bool: True if would create circular hierarchy
+            Updated team document
         """
         try:
-            db = self._get_db()
+            db = await self._get_db()
             
-            # Check if potential_manager reports to user (directly or indirectly)
-            current_id = potential_manager_id
-            max_iterations = self._max_hierarchy_depth + 1
+            # Get team
+            team = await self.get_team(team_id)
+            if not team:
+                raise ValueError(f"Team '{team_id}' not found")
             
-            for _ in range(max_iterations):
-                current_user = await db.users.find_one({"_id": ObjectId(current_id)})
-                if not current_user:
-                    return False
-                
-                reports_to = current_user.get("reports_to")
-                if not reports_to:
-                    return False
-                
-                if str(reports_to) == user_id:
-                    return True
-                
-                current_id = str(reports_to)
+            # Get user
+            user = await db.users.find_one({"email": user_email})
+            if not user:
+                raise ValueError(f"User '{user_email}' not found")
             
-            return False
+            user_id = str(user["_id"])
             
+            # Check if in team
+            if user_id not in team["member_ids"]:
+                raise ValueError(f"User '{user_email}' is not in team '{team['name']}'")
+            
+            # Cannot remove team lead
+            if user_id == team["team_lead_id"]:
+                raise ValueError(f"Cannot remove team lead. Change team lead first.")
+            
+            # Remove from team
+            await db.teams.update_one(
+                {"_id": ObjectId(team["id"])},
+                {
+                    "$pull": {"member_ids": user_id},
+                    "$inc": {"member_count": -1},
+                    "$set": {
+                        "updated_at": datetime.utcnow(),
+                        "updated_by": updated_by_email
+                    }
+                }
+            )
+            
+            # Update user
+            await db.users.update_one(
+                {"_id": user["_id"]},
+                {
+                    "$set": {
+                        "team_id": None,
+                        "team_name": None,
+                        "is_team_lead": False,
+                        "updated_at": datetime.utcnow()
+                    }
+                }
+            )
+            
+            logger.info(f"✅ User '{user_email}' removed from team '{team['name']}'")
+            
+            return await self.get_team(team["id"])
+            
+        except ValueError as e:
+            logger.error(f"❌ Validation error removing member: {e}")
+            raise
         except Exception as e:
-            logger.error(f"Error checking circular hierarchy: {e}")
-            return False
+            logger.error(f"❌ Error removing member: {e}")
+            raise Exception(f"Failed to remove member: {str(e)}")
     
-    async def _calculate_hierarchy_depth(self, user_id: str) -> int:
+    # ============================================================================
+    # SET TEAM LEAD
+    # ============================================================================
+    
+    async def set_team_lead(
+        self,
+        team_id: str,
+        new_lead_email: str,
+        updated_by_email: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
-        Calculate hierarchy depth (level) for a user
-        
-        0 = No manager (individual contributor)
-        1 = Has 1 level of manager above
-        2 = Has 2 levels of managers above
-        etc.
+        Change team lead
         
         Args:
-            user_id: User ObjectId as string
+            team_id: Team ID
+            new_lead_email: Email of new team lead
+            updated_by_email: Email of updater
             
         Returns:
-            int: Hierarchy depth
+            Updated team document
         """
         try:
-            db = self._get_db()
+            db = await self._get_db()
             
-            depth = 0
-            current_id = user_id
-            max_iterations = self._max_hierarchy_depth + 1
+            # Get team
+            team = await self.get_team(team_id)
+            if not team:
+                raise ValueError(f"Team '{team_id}' not found")
             
-            for _ in range(max_iterations):
-                current_user = await db.users.find_one({"_id": ObjectId(current_id)})
-                if not current_user:
-                    break
-                
-                reports_to = current_user.get("reports_to")
-                if not reports_to:
-                    break
-                
-                depth += 1
-                current_id = str(reports_to)
+            # Get new lead
+            new_lead = await db.users.find_one({"email": new_lead_email})
+            if not new_lead:
+                raise ValueError(f"User '{new_lead_email}' not found")
             
-            return depth
+            new_lead_id = str(new_lead["_id"])
             
+            # Check if new lead is in team
+            if new_lead_id not in team["member_ids"]:
+                raise ValueError(f"User '{new_lead_email}' must be a team member first. Add them to the team.")
+            
+            old_lead_id = team["team_lead_id"]
+            
+            # Update team
+            new_lead_name = f"{new_lead.get('first_name', '')} {new_lead.get('last_name', '')}".strip()
+            await db.teams.update_one(
+                {"_id": ObjectId(team["id"])},
+                {
+                    "$set": {
+                        "team_lead_id": new_lead_id,
+                        "team_lead_email": new_lead_email,
+                        "team_lead_name": new_lead_name,
+                        "updated_at": datetime.utcnow(),
+                        "updated_by": updated_by_email
+                    }
+                }
+            )
+            
+            # Remove is_team_lead from old lead
+            if old_lead_id and old_lead_id != new_lead_id:
+                await db.users.update_one(
+                    {"_id": ObjectId(old_lead_id)},
+                    {"$set": {"is_team_lead": False, "updated_at": datetime.utcnow()}}
+                )
+            
+            # Set is_team_lead for new lead
+            await db.users.update_one(
+                {"_id": new_lead["_id"]},
+                {"$set": {"is_team_lead": True, "updated_at": datetime.utcnow()}}
+            )
+            
+            logger.info(f"✅ Team lead changed to '{new_lead_email}' for team '{team['name']}'")
+            
+            return await self.get_team(team["id"])
+            
+        except ValueError as e:
+            logger.error(f"❌ Validation error setting team lead: {e}")
+            raise
         except Exception as e:
-            logger.error(f"Error calculating hierarchy depth: {e}")
-            return 0
+            logger.error(f"❌ Error setting team lead: {e}")
+            raise Exception(f"Failed to set team lead: {str(e)}")
     
-    async def _log_audit(
+    # ============================================================================
+    # GET TEAM MEMBERS
+    # ============================================================================
+    
+    async def get_team_members(
         self,
-        action_type: str,
-        entity_id: str,
-        entity_name: str,
-        performed_by: str,
-        changes: Dict[str, Any]
-    ):
-        """Log audit trail"""
+        team_id: str,
+        include_inactive: bool = False
+    ) -> List[Dict[str, Any]]:
+        """
+        Get all members of a team
+        
+        Args:
+            team_id: Team ID
+            include_inactive: Include inactive users
+            
+        Returns:
+            List of user documents
+        """
         try:
-            db = self._get_db()
+            db = await self._get_db()
             
-            audit_doc = {
-                "action_type": action_type,
-                "entity_type": "team",
-                "entity_id": entity_id,
-                "entity_name": entity_name,
-                "performed_by": performed_by,
-                "performed_at": datetime.utcnow(),
-                "changes": changes,
-                "reason": None,
-                "ip_address": None,
-                "user_agent": None
-            }
+            # Get team
+            team = await self.get_team(team_id)
+            if not team:
+                raise ValueError(f"Team '{team_id}' not found")
             
-            await db.permission_audit_log.insert_one(audit_doc)
+            # ✅ FIXED: Build query with ObjectId
+            query = {"team_id": ObjectId(team["id"])}  # ✅ Query with ObjectId!
+            if not include_inactive:
+                query["is_active"] = True
+            
+            # Get members
+            members_cursor = db.users.find(query).sort("first_name", 1)
+            members = await members_cursor.to_list(length=None)
+            
+            result = []
+            for user in members:
+                result.append({
+                    "id": str(user["_id"]),
+                    "email": user.get("email"),
+                    "name": f"{user.get('first_name', '')} {user.get('last_name', '')}".strip(),
+                    "first_name": user.get("first_name"),
+                    "last_name": user.get("last_name"),
+                    "is_team_lead": user.get("is_team_lead", False),
+                    "is_active": user.get("is_active", True),
+                    "role_name": user.get("role_name"),
+                    "departments": user.get("departments", []),
+                    "total_assigned_leads": user.get("total_assigned_leads", 0)
+                })
+            
+            logger.info(f"📋 Retrieved {len(result)} members for team '{team['name']}'")
+            return result
+            
+        except ValueError as e:
+            logger.error(f"❌ Validation error getting team members: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"❌ Error getting team members: {e}")
+            raise Exception(f"Failed to get team members: {str(e)}")
+    
+    # ============================================================================
+    # GET USER'S TEAM
+    # ============================================================================
+    
+    async def get_user_team(self, user_email: str) -> Optional[Dict[str, Any]]:
+        """
+        Get the team a user belongs to
+        
+        Args:
+            user_email: User email
+            
+        Returns:
+            Team document or None
+        """
+        try:
+            db = await self._get_db()
+            
+            # Get user
+            user = await db.users.find_one({"email": user_email})
+            if not user:
+                return None
+            
+            team_id = user.get("team_id")
+            if not team_id:
+                return None
+            
+            return await self.get_team(team_id)
             
         except Exception as e:
-            logger.error(f"Error logging audit: {e}")
+            logger.error(f"❌ Error getting user team: {e}")
+            raise Exception(f"Failed to get user team: {str(e)}")
 
 
-# ========================================
-# SINGLETON INSTANCE
-# ========================================
-
+# Global instance
 team_service = TeamService()

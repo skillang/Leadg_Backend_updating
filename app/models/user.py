@@ -96,11 +96,10 @@ class UserBase(BaseModel):
     role_name: Optional[str] = Field(None, description="Cached role name for quick access")
     is_super_admin: bool = Field(default=False, description="Super admin bypass flag")
     
-    # Team Hierarchy
-    reports_to: Optional[str] = Field(None, description="Manager's user ID (ObjectId as string)")
-    reports_to_name: Optional[str] = Field(None, description="Manager's full name (cached)")
-    team_members: List[str] = Field(default_factory=list, description="Direct reports user IDs")
-    team_level: int = Field(default=0, description="Hierarchy level: 0=individual, 1=lead, 2=manager, etc.")
+    # Team Assignment (Simple - No Hierarchy)
+    team_id: Optional[str] = Field(None, description="Team ID (reference to teams collection)")
+    team_name: Optional[str] = Field(None, description="Team name (cached)")
+    is_team_lead: bool = Field(default=False, description="Whether user is the team lead")
     
     # Permission System
     permission_overrides: List[PermissionOverride] = Field(
@@ -218,12 +217,10 @@ class UserResponse(BaseModel):
     role_name: Optional[str] = Field(None, description="Role display name")
     is_super_admin: bool = Field(default=False, description="Super admin flag")
     
-    # Team Hierarchy
-    reports_to: Optional[str] = Field(None, description="Manager user ID")
-    reports_to_name: Optional[str] = Field(None, description="Manager name")
-    team_members: List[str] = Field(default_factory=list, description="Direct reports")
-    team_level: int = Field(default=0, description="Hierarchy level")
-    team_size: Optional[int] = Field(None, description="Total team size (computed)")
+    # Team Assignment (Simple - No Hierarchy)
+    team_id: Optional[str] = Field(None, description="Team ID")
+    team_name: Optional[str] = Field(None, description="Team name")
+    is_team_lead: bool = Field(default=False, description="Whether user is team lead")
     
     # Permissions
     permission_overrides: List[PermissionOverride] = Field(
@@ -295,11 +292,9 @@ class UserResponse(BaseModel):
                 "role_id": "507f1f77bcf86cd799439011",
                 "role_name": "Team Lead",
                 "is_super_admin": False,
-                "reports_to": "507f1f77bcf86cd799439012",
-                "reports_to_name": "Jane Manager",
-                "team_members": ["507f1f77bcf86cd799439013", "507f1f77bcf86cd799439014"],
-                "team_level": 1,
-                "team_size": 5,
+                "team_id": "team_507f1f77bcf86cd799439012",
+                "team_name": "Sales Team Alpha",
+                "is_team_lead": True,
                 "permission_overrides": [],
                 "effective_permissions": ["lead.create", "lead.read_team", "lead.update_own"],
                 "permissions_last_computed": "2025-01-15T10:30:00Z",
@@ -307,7 +302,7 @@ class UserResponse(BaseModel):
                 "phone": "+1-555-123-4567",
                 "departments": ["sales", "marketing"],
                 "department_list": ["sales", "marketing"],
-                "permissions": {  # DEPRECATED - kept for backward compatibility
+                "permissions": {
                     "can_create_single_lead": True,
                     "can_create_bulk_leads": False
                 },
@@ -329,7 +324,7 @@ class UserResponse(BaseModel):
 # ============================================================================
 # USER UPDATE MODEL - UPDATED FOR RBAC
 # ============================================================================
-        
+
 class UserUpdate(BaseModel):
     """User update model - UPDATED FOR RBAC"""
     first_name: Optional[str] = None
@@ -341,8 +336,8 @@ class UserUpdate(BaseModel):
     # 🆕 RBAC: Allow updating role
     role_id: Optional[str] = Field(None, description="New role ID to assign")
     
-    # 🆕 RBAC: Allow updating team hierarchy
-    reports_to: Optional[str] = Field(None, description="New manager user ID")
+    # 🆕 TEAM: Allow updating team assignment (Simple - No Hierarchy)
+    team_id: Optional[str] = Field(None, description="New team ID to assign")
     
     # 🆕 OLD: Allow updating permissions through user update (DEPRECATED)
     permissions: Optional[UserPermissions] = None

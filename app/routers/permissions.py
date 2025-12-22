@@ -1,6 +1,5 @@
 # app/routers/permissions.py
 # 🔄 RBAC-ENABLED: Complete Permission Management - All 69 Permissions Across 9 Categories
-# ✅ Expanded from 2 permissions to full RBAC system
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from typing import List, Optional, Dict, Any
@@ -216,7 +215,6 @@ async def list_permission_categories(
 
 @router.get("/matrix")
 async def get_permission_matrix(
-    # 🔄 UPDATED: Use RBAC permission check
     current_user: Dict[str, Any] = Depends(get_user_with_permission("permission.read"))
 ):
     """
@@ -224,8 +222,8 @@ async def get_permission_matrix(
     
     **Required Permission:** `permission.read`
     
-    Returns permissions organized by category → resource → action.
-    Perfect for building Strapi-style permission matrix UI.
+    Returns permissions organized by category → action groups.
+    Frontend-ready format with no transformation needed.
     """
     try:
         db = get_database()
@@ -233,33 +231,57 @@ async def get_permission_matrix(
         # Get all permissions
         permissions = await db.permissions.find({"is_system": True}).to_list(None)
         
-        # Build matrix
-        matrix = {}
+        # Build structured matrix for frontend
+        categorized_data = []
         
+        # Group by category first
+        category_map = {}
         for perm in permissions:
             category = perm.get("category", "other")
-            resource = perm.get("resource", "general")
-            action = perm.get("action", "unknown")
-            
-            if category not in matrix:
-                matrix[category] = {}
-            
-            if resource not in matrix[category]:
-                matrix[category][resource] = {}
-            
-            matrix[category][resource][action] = {
-                "code": perm["code"],
-                "name": perm["name"],
-                "description": perm.get("description", ""),
-                "scope": perm.get("scope", "own")
-            }
+            if category not in category_map:
+                category_map[category] = []
+            category_map[category].append(perm)
         
-        logger.info(f"✅ Generated permission matrix with {len(permissions)} permissions")
+        # Structure each category with action groups
+        for category_key, category_perms in category_map.items():
+            # Create category display name
+            category_display = category_key.replace("_", " ").title()
+            
+            # Group permissions by resource + action
+            action_map = {}
+            for perm in category_perms:
+                resource = perm.get("resource", "general")
+                action = perm.get("action", "unknown")
+                key = f"{resource}:{action}"
+                
+                if key not in action_map:
+                    action_map[key] = {
+                        "action": action,
+                        "action_display": action.replace("_", " ").title(),
+                        "resource": resource,
+                        "permissions": []
+                    }
+                
+                action_map[key]["permissions"].append({
+                    "code": perm["code"],
+                    "name": perm["name"],
+                    "description": perm.get("description", ""),
+                    "scope": perm.get("scope", "own")
+                })
+            
+            categorized_data.append({
+                "category": category_key,
+                "category_display": category_display,
+                "action_groups": list(action_map.values())
+            })
+        
+        logger.info(f"✅ Generated structured permission matrix with {len(permissions)} permissions")
         
         return {
             "success": True,
-            "matrix": matrix,
-            "total_permissions": len(permissions)
+            "categories": categorized_data,
+            "total_permissions": len(permissions),
+            "total_categories": len(categorized_data)
         }
         
     except HTTPException:
@@ -271,7 +293,6 @@ async def get_permission_matrix(
             detail=f"Failed to generate matrix: {str(e)}"
         )
 
-
 # ============================================================================
 # 🔄 USER PERMISSION MANAGEMENT (UPDATED)
 # ============================================================================
@@ -281,15 +302,17 @@ async def get_users_with_permissions(
     include_admins: bool = Query(False, description="Include admin/super admin users"),
     include_inactive: bool = Query(False, description="Include inactive users"),
     role_filter: Optional[str] = Query(None, description="Filter by role name"),
-    # 🔄 UPDATED: Use RBAC permission check
     current_user: Dict[str, Any] = Depends(get_user_with_permission("permission.read"))
 ):
     """
-    🔄 UPDATED: Get all users with their effective permissions
+    Get all users with their effective permissions AND team info (SIMPLIFIED - NO HIERARCHY)
     
     **Required Permission:** `permission.read`
     
-    Now returns users with their role-based permissions (not just lead permissions).
+    Returns users with:
+    - Permission data (effective_permissions, overrides, counts)
+    - Team data (team_id, team_name, is_team_lead)
+    - Workload data (assigned_leads_count)
     """
     try:
         db = get_database()
@@ -302,45 +325,67 @@ async def get_users_with_permissions(
             query["is_active"] = True
         if role_filter:
             query["role_name"] = role_filter
+            
+        logger.info(f"Getting users with permissions and team info: {query}")
         
-        logger.info(f"Getting users with permissions: {query}")
-        
-        # Get users
+        # Get users with ALL fields (permissions + team)
         users = await db.users.find(
             query,
             {
                 "email": 1,
-                "first_name": 1,
-                "last_name": 1,
                 "role_name": 1,
+                "role_id": 1,
                 "is_super_admin": 1,
                 "is_active": 1,
                 "effective_permissions": 1,
                 "permission_overrides": 1,
-                "permissions_last_computed": 1
+                "permissions_last_computed": 1,
+                "team_name": 1,
+                "is_team_lead": 1,
             }
         ).to_list(None)
         
-        # Format users
+        # Format users with both permission and team data
         formatted_users = []
         for user in users:
+            # Get assigned leads count
+            leads_count = await db.leads.count_documents(
+                {"assigned_to": user["email"]}
+            )
+            
             formatted_users.append({
+                # Basic info
                 "id": str(user["_id"]),
                 "email": user["email"],
                 "name": f"{user.get('first_name', '')} {user.get('last_name', '')}".strip(),
-                "role_name": user.get("role_name", "user"),
+                
+                # Role info
+                # "role_name": user.get("role_name", "user"),
+                # "role_id": str(user.get("role_id")) if user.get("role_id") else None,
                 "is_super_admin": user.get("is_super_admin", False),
                 "is_active": user.get("is_active", True),
+                
+                # Permission info
                 "permissions_count": len(user.get("effective_permissions", [])),
                 "has_overrides": len(user.get("permission_overrides", [])) > 0,
-                "last_computed": user.get("permissions_last_computed")
+                
+                # 🔄 UPDATED: Simplified team info (NO HIERARCHY)
+                "team_id": str(user.get("team_id")) if user.get("team_id") else None,
+                "team_name": user.get("team_name"),
+                "is_team_lead": user.get("is_team_lead", False),
+                "assigned_leads_count": leads_count,
+                
+                # Metadata
+                # "created_at": user.get("created_at")
             })
         
-        # Get summary statistics
+        # 🔄 UPDATED: Summary statistics (NO HIERARCHY)
         total_users = await db.users.count_documents(query)
         users_with_permissions = sum(1 for u in formatted_users if u["permissions_count"] > 0)
+        users_in_teams = sum(1 for u in formatted_users if u["team_id"])
+        team_leads_count = sum(1 for u in formatted_users if u["is_team_lead"])
         
-        logger.info(f"✅ Retrieved {len(formatted_users)} users with permissions")
+        logger.info(f"✅ Retrieved {len(formatted_users)} users with permissions and team info")
         
         return {
             "success": True,
@@ -349,7 +394,10 @@ async def get_users_with_permissions(
             "summary": {
                 "total_users": total_users,
                 "users_with_permissions": users_with_permissions,
-                "users_without_permissions": total_users - users_with_permissions
+                "users_without_permissions": total_users - users_with_permissions,
+                "users_in_teams": users_in_teams,
+                "users_without_teams": total_users - users_in_teams,
+                "team_leads_count": team_leads_count
             }
         }
         
@@ -740,148 +788,3 @@ async def get_permission_statistics(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get statistics: {str(e)}"
         )
-
-
-# ============================================================================
-# 🆕 SYSTEM VALIDATION & HEALTH CHECK (NEW)
-# ============================================================================
-
-@router.post("/validate-system")
-async def validate_permission_system(
-    # 🔄 UPDATED: Use RBAC permission check
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("system.manage"))
-):
-    """
-    🆕 NEW: Validate permission system integrity and health
-    
-    **Required Permission:** `system.manage`
-    
-    Performs comprehensive health check:
-    - Users without permissions
-    - Orphaned permissions
-    - Invalid references
-    - System inconsistencies
-    """
-    try:
-        db = get_database()
-        
-        logger.info("Starting permission system validation")
-        
-        issues = []
-        recommendations = []
-        warnings = []
-        
-        # Check 1: Users without effective_permissions
-        users_without_perms = await db.users.count_documents({
-            "effective_permissions": {"$exists": False}
-        })
-        if users_without_perms > 0:
-            issues.append(f"{users_without_perms} users don't have effective_permissions field")
-            recommendations.append("Run permission migration or recompute all user permissions")
-        
-        # Check 2: Stale permissions (>7 days old)
-        seven_days_ago = datetime.utcnow() - timedelta(days=7)
-        stale_permissions = await db.users.count_documents({
-            "permissions_last_computed": {"$lt": seven_days_ago}
-        })
-        if stale_permissions > 0:
-            warnings.append(f"{stale_permissions} users have permissions computed >7 days ago")
-            recommendations.append("Consider recomputing permissions for stale data")
-        
-        # Check 3: Inactive users with permissions
-        inactive_with_perms = await db.users.count_documents({
-            "is_active": False,
-            "effective_permissions": {"$exists": True, "$ne": []}
-        })
-        if inactive_with_perms > 0:
-            warnings.append(f"{inactive_with_perms} inactive users still have permissions")
-        
-        # Check 4: Invalid role references
-        users_with_invalid_roles = 0
-        all_users = await db.users.find({"role_id": {"$exists": True}}).to_list(None)
-        for user in all_users:
-            role_id = user.get("role_id")
-            if role_id:
-                role = await db.roles.find_one({"_id": role_id})
-                if not role:
-                    users_with_invalid_roles += 1
-        
-        if users_with_invalid_roles > 0:
-            issues.append(f"{users_with_invalid_roles} users reference non-existent roles")
-            recommendations.append("Assign valid roles to users with invalid references")
-        
-        # Check 5: Permission count
-        perm_count = await db.permissions.count_documents({"is_system": True})
-        if perm_count != 69:
-            issues.append(f"Expected 69 permissions, found {perm_count}")
-            recommendations.append("Run permission seeding script")
-        
-        # Determine status
-        if issues:
-            status_level = "critical"
-        elif warnings:
-            status_level = "warning"
-        else:
-            status_level = "healthy"
-        
-        logger.info(f"✅ Validation complete - Status: {status_level}")
-        
-        return {
-            "success": True,
-            "validation_status": status_level,
-            "issues_count": len(issues),
-            "warnings_count": len(warnings),
-            "issues": issues,
-            "warnings": warnings,
-            "recommendations": recommendations,
-            "checks_performed": {
-                "users_without_permissions": users_without_perms,
-                "users_with_stale_permissions": stale_permissions,
-                "inactive_users_with_permissions": inactive_with_perms,
-                "users_with_invalid_roles": users_with_invalid_roles,
-                "total_permissions": perm_count
-            },
-            "validated_by": current_user.get("email"),
-            "validated_at": datetime.utcnow()
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error validating permission system: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to validate system: {str(e)}"
-        )
-
-
-# ============================================================================
-# HEALTH CHECK (PUBLIC)
-# ============================================================================
-
-@router.get("/health")
-async def permissions_health_check():
-    """
-    Simple health check endpoint for monitoring
-    
-    **No authentication required**
-    """
-    return {
-        "status": "healthy",
-        "service": "permissions_service",
-        "rbac_enabled": True,
-        "version": "2.0.0",
-        "total_permissions": 69,
-        "endpoints": {
-            "list_permissions": "GET /list",
-            "categories": "GET /categories",
-            "matrix": "GET /matrix",
-            "users": "GET /users",
-            "user_effective": "GET /users/{email}/effective",
-            "add_override": "POST /users/{email}/override",
-            "remove_override": "DELETE /users/{email}/override/{code}",
-            "recompute": "POST /users/{email}/recompute",
-            "statistics": "GET /statistics",
-            "validate": "POST /validate-system"
-        }
-    }

@@ -8,7 +8,7 @@ from datetime import datetime
 from bson import ObjectId
 
 from ..models.role import (
-    RoleCreate, RoleUpdate, RoleResponse, RoleListResponse,
+    RoleCreate, RoleUpdate, RoleResponse, RoleListResponse, RoleListItemResponse,
     RoleAssignRequest, RoleAssignResponse, RoleCloneRequest
 )
 from ..services.role_service import role_service

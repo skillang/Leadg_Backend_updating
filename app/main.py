@@ -755,7 +755,6 @@ app.include_router(
 
 app.include_router(
     team.router,
-    prefix="/team",
     tags=["RBAC - Team Management"]
 )
 

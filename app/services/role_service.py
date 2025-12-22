@@ -235,7 +235,7 @@ class RoleService:
             
             return {
                 "success": True,
-                "roles": [self._format_role_response(r) for r in roles],
+                "roles": [self._format_role_list_response(r) for r in roles],  # ✅ Changed method
                 "total": len(roles),
                 "system_roles": system_roles,
                 "custom_roles": custom_roles
@@ -748,6 +748,15 @@ class RoleService:
             "created_by": role.get("created_by"),
             "updated_at": role.get("updated_at"),
             "updated_by": role.get("updated_by")
+        }
+    
+    def _format_role_list_response(self, role: Dict[str, Any]) -> Dict[str, Any]:
+        """Format role document for list/table view - minimal fields only"""
+        return {
+            "id": str(role["_id"]),
+            "name": role.get("name"),
+            "display_name": role.get("display_name"),
+            "description": role.get("description")
         }
     
     async def _recompute_users_with_role(self, role_id: str):

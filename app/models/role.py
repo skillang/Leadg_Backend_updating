@@ -7,9 +7,6 @@ This module defines all models related to the dynamic RBAC system:
 - PermissionGrant: Permission assignment to roles
 - Role: Dynamic roles with permissions
 - RoleAssignment: Historical tracking of role assignments
-
-Author: LeadG Development Team
-Date: November 2025
 """
 
 from pydantic import BaseModel, Field, validator
@@ -252,6 +249,32 @@ class RoleListResponse(BaseModel):
                 "custom_roles": 2
             }
         }
+
+class RoleListItemResponse(BaseModel):
+    """Minimal role response for list/table views"""
+    id: str = Field(..., description="Role ID")
+    name: str = Field(..., description="Unique role identifier")
+    display_name: str = Field(..., description="Human-readable name")
+    description: Optional[str] = Field(None, description="Role description")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "id": "507f1f77bcf86cd799439011",
+                "name": "admin",
+                "display_name": "Admin",
+                "description": "Administrative access"
+            }
+        }
+
+
+class RoleListResponse(BaseModel):
+    """Response model for listing roles with minimal fields"""
+    success: bool = True
+    roles: List[RoleListItemResponse] = Field(default_factory=list)
+    total: int = Field(default=0)
+    system_roles: int = Field(default=0)
+    custom_roles: int = Field(default=0)
 
 
 # ========================================

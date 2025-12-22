@@ -34,17 +34,18 @@ class LeadService:
     # ============================================================================
     # 🆕 NEW: ENHANCED LEAD ID GENERATION WITH CATEGORY-SOURCE COMBINATION
     # ============================================================================
+    
     async def build_access_filter_rbac(
-    self,
-    user_data: Dict[str, Any],
-    db
-) -> Dict[str, Any]:
+        self,
+        user_data: Dict[str, Any],
+        db
+    ) -> Dict[str, Any]:
         """
-        Build MongoDB query filter based on user's RBAC permissions.
+        Build MongoDB query filter based on user's RBAC permissions (SIMPLIFIED - NO HIERARCHY)
         
         **Permission Levels:**
         - `leads.read_all` → See all leads in system
-        - `leads.read_team` → See own + team's leads (manager view)
+        - `leads.read_team` → See own + team's leads (same team_id)
         - `leads.read_own` → See only own assigned leads
         - Super Admin → Always see all
         
@@ -66,11 +67,29 @@ class LeadService:
                 return {}
             
             elif "leads.read_team" in effective_permissions:
-                # Manager view - see own leads + team's leads
+                # Team view - see own leads + same team's leads
                 logger.info(f"👥 User {user_email} has leads.read_team - building team filter")
                 
-                # Get all team member emails (including self)
-                team_emails = await self._get_team_member_emails(user_data, db)
+                # Get user's team_id
+                user_team_id = user_data.get("team_id")
+                
+                if not user_team_id:
+                    # No team assigned, fallback to own leads only
+                    logger.warning(f"⚠️ User {user_email} has read_team but no team_id - showing own leads only")
+                    return {
+                        "$or": [
+                            {"assigned_to": user_email},
+                            {"co_assignees": user_email}
+                        ]
+                    }
+                
+                # Get all team member emails
+                team_members = await db.users.find(
+                    {"team_id": user_team_id, "is_active": True},
+                    {"email": 1}
+                ).to_list(None)
+                
+                team_emails = [member["email"] for member in team_members]
                 
                 logger.info(f"📋 Team members ({len(team_emails)}): {team_emails}")
                 
@@ -107,7 +126,7 @@ class LeadService:
                     {"co_assignees": user_data.get("email")}
                 ]
             }
-
+    
     # ============================================================================
     # 🆕 NEW METHOD 2: GET TEAM MEMBER EMAILS
     # ============================================================================
@@ -118,33 +137,29 @@ class LeadService:
         db
     ) -> List[str]:
         """
-        Get all email addresses of team members (subordinates).
+        Get all email addresses of team members (SIMPLIFIED - NO HIERARCHY)
         
         **Returns:** List of team member emails (includes manager's own email)
         """
         try:
-            from ..config.settings import settings
-            
-            manager_id = manager_data.get("_id")
             manager_email = manager_data.get("email")
+            team_id = manager_data.get("team_id")
             
             # Start with manager's own email
             team_emails = [manager_email]
             
-            # Check if nested access is enabled
-            if settings.allow_nested_team_access:
-                # Get ALL subordinates at all levels
-                team_emails.extend(
-                    await self._get_all_subordinate_emails(manager_id, db)
-                )
-            else:
-                # Get only direct reports
-                direct_reports = await db.users.find(
-                    {"reports_to": str(manager_id)},
-                    {"email": 1}
-                ).to_list(None)
-                
-                team_emails.extend([user["email"] for user in direct_reports])
+            if not team_id:
+                # No team assigned
+                logger.warning(f"⚠️ User {manager_email} has no team_id")
+                return team_emails
+            
+            # Get all members in the same team
+            team_members = await db.users.find(
+                {"team_id": team_id, "is_active": True},
+                {"email": 1}
+            ).to_list(None)
+            
+            team_emails.extend([member["email"] for member in team_members])
             
             # Remove duplicates and return
             return list(set(team_emails))
@@ -152,66 +167,7 @@ class LeadService:
         except Exception as e:
             logger.error(f"❌ Error getting team emails: {e}")
             return [manager_data.get("email")]  # Fallback to just manager
-
-    # ============================================================================
-    # 🆕 NEW METHOD 3: GET ALL SUBORDINATE EMAILS (RECURSIVE)
-    # ============================================================================
-
-    async def _get_all_subordinate_emails(
-        self,
-        manager_id: str,
-        db,
-        visited: Optional[set] = None
-    ) -> List[str]:
-        """
-        Recursively get all subordinate emails at all levels.
-        
-        **Prevents Circular References:**
-        - Tracks visited users to avoid infinite loops
-        """
-        try:
-            from ..config.settings import settings
-            
-            if visited is None:
-                visited = set()
-            
-            # Prevent circular references
-            if str(manager_id) in visited:
-                return []
-            
-            visited.add(str(manager_id))
-            
-            # Check depth limit
-            if len(visited) > settings.max_hierarchy_depth * 10:  # Safety factor
-                logger.warning("⚠️ Reached max subordinate depth")
-                return []
-            
-            # Get direct reports
-            direct_reports = await db.users.find(
-                {"reports_to": str(manager_id)},
-                {"_id": 1, "email": 1}
-            ).to_list(None)
-            
-            subordinate_emails = []
-            
-            # Add direct reports and their subordinates
-            for user in direct_reports:
-                subordinate_emails.append(user["email"])
-                
-                # Recursively get their subordinates
-                nested = await self._get_all_subordinate_emails(
-                    str(user["_id"]),
-                    db,
-                    visited
-                )
-                subordinate_emails.extend(nested)
-            
-            return subordinate_emails
-        
-        except Exception as e:
-            logger.error(f"❌ Error getting subordinates: {e}")
-            return []
-
+    
     # ============================================================================
     # 🆕 NEW METHOD 4: CAN USER ACCESS LEAD
     # ============================================================================
@@ -290,12 +246,12 @@ class LeadService:
         db
     ) -> tuple[bool, str]:
         """
-        Check if user can assign leads to target user.
+        Check if user can assign leads to target user (SIMPLIFIED - NO HIERARCHY)
         
         **Business Rules:**
         - Super admin: Can assign to anyone
         - Has `leads.assign_any`: Can assign to anyone
-        - Has `leads.assign_team`: Can assign to team members only
+        - Has `leads.assign_team`: Can assign to same team members only
         
         **Returns:** (can_assign: bool, reason: str)
         """
@@ -312,13 +268,24 @@ class LeadService:
             
             # Check assign_team permission
             if "leads.assign_team" in effective_permissions:
-                # Get team member emails
-                team_emails = await self._get_team_member_emails(user_data, db)
+                # Get user's team_id
+                user_team_id = user_data.get("team_id")
                 
-                if target_user_email in team_emails:
-                    return True, "Target is team member"
+                if not user_team_id:
+                    return False, "User has no team - need leads.assign_any to assign"
+                
+                # Check if target user is in the same team
+                target_user = await db.users.find_one({"email": target_user_email})
+                
+                if not target_user:
+                    return False, "Target user not found"
+                
+                target_team_id = target_user.get("team_id")
+                
+                if target_team_id == user_team_id:
+                    return True, "Target is in same team"
                 else:
-                    return False, "Target not in team - need leads.assign_any"
+                    return False, "Target not in same team - need leads.assign_any"
             
             # No assign permission
             return False, "Missing assignment permission (need leads.assign_team or leads.assign_any)"
@@ -326,7 +293,7 @@ class LeadService:
         except Exception as e:
             logger.error(f"❌ Error checking assign permission: {e}")
             return False, f"Error: {str(e)}"
-
+    
     # ============================================================================
     # 🆕 NEW METHOD 6: GET ACCESS LEVEL NAME (HELPER)
     # ============================================================================
