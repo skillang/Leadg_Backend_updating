@@ -24,10 +24,6 @@ class DepartmentType(str, Enum):
     """Only essential predefined department"""
     ADMIN = "admin"  # Only admin is predefined
 
-# ============================================================================
-# 🆕 RBAC MODELS - Permission System (Keeping old for backward compatibility)
-# ============================================================================
-
 class UserPermissions(BaseModel):
     """DEPRECATED: Old 2-permission system - kept for backward compatibility
     
@@ -52,6 +48,7 @@ class UserPermissions(BaseModel):
                 "last_modified_at": "2025-01-15T10:30:00Z"
             }
         }
+
 
 # ============================================================================
 # 🆕 RBAC MODELS - New Permission Override System

@@ -599,7 +599,7 @@ async def create_super_admin_user(
             "password": hashed_password,
             
             # Role Info (old + new)
-            "role": "admin",  # Keep old enum for backward compatibility
+            # "role": "admin",  # Keep old enum for backward compatibility
             "role_id": super_admin_role["_id"],
             "role_name": "super_admin",
             "is_super_admin": True,

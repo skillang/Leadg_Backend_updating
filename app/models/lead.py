@@ -752,6 +752,10 @@ class LeadResponseExtended(BaseModel):
     whatsapp_message_count: int = Field(default=0, description="Total WhatsApp messages for this lead")
     unread_whatsapp_count: int = Field(default=0, description="Unread WhatsApp messages count")
     
+    # NEW: Batch Enrollment Field
+    enrolled_batches: List[str] = Field(default_factory=list, description="List of batch IDs this lead is enrolled in")
+    
+    
     # NEW: Call Stats Field
     call_stats: Optional[CallStatsModel] = Field(default=None, description="Call statistics for this lead")
     
@@ -906,6 +910,9 @@ class LeadResponseComprehensive(BaseModel):
     last_whatsapp_message: Optional[str] = Field(None, description="Preview of last WhatsApp message")
     whatsapp_message_count: int = Field(default=0, description="Total WhatsApp messages for this lead")
     unread_whatsapp_count: int = Field(default=0, description="Unread WhatsApp messages count")
+
+    # NEW: Batch Enrollment Field
+    enrolled_batches: List[str] = Field(default_factory=list, description="List of batch IDs this lead is enrolled in")
     
     # NEW: Call Stats Field
     call_stats: Optional[CallStatsModel] = Field(default=None, description="Call statistics for this lead")
@@ -963,6 +970,10 @@ class LeadUpdate(BaseModel):
     last_whatsapp_message: Optional[str] = Field(None, max_length=500)
     whatsapp_message_count: Optional[int] = Field(None, ge=0)
     unread_whatsapp_count: Optional[int] = Field(None, ge=0)
+
+    # NEW: Batch Enrollment Field (optional for manual updates)
+    enrolled_batches: Optional[List[str]] = Field(None, description="List of batch IDs (usually managed by batch service)")
+
     
     # NEW: Call Stats Field
     call_stats: Optional[CallStatsModel] = Field(default=None, description="Call statistics for this lead")
@@ -1005,6 +1016,9 @@ class LeadResponse(BaseModel):
     last_whatsapp_message: Optional[str] = None
     whatsapp_message_count: int = 0
     unread_whatsapp_count: int = 0
+
+    enrolled_batches: List[str] = Field(default_factory=list, description="List of batch IDs this lead is enrolled in")
+
     
     # NEW: Call Stats Field
     call_stats: Optional[CallStatsModel] = Field(default=None, description="Call statistics for this lead")

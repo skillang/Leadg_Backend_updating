@@ -1909,8 +1909,18 @@ class LeadService:
         except Exception as e:
             logger.error(f"Error logging activity: {str(e)}")
     
-    async def get_lead_by_id(self, lead_id: str) -> Optional[Dict[str, Any]]:
-        """Get a single lead by ID"""
+    async def get_lead_by_id(
+        self,
+        lead_id: str,
+        include_batch_details: bool = False
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get a single lead by ID with optional batch details
+        
+        Args:
+            lead_id: Lead identifier
+            include_batch_details: If True, fetch full batch enrollment details
+        """
         try:
             db = self.get_db()
             lead = await db.leads.find_one({"lead_id": lead_id})
@@ -1919,6 +1929,11 @@ class LeadService:
                 # Convert ObjectId to string
                 if "_id" in lead:
                     lead["_id"] = str(lead["_id"])
+                
+                # Enrich with batch info if requested
+                if include_batch_details:
+                    lead = await self.enrich_lead_with_batch_info(lead, include_details=True)
+                
                 return lead
             return None
             
@@ -1926,11 +1941,11 @@ class LeadService:
             logger.error(f"Error getting lead {lead_id}: {str(e)}")
             return None
     async def update_lead(
-    self,
-    lead_id: str,
-    update_data: Dict[str, Any],
-    user_data: Dict[str, Any]  # 🔄 CHANGED: was updated_by (str)
-) -> Dict[str, Any]:
+        self,
+        lead_id: str,
+        update_data: Dict[str, Any],
+        user_data: Dict[str, Any]  # 🔄 CHANGED: was updated_by (str)
+    ) -> Dict[str, Any]:
         """
         🔄 UPDATED: Update a lead with RBAC permission check, activity logging and dynamic field validation
         
@@ -2140,7 +2155,15 @@ class LeadService:
             
             # Merge with additional filters
             if filters:
-                base_query = {**access_filter, **filters}
+                base_query = {**access_filter}
+                
+                # 🆕 NEW: Handle batch filtering specially
+                if "batch_id" in filters:
+                    batch_id = filters.pop("batch_id")
+                    base_query["enrolled_batches"] = batch_id
+                
+                # Add remaining filters
+                base_query.update(filters)
             else:
                 base_query = access_filter
             
@@ -2260,12 +2283,12 @@ class LeadService:
             logger.error(f"Error getting lead statistics: {str(e)}")
             return {"error": str(e)}
     async def search_leads(
-    self,
-    search_term: str,
-    user_data: Dict[str, Any],  # 🔄 CHANGED: was user_email + user_role
-    page: int = 1,
-    limit: int = 20
-) -> Dict[str, Any]:
+        self,
+        search_term: str,
+        user_data: Dict[str, Any],  # 🔄 CHANGED: was user_email + user_role
+        page: int = 1,
+        limit: int = 20
+    ) -> Dict[str, Any]:
         """
         🔄 UPDATED: Search leads with RBAC filtering
         """
@@ -2278,7 +2301,8 @@ class LeadService:
                     {"name": {"$regex": search_term, "$options": "i"}},
                     {"email": {"$regex": search_term, "$options": "i"}},
                     {"lead_id": {"$regex": search_term, "$options": "i"}},
-                    {"contact_number": {"$regex": search_term, "$options": "i"}}
+                    {"contact_number": {"$regex": search_term, "$options": "i"}},
+                    {"enrolled_batches": {"$regex": search_term, "$options": "i"}}
                 ]
             }
             
@@ -2606,8 +2630,191 @@ class LeadService:
             "last_whatsapp_activity": lead_doc.get("last_whatsapp_activity"),
             "last_whatsapp_message": lead_doc.get("last_whatsapp_message"),
             "whatsapp_message_count": lead_doc.get("whatsapp_message_count", 0),
-            "unread_whatsapp_count": lead_doc.get("unread_whatsapp_count", 0)
+            "unread_whatsapp_count": lead_doc.get("unread_whatsapp_count", 0),
+
+            # 🆕 NEW: Batch Enrollment Fields
+            "enrolled_batches": lead_doc.get("enrolled_batches", []),
+            "batch_info": lead_doc.get("batch_info", {
+                "total_batches": len(lead_doc.get("enrolled_batches", [])),
+                "enrolled_batches": lead_doc.get("enrolled_batches", []),
+                "batch_details": []
+            })
         }
+
+    async def get_batch_enrollment_statistics(
+        self,
+        user_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Get statistics about batch enrollments for leads
+        
+        Returns:
+            Statistics about batch enrollments
+        """
+        try:
+            db = self.get_db()
+            
+            # 🆕 RBAC: Build access filter
+            base_query = await self.build_access_filter_rbac(user_data, db)
+            
+            # Count leads enrolled in batches
+            leads_in_batches = await db.leads.count_documents({
+                **base_query,
+                "enrolled_batches": {"$exists": True, "$ne": []}
+            })
+            
+            # Count leads with no batch enrollment
+            leads_without_batches = await db.leads.count_documents({
+                **base_query,
+                "enrolled_batches": {"$exists": False}
+            }) + await db.leads.count_documents({
+                **base_query,
+                "enrolled_batches": []
+            })
+            
+            # Get distribution of batch enrollments
+            pipeline = [
+                {"$match": base_query},
+                {
+                    "$project": {
+                        "batch_count": {"$size": {"$ifNull": ["$enrolled_batches", []]}}
+                    }
+                },
+                {
+                    "$group": {
+                        "_id": "$batch_count",
+                        "lead_count": {"$sum": 1}
+                    }
+                },
+                {"$sort": {"_id": 1}}
+            ]
+            
+            batch_distribution = await db.leads.aggregate(pipeline).to_list(None)
+            
+            # Get most popular batches
+            popular_batches_pipeline = [
+                {"$match": base_query},
+                {"$unwind": "$enrolled_batches"},
+                {
+                    "$group": {
+                        "_id": "$enrolled_batches",
+                        "lead_count": {"$sum": 1}
+                    }
+                },
+                {"$sort": {"lead_count": -1}},
+                {"$limit": 10}
+            ]
+            
+            popular_batches = await db.leads.aggregate(popular_batches_pipeline).to_list(None)
+            
+            # Enrich batch names
+            for batch_stat in popular_batches:
+                batch_doc = await db.batches.find_one({"batch_id": batch_stat["_id"]})
+                if batch_doc:
+                    batch_stat["batch_name"] = batch_doc.get("batch_name")
+                    batch_stat["batch_type"] = batch_doc.get("batch_type")
+            
+            return {
+                "leads_in_batches": leads_in_batches,
+                "leads_without_batches": leads_without_batches,
+                "batch_count_distribution": batch_distribution,
+                "popular_batches": popular_batches,
+                "user_email": user_data.get("email"),
+                "access_level": self._get_access_level_name(user_data)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting batch enrollment statistics: {e}")
+            return {"error": str(e)}
+
+    async def enrich_lead_with_batch_info(
+        self,
+        lead_doc: Dict[str, Any],
+        include_details: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Enrich lead with batch enrollment information
+        
+        Args:
+            lead_doc: Lead document
+            include_details: If True, fetch full batch details; if False, just include IDs
+            
+        Returns:
+            Lead document with batch information added
+        """
+        try:
+            if not lead_doc:
+                return lead_doc
+            
+            # Get enrolled batch IDs
+            enrolled_batches = lead_doc.get("enrolled_batches", [])
+            
+            if not enrolled_batches:
+                # No batches, return as is
+                lead_doc["batch_info"] = {
+                    "total_batches": 0,
+                    "enrolled_batches": [],
+                    "batch_details": []
+                }
+                return lead_doc
+            
+            if not include_details:
+                # Just return batch IDs
+                lead_doc["batch_info"] = {
+                    "total_batches": len(enrolled_batches),
+                    "enrolled_batches": enrolled_batches,
+                    "batch_details": []
+                }
+                return lead_doc
+            
+            # Fetch full batch details
+            db = self.get_db()
+            
+            batches = await db.batches.find({
+                "batch_id": {"$in": enrolled_batches}
+            }).to_list(None)
+            
+            # Get enrollment details for each batch
+            batch_details = []
+            for batch in batches:
+                # Get enrollment record
+                enrollment = await db.batch_enrollments.find_one({
+                    "batch_id": batch["batch_id"],
+                    "lead_id": lead_doc["lead_id"]
+                })
+                
+                batch_info = {
+                    "batch_id": batch["batch_id"],
+                    "batch_name": batch["batch_name"],
+                    "batch_type": batch["batch_type"],
+                    "status": batch["status"],
+                    "start_date": batch["start_date"],
+                    "trainer_name": batch["trainer"]["name"],
+                    "enrollment_status": enrollment.get("enrollment_status") if enrollment else None,
+                    "attendance_percentage": enrollment.get("attendance_percentage", 0) if enrollment else 0,
+                    "sessions_attended": enrollment.get("attendance_count", 0) if enrollment else 0,
+                    "total_sessions": enrollment.get("total_sessions_held", 0) if enrollment else 0
+                }
+                batch_details.append(batch_info)
+            
+            lead_doc["batch_info"] = {
+                "total_batches": len(enrolled_batches),
+                "enrolled_batches": enrolled_batches,
+                "batch_details": batch_details
+            }
+            
+            return lead_doc
+            
+        except Exception as e:
+            logger.error(f"Error enriching lead with batch info: {e}")
+            # Return lead as-is without batch info on error
+            lead_doc["batch_info"] = {
+                "total_batches": 0,
+                "enrolled_batches": [],
+                "batch_details": [],
+                "error": str(e)
+            }
+            return lead_doc
 
 
 lead_service = LeadService()

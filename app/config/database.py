@@ -517,6 +517,152 @@ async def create_indexes():
         await db.lead_activities.create_index([("lead_id", 1), ("activity_type", 1), ("created_at", -1)])  # Lead activity history
         
         logger.info("✅ Enhanced Activities indexes created")
+
+        # NEW: Attendance/Batch module
+
+        logger.info("🎓 Creating Batches collection indexes...")
+        
+        batches_collection = db.batches
+        
+        # Unique identifier
+        await batches_collection.create_index("batch_id", unique=True)
+        
+        # Essential filters
+        await batches_collection.create_index("status")  # Filter by status
+        await batches_collection.create_index("batch_type")  # Filter by type
+        await batches_collection.create_index("trainer.user_id")  # Find batches by trainer
+        await batches_collection.create_index("created_by")  # Filter by creator
+        
+        # Date-based queries
+        await batches_collection.create_index("start_date")  # Sort by start date
+        await batches_collection.create_index("created_at")  # Sort by creation
+        await batches_collection.create_index("updated_at")  # Sort by last update
+        
+        # Compound indexes for efficient filtering
+        await batches_collection.create_index([("status", 1), ("start_date", 1)])  # Active batches by date
+        await batches_collection.create_index([("trainer.user_id", 1), ("status", 1)])  # Trainer's batches by status
+        await batches_collection.create_index([("batch_type", 1), ("status", 1)])  # Batch type filtering
+        await batches_collection.create_index([("status", 1), ("created_at", -1)])  # Recent batches by status
+        await batches_collection.create_index([("trainer.user_id", 1), ("start_date", 1)])  # Trainer's schedule
+        
+        # Capacity and enrollment tracking
+        await batches_collection.create_index("max_capacity")  # Filter by capacity
+        await batches_collection.create_index("current_enrollment")  # Filter by enrollment
+        await batches_collection.create_index([("current_enrollment", 1), ("max_capacity", 1)])  # Capacity analysis
+        
+        # Search optimization
+        await batches_collection.create_index([("batch_name", "text")])  # Text search on batch names
+        
+        logger.info("✅ Batches collection indexes created")
+        
+        # ============================================================================
+        # 🆕 NEW: BATCH_ENROLLMENTS COLLECTION INDEXES
+        # ============================================================================
+        logger.info("👥 Creating Batch Enrollments collection indexes...")
+        
+        enrollments_collection = db.batch_enrollments
+        
+        # Unique identifier
+        await enrollments_collection.create_index("enrollment_id", unique=True)
+        
+        # Essential relationships
+        await enrollments_collection.create_index("batch_id")  # Find enrollments by batch
+        await enrollments_collection.create_index("lead_id")  # Find enrollments by lead
+        await enrollments_collection.create_index([("batch_id", 1), ("lead_id", 1)], unique=True)  # Prevent duplicate enrollments
+        
+        # Status and tracking
+        await enrollments_collection.create_index("enrollment_status")  # Filter by status
+        await enrollments_collection.create_index("enrolled_by")  # Track who enrolled
+        await enrollments_collection.create_index("enrollment_date")  # Sort by enrollment date
+        
+        # Compound indexes for efficient queries
+        await enrollments_collection.create_index([("batch_id", 1), ("enrollment_status", 1)])  # Active enrollments per batch
+        await enrollments_collection.create_index([("lead_id", 1), ("enrollment_status", 1)])  # Lead's active enrollments
+        await enrollments_collection.create_index([("batch_id", 1), ("enrollment_date", -1)])  # Recent enrollments
+        await enrollments_collection.create_index([("enrolled_by", 1), ("enrollment_date", -1)])  # Enrollments by user
+        
+        # Attendance tracking
+        await enrollments_collection.create_index("attendance_count")  # Sort by attendance
+        await enrollments_collection.create_index("attendance_percentage")  # Filter by attendance rate
+        await enrollments_collection.create_index([("batch_id", 1), ("attendance_percentage", 1)])  # Batch attendance analysis
+        
+        # Timestamps
+        await enrollments_collection.create_index("created_at")
+        await enrollments_collection.create_index("updated_at")
+        
+        logger.info("✅ Batch Enrollments indexes created")
+        
+        # ============================================================================
+        # 🆕 NEW: BATCH_SESSIONS COLLECTION INDEXES
+        # ============================================================================
+        logger.info("📅 Creating Batch Sessions collection indexes...")
+        
+        sessions_collection = db.batch_sessions
+        
+        # Unique identifier
+        await sessions_collection.create_index("session_id", unique=True)
+        
+        # Essential relationships
+        await sessions_collection.create_index("batch_id")  # Find sessions by batch
+        await sessions_collection.create_index([("batch_id", 1), ("session_number", 1)], unique=True)  # Unique session per batch
+        
+        # Date and status filtering
+        await sessions_collection.create_index("session_date")  # Sort by date
+        await sessions_collection.create_index("session_status")  # Filter by status
+        await sessions_collection.create_index("attendance_taken")  # Find sessions without attendance
+        
+        # Compound indexes for efficient queries
+        await sessions_collection.create_index([("batch_id", 1), ("session_date", 1)])  # Batch schedule
+        await sessions_collection.create_index([("batch_id", 1), ("session_status", 1)])  # Batch sessions by status
+        await sessions_collection.create_index([("session_date", 1), ("session_status", 1)])  # Daily schedule
+        await sessions_collection.create_index([("batch_id", 1), ("attendance_taken", 1)])  # Pending attendance
+        await sessions_collection.create_index([("session_status", 1), ("session_date", 1)])  # Upcoming sessions
+        
+        # Performance tracking
+        await sessions_collection.create_index("present_count")  # Sort by attendance
+        await sessions_collection.create_index("absent_count")  # Find low attendance sessions
+        
+        # Timestamps
+        await sessions_collection.create_index("created_at")
+        await sessions_collection.create_index("updated_at")
+        
+        logger.info("✅ Batch Sessions indexes created")
+        
+        # ============================================================================
+        # 🆕 NEW: BATCH_ATTENDANCE COLLECTION INDEXES
+        # ============================================================================
+        logger.info("✅ Creating Batch Attendance collection indexes...")
+        
+        attendance_collection = db.batch_attendance
+        
+        # Unique identifier
+        await attendance_collection.create_index("attendance_id", unique=True)
+        
+        # Essential relationships
+        await attendance_collection.create_index("session_id")  # Find attendance by session
+        await attendance_collection.create_index("batch_id")  # Find attendance by batch
+        await attendance_collection.create_index("lead_id")  # Find attendance by student
+        await attendance_collection.create_index([("session_id", 1), ("lead_id", 1)], unique=True)  # One record per student per session
+        
+        # Status filtering
+        await attendance_collection.create_index("attendance_status")  # Filter present/absent
+        await attendance_collection.create_index("marked_by")  # Track who marked attendance
+        await attendance_collection.create_index("marked_at")  # Sort by marking time
+        
+        # Compound indexes for efficient queries
+        await attendance_collection.create_index([("batch_id", 1), ("lead_id", 1)])  # Student's batch attendance
+        await attendance_collection.create_index([("batch_id", 1), ("attendance_status", 1)])  # Batch attendance summary
+        await attendance_collection.create_index([("lead_id", 1), ("attendance_status", 1)])  # Student attendance summary
+        await attendance_collection.create_index([("session_id", 1), ("attendance_status", 1)])  # Session attendance summary
+        await attendance_collection.create_index([("batch_id", 1), ("session_id", 1)])  # Batch session attendance
+        await attendance_collection.create_index([("lead_id", 1), ("marked_at", -1)])  # Student attendance timeline
+        await attendance_collection.create_index([("marked_by", 1), ("marked_at", -1)])  # Trainer marking history
+        
+        # Timestamps
+        await attendance_collection.create_index("created_at")
+        await attendance_collection.create_index("updated_at")
+        
+        logger.info("✅ Batch Attendance indexes created")
         
         # ============================================================================
         # 🆕 NEW: LEAD_COUNTERS COLLECTION INDEXES
@@ -580,8 +726,7 @@ async def create_indexes():
         logger.info("🎯 All enhanced database indexes created successfully!")
         logger.info("📱 WhatsApp chat functionality fully supported!")
         logger.info("📤 Bulk WhatsApp messaging fully optimized!")
-        logger.info("🚀 System optimized for multi-user assignment, selective round robin, dynamic course levels & sources, and complete WhatsApp integration!")
-        
+        logger.info("🚀 System optimized for multi-user assignment, selective round robin, dynamic course levels & sources, complete WhatsApp integration, and batch management!")
     except Exception as e:
         logger.error(f"❌ Error creating indexes: {e}")
         # Don't fail the application startup if index creation fails
@@ -601,6 +746,10 @@ async def get_collection_stats():
             "sources",
             "lead_groups",
             "teams",
+            "batches",                    # ADD THIS
+            "batch_enrollments",          # ADD THIS
+            "batch_sessions",             # ADD THIS
+            "batch_attendance",           # ADD THIS
             "lead_tasks",
             "lead_activities",
             "lead_counters",
