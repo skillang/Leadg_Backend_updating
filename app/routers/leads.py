@@ -14,6 +14,7 @@ from app.services import lead_category_service
 from ..services.rbac_service import RBACService
 from ..services.lead_category_service import lead_category_service
 from ..config.database import get_database
+from ..services.lead_service import lead_service
 from ..utils.dependencies import get_current_active_user, get_admin_user, get_user_with_single_lead_permission, get_user_with_bulk_lead_permission
 
 # Updated imports with new models
