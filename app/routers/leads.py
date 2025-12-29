@@ -1067,18 +1067,40 @@ async def get_my_leads(
     current_user: Dict[str, Any] = Depends(get_current_active_user)
 ):
     """
-    Get leads assigned to current user with filtering support
+    🔄 RBAC-ENABLED: Get leads with automatic permission-based filtering
+    
+    **Permission-Based Behavior:**
+    - `leads.read_own`: See only assigned leads (default for regular users)
+    - `leads.read_team`: See own + team members' leads (for team managers)
+    - `leads.read_all`: See all leads in system (for admins)
+    
+    **Filters:** stage, status, category, source, course_level, search, date ranges
+    
+    **Query Parameters:**
+    - page: Page number (default: 1)
+    - limit: Items per page (default: 20, max: 100)
+    - stage: Filter by lead stage
+    - status: Filter by lead status
+    - category: Filter by lead category
+    - source: Filter by lead source
+    - course_level: Filter by course level
+    - search: Search by name/email/lead_id/phone
+    - created_from/created_to: Filter by creation date range
+    - updated_from/updated_to: Filter by update date range
+    - last_contacted_from/last_contacted_to: Filter by last contact date range
     """
     try:
         db = get_database()
         
-        # Base query to include both primary assignments and co-assignments
-        base_user_query = {
-            "$or": [
-                {"assigned_to": current_user["email"]},
-                {"co_assignees": {"$in": [current_user["email"]]}}
-            ]
-        }
+        # 🔄 RBAC-ENABLED: Build query based on user permissions
+        # This replaces the hardcoded query with intelligent permission-based filtering
+        # - Regular users with leads.read_own: See only their assigned leads
+        # - Team managers with leads.read_team: See team members' leads
+        # - Admins with leads.read_all: See ALL leads
+        # - Super admins: Always see ALL leads
+        base_user_query = await build_lead_query_with_rbac(current_user, db)
+        
+        logger.info(f"📋 /my-leads called by {current_user.get('email')} - RBAC query applied")
         
         # 🔧 FIXED: Build filters array instead of overwriting query
         filters = []
@@ -1161,6 +1183,7 @@ async def get_my_leads(
         else:
             query = base_user_query
         
+        # Get total count and paginated results
         total = await db.leads.count_documents(query)
         skip = (page - 1) * limit
         
@@ -1178,6 +1201,8 @@ async def get_my_leads(
         
         # Convert ObjectIds before response
         final_leads = convert_objectid_to_str(processed_leads)
+        
+        logger.info(f"✅ Returned {len(final_leads)} leads (total: {total}) for {current_user.get('email')}")
         
         return {
             "leads": final_leads,
@@ -1197,7 +1222,6 @@ async def get_my_leads(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve your leads"
         )
-
 @router.post("/filter")
 @convert_lead_dates()
 async def filter_leads(
