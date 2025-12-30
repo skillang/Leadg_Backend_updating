@@ -352,7 +352,7 @@ async def get_lead_assignment_details(
 
 @router.get("/users/assignable-with-details", response_model=UserSelectionResponse)
 async def get_assignable_users_with_details(
-    current_user: dict = Depends(get_user_with_permission("user.read_all"))  # 🔄 CHANGE THIS LINE
+    current_user: dict = Depends(get_user_with_permission("user.view"))
 ):
     """Get all assignable users with their current lead counts and details (Admin only)"""
     try:
@@ -449,7 +449,7 @@ async def get_leads_with_multi_assignment_info(
     limit: int = Query(20, ge=1, le=100),
     include_multi_assigned: bool = Query(False),
     assigned_to_user: Optional[str] = Query(None),
-    current_user: dict = Depends(get_user_with_permission("lead.read_own"))  # 🔄 CHANGE THIS LINE
+    current_user: dict = Depends(get_user_with_permission("lead.view"))
 ):
     """Get leads with extended multi-assignment information"""
     try:
@@ -848,7 +848,7 @@ async def create_lead(
     force_create: bool = Query(False, description="Create lead even if duplicates exist"),
     selected_user_emails: Optional[str] = Query(None, description="Comma-separated list of user emails for selective round robin"),
     # 🔄 UPDATED: Use RBAC permission check
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("lead.create"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("lead.add_single"))
 ):
     """
     🔄 RBAC-ENABLED: Create a new lead
@@ -1228,7 +1228,7 @@ async def filter_leads(
     filter_request: LeadsFilterRequest,
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("lead.read_own"))  # 🔄 CHANGE THIS LINE
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("lead.view"))  # 🔄 CHANGE THIS LINE
 ):
     """
     Filter leads with optional bulk lead_ids array in request body
@@ -1378,7 +1378,7 @@ async def filter_leads(
 @convert_dates_to_ist()
 async def get_lead_stats(
     include_multi_assignment_stats: bool = Query(True),
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("lead.read_own"))  # 🔄 CHANGE THIS LINE
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("lead.view"))  # 🔄 CHANGE THIS LINE
 ):
     """Get lead statistics with enhanced breakdown support"""
     try:
@@ -1519,7 +1519,7 @@ async def get_lead_stats(
 async def get_lead(
     lead_id: str,
     # 🔄 UPDATED: Use RBAC permission check
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("lead.read_own"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("lead.view"))
 ):
     """
     🔄 RBAC-ENABLED: Get specific lead by ID
@@ -2053,7 +2053,7 @@ async def update_lead_universal(
 async def delete_lead(
     lead_id: str,
     # 🔄 UPDATED: Use RBAC permission check
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("lead.delete"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("lead.delete_all"))
 ):
     """
     🔄 RBAC-ENABLED: Delete a lead
@@ -2125,7 +2125,8 @@ async def bulk_create_leads(
     force_create: bool = Query(False),
     assignment_method: str = Query("all_users"),
     selected_user_emails: Optional[str] = Query(None),
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("lead.create_bulk"))  # 🔄 CHANGE THIS LINE
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("lead.add_bulk"))
+
 ):
     """
     🔧 FIXED: Bulk create leads with PROPER duplicate detection
@@ -2234,7 +2235,7 @@ async def check_duplicates_batch(
 @router.get("/admin/user-lead-stats")
 async def get_admin_user_lead_stats(
     include_multi_assignment_stats: bool = Query(True),
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("lead.read_all"))  # 🔄 CHANGE THIS LINE
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("lead.view_all"))
 ):
     """SUPER FAST admin stats with enhanced multi-assignment support"""
     try:
@@ -2382,7 +2383,7 @@ async def sync_user_arrays(
 
 @router.get("/users/assignable")
 async def get_assignable_users(
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("user.read_all"))  # 🔄 CHANGE THIS LINE
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("user.view"))
 ):
     """Get list of users that can be assigned leads (Admin only)"""
     try:

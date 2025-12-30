@@ -1,5 +1,5 @@
 # app/routers/tasks.py - RBAC-Enabled Task Management Router
-# 🔄 UPDATED: Role checks replaced with RBAC permission checks
+# 🔄 UPDATED: Role checks replaced with RBAC permission checks (108 permissions)
 # ✅ All endpoints now use permission-based access control
 
 from fastapi import APIRouter, HTTPException, status, Depends, Query
@@ -10,12 +10,12 @@ from bson import ObjectId
 
 # Services
 from app.services.task_service import task_service
-from app.services.rbac_service import RBACService  # 🆕 NEW
+from app.services.rbac_service import RBACService
 
 # Dependencies
 from app.utils.dependencies import (
     get_current_active_user,
-    get_user_with_permission  # 🆕 NEW - RBAC dependency
+    get_user_with_permission
 )
 
 # Decorators
@@ -33,12 +33,12 @@ from ..config.database import get_database
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# 🆕 Initialize RBAC service
+# Initialize RBAC service
 rbac_service = RBACService()
 
 
 # ============================================================================
-# 🆕 RBAC HELPER FUNCTIONS
+# RBAC HELPER FUNCTIONS
 # ============================================================================
 
 def get_user_id(current_user: Dict[str, Any]) -> str:
@@ -52,15 +52,15 @@ def get_user_id(current_user: Dict[str, Any]) -> str:
 
 async def check_lead_access_for_task(lead_id: str, user_email: str, current_user: Dict) -> bool:
     """
-    🆕 Check if user has access to a lead (for task operations)
+    Check if user has access to a lead (for task operations)
     
     Returns True if:
-    - User has task.read_all permission, OR
+    - User has task.view_all permission, OR
     - Lead is assigned to user (primary or co-assignee)
     """
-    # Check if user has read_all permission
-    has_read_all = await rbac_service.check_permission(current_user, "task.read_all")
-    if has_read_all:
+    # Check if user has view_all permission
+    has_view_all = await rbac_service.check_permission(current_user, "task.view_all")
+    if has_view_all:
         return True
     
     # Check if user has access to the lead
@@ -79,16 +79,16 @@ async def check_lead_access_for_task(lead_id: str, user_email: str, current_user
 
 async def check_task_access(task: Dict, user_id: str, current_user: Dict) -> bool:
     """
-    🆕 Check if user has access to a specific task
+    Check if user has access to a specific task
     
     Returns True if:
-    - User has task.read_all permission, OR
+    - User has task.view_all permission, OR
     - Task is assigned to user, OR
     - Task was created by user
     """
-    # Check if user has read_all permission
-    has_read_all = await rbac_service.check_permission(current_user, "task.read_all")
-    if has_read_all:
+    # Check if user has view_all permission
+    has_view_all = await rbac_service.check_permission(current_user, "task.view_all")
+    if has_view_all:
         return True
     
     # Check if task is assigned to user or created by user
@@ -100,22 +100,22 @@ async def check_task_access(task: Dict, user_id: str, current_user: Dict) -> boo
 
 async def build_task_query_with_rbac(current_user: Dict, db, lead_id: Optional[str] = None) -> Dict:
     """
-    🆕 Build MongoDB query for tasks based on user's RBAC permissions
+    Build MongoDB query for tasks based on user's RBAC permissions
     
     Permission hierarchy:
-    - task.read_all: See ALL tasks (no restrictions)
-    - task.read_team: See team members' tasks
-    - task.read_own: See only assigned tasks (default)
+    - task.view_all: See ALL tasks (no restrictions)
+    - task.view_team: See team members' tasks
+    - task.view: See only assigned tasks (default)
     """
     user_id = get_user_id(current_user)
     
     # Check permissions in order of scope (broadest first)
-    has_read_all = await rbac_service.check_permission(current_user, "task.read_all")
-    if has_read_all:
+    has_view_all = await rbac_service.check_permission(current_user, "task.view_all")
+    if has_view_all:
         base_query = {}
     else:
-        has_read_team = await rbac_service.check_permission(current_user, "task.read_team")
-        if has_read_team:
+        has_view_team = await rbac_service.check_permission(current_user, "task.view_team")
+        if has_view_team:
             # Get team members
             team_members = await db.users.find(
                 {"reports_to_email": current_user.get("email")},
@@ -131,7 +131,7 @@ async def build_task_query_with_rbac(current_user: Dict, db, lead_id: Optional[s
                 ]
             }
         else:
-            # Default: read_own - only see assigned or created tasks
+            # Default: view - only see assigned or created tasks
             base_query = {
                 "$or": [
                     {"assigned_to": user_id},
@@ -152,20 +152,19 @@ async def build_task_query_with_rbac(current_user: Dict, db, lead_id: Optional[s
 
 
 # ============================================================================
-# 🔄 RBAC-ENABLED TASK CRUD OPERATIONS
+# RBAC-ENABLED TASK CRUD OPERATIONS
 # ============================================================================
 
 @router.post("/leads/{lead_id}/tasks", status_code=status.HTTP_201_CREATED)
 async def create_task(
     lead_id: str,
     task_data: TaskCreate,
-    # 🔄 UPDATED: Use RBAC permission check
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("task.create"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("task.add"))
 ):
     """
     🔄 RBAC-ENABLED: Create a new task for a lead
     
-    **Required Permission:** `task.create`
+    **Required Permission:** `task.add`
     
     Users can only create tasks for leads they have access to.
     """
@@ -174,7 +173,7 @@ async def create_task(
         
         user_id = get_user_id(current_user)
         
-        # 🆕 Check if user has access to this lead
+        # Check if user has access to this lead
         user_email = current_user.get("email")
         has_access = await check_lead_access_for_task(lead_id, user_email, current_user)
         
@@ -224,21 +223,20 @@ async def get_lead_tasks(
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
     status_filter: Optional[str] = Query(None, description="Filter by status: pending, overdue, due_today, completed, all"),
-    # 🔄 UPDATED: Use RBAC permission check
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("task.read_own"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("task.view"))
 ):
     """
     🔄 RBAC-ENABLED: Get all tasks for a specific lead
     
     **Required Permission:**
-    - `task.read_own` - See tasks for assigned leads
-    - `task.read_team` - See team members' tasks
-    - `task.read_all` - See all tasks (admin)
+    - `task.view` - See tasks for assigned leads
+    - `task.view_team` - See team members' tasks
+    - `task.view_all` - See all tasks (admin)
     """
     try:
         logger.info(f"Getting tasks for lead {lead_id} by user {current_user.get('email')}")
         
-        # 🆕 Check if user has access to this lead
+        # Check if user has access to this lead
         user_email = current_user.get("email")
         has_access = await check_lead_access_for_task(lead_id, user_email, current_user)
         
@@ -288,20 +286,19 @@ async def get_lead_tasks(
 @convert_dates_to_ist()
 async def get_lead_task_stats(
     lead_id: str,
-    # 🔄 UPDATED: Use RBAC permission check
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("task.read_own"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("task.view"))
 ):
     """
     🔄 RBAC-ENABLED: Get task statistics for a lead
     
-    **Required Permission:** `task.read_own`
+    **Required Permission:** `task.view`
     
     Returns: total_tasks, overdue_tasks, due_today, completed_tasks, etc.
     """
     try:
         logger.info(f"Getting task stats for lead {lead_id} by user {current_user.get('email')}")
         
-        # 🆕 Check if user has access to this lead
+        # Check if user has access to this lead
         user_email = current_user.get("email")
         has_access = await check_lead_access_for_task(lead_id, user_email, current_user)
         
@@ -337,13 +334,12 @@ async def get_lead_task_stats(
 @convert_task_dates()
 async def get_task(
     task_id: str,
-    # 🔄 UPDATED: Use RBAC permission check
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("task.read_own"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("task.view"))
 ):
     """
     🔄 RBAC-ENABLED: Get a specific task by ID
     
-    **Required Permission:** `task.read_own`
+    **Required Permission:** `task.view`
     
     Users can only view tasks they have access to.
     """
@@ -359,7 +355,7 @@ async def get_task(
         if not task:
             raise HTTPException(status_code=404, detail="Task not found")
         
-        # 🆕 Check if user has access to this task
+        # Check if user has access to this task
         has_access = await check_task_access(task, user_id, current_user)
         
         if not has_access:
@@ -397,15 +393,17 @@ async def get_task(
 async def update_task(
     task_id: str,
     task_data: TaskUpdate,
-    # 🔄 UPDATED: Use RBAC permission check
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("task.update"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("task.update_own"))
 ):
     """
     🔄 RBAC-ENABLED: Update a task
     
-    **Required Permission:** `task.update`
+    **Required Permission:**
+    - `task.update_own` - Update tasks assigned to you
+    - `task.update_team` - Update team members' tasks
     
     Users can update tasks assigned to them or created by them.
+    Admins with task.update_team can update any task.
     """
     try:
         logger.info(f"Updating task {task_id} by user {current_user.get('email')}")
@@ -419,14 +417,18 @@ async def update_task(
         if not task:
             raise HTTPException(status_code=404, detail="Task not found")
         
-        # 🆕 Check if user has access to this task
-        has_access = await check_task_access(task, user_id, current_user)
+        # Check if user has update_team permission (can update any task)
+        has_update_team = await rbac_service.check_permission(current_user, "task.update_team")
         
-        if not has_access:
-            raise HTTPException(
-                status_code=403,
-                detail="You don't have permission to update this task"
-            )
+        if not has_update_team:
+            # Regular user - can only update their own tasks
+            has_access = await check_task_access(task, user_id, current_user)
+            
+            if not has_access:
+                raise HTTPException(
+                    status_code=403,
+                    detail="You don't have permission to update this task"
+                )
         
         success = await task_service.update_task(
             task_id, 
@@ -470,13 +472,12 @@ async def update_task(
 async def complete_task(
     task_id: str,
     completion_data: TaskCompleteRequest,
-    # 🔄 UPDATED: Use RBAC permission check
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("task.complete"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("task.update_own"))
 ):
     """
     🔄 RBAC-ENABLED: Mark a task as completed
     
-    **Required Permission:** `task.complete`
+    **Required Permission:** `task.update_own`
     
     Users can complete tasks assigned to them or created by them.
     """
@@ -492,7 +493,7 @@ async def complete_task(
         if not task:
             raise HTTPException(status_code=404, detail="Task not found")
         
-        # 🆕 Check if user has access to this task
+        # Check if user has access to this task
         has_access = await check_task_access(task, user_id, current_user)
         
         if not has_access:
@@ -537,13 +538,15 @@ async def complete_task(
 @router.delete("/{task_id}")
 async def delete_task(
     task_id: str,
-    # 🔄 UPDATED: Use RBAC permission check
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("task.delete"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("task.delete_own"))
 ):
     """
     🔄 RBAC-ENABLED: Delete a task
     
-    **Required Permission:** `task.delete`
+    **Required Permission:**
+    - `task.delete_own` - Delete tasks you created
+    - `task.delete_team` - Delete team tasks
+    - `task.delete_all` - Delete any task (admin)
     
     Users can delete tasks they created.
     """
@@ -559,16 +562,32 @@ async def delete_task(
         if not task:
             raise HTTPException(status_code=404, detail="Task not found")
         
-        # 🆕 Check if user has access to delete this task
-        # For delete, we typically want to check if user created it
+        # Check permissions
         has_delete_all = await rbac_service.check_permission(current_user, "task.delete_all")
+        has_delete_team = await rbac_service.check_permission(current_user, "task.delete_team")
         created_by = str(task.get("created_by", ""))
         
-        if not has_delete_all and created_by != user_id:
-            raise HTTPException(
-                status_code=403,
-                detail="You can only delete tasks you created"
-            )
+        if not has_delete_all:
+            if has_delete_team:
+                # Can delete team tasks - check if task belongs to team
+                team_members = await db.users.find(
+                    {"reports_to_email": current_user.get("email")},
+                    {"_id": 1}
+                ).to_list(None)
+                team_member_ids = [str(member["_id"]) for member in team_members]
+                
+                if created_by not in team_member_ids and created_by != user_id:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="You can only delete tasks created by you or your team members"
+                    )
+            else:
+                # Regular user - can only delete own tasks
+                if created_by != user_id:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="You can only delete tasks you created"
+                    )
         
         success = await task_service.delete_task(
             task_id, 
@@ -608,31 +627,30 @@ async def get_my_tasks(
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
     status_filter: Optional[str] = Query(None, description="Filter by status: pending, overdue, due_today, completed, all"),
-    # 🔄 UPDATED: Use RBAC permission check
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("task.read_own"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("task.view"))
 ):
     """
     🔄 RBAC-ENABLED: Get all tasks assigned to the current user
     
-    **Required Permission:** `task.read_own`
+    **Required Permission:** `task.view`
     
     **Permission-based behavior:**
-    - task.read_all: See ALL tasks from ALL users
-    - task.read_team: See own tasks + team members' tasks
-    - task.read_own: See only assigned/created tasks (default)
+    - task.view_all: See ALL tasks from ALL users
+    - task.view_team: See own tasks + team members' tasks
+    - task.view: See only assigned/created tasks (default)
     """
     try:
         logger.info(f"Getting tasks for user {current_user.get('email')} with RBAC filtering")
         
         user_id = get_user_id(current_user)
         
-        # 🆕 Check permissions to determine scope
-        has_read_all = await rbac_service.check_permission(current_user, "task.read_all")
+        # Check permissions to determine scope
+        has_view_all = await rbac_service.check_permission(current_user, "task.view_all")
         
-        if has_read_all:
+        if has_view_all:
             # Admin - get ALL tasks
             result = await task_service.get_all_tasks(status_filter, page, limit)
-            logger.info(f"User {current_user.get('email')} retrieved {result['total']} total tasks (read_all)")
+            logger.info(f"User {current_user.get('email')} retrieved {result['total']} total tasks (view_all)")
         else:
             # Regular user - get only their tasks
             result = await task_service.get_user_tasks(
@@ -641,7 +659,7 @@ async def get_my_tasks(
                 page,     
                 limit 
             )
-            logger.info(f"User {current_user.get('email')} retrieved {result['total']} assigned tasks (read_own)")
+            logger.info(f"User {current_user.get('email')} retrieved {result['total']} assigned tasks (view)")
         
         # Calculate stats
         global_stats = await task_service._calculate_global_task_stats(
@@ -679,7 +697,6 @@ async def get_my_tasks(
 @convert_dates_to_ist()
 async def get_assignable_users_for_tasks(
     lead_id: str = Query(..., description="Lead ID to get assigned users for"),
-    # 🔄 UPDATED: Use basic auth + inline check
     current_user: Dict[str, Any] = Depends(get_current_active_user)
 ):
     """
@@ -698,7 +715,7 @@ async def get_assignable_users_for_tasks(
         if not lead:
             raise HTTPException(status_code=404, detail=f"Lead {lead_id} not found")
         
-        # 🆕 Check permissions using RBAC
+        # Check permissions using RBAC
         user_email = current_user.get("email")
         has_access = await check_lead_access_for_task(lead_id, user_email, current_user)
         
@@ -782,25 +799,24 @@ async def get_assignable_users_for_tasks(
 @router.post("/tasks/bulk-action")
 async def bulk_task_action(
     bulk_action: TaskBulkAction,
-    # 🔄 UPDATED: Check permissions based on action
     current_user: Dict[str, Any] = Depends(get_current_active_user)
 ):
     """
     🔄 RBAC-ENABLED: Perform bulk actions on multiple tasks
     
     **Required Permissions:**
-    - complete: `task.complete`
-    - delete: `task.delete`
-    - reassign: `task.update`
+    - complete: `task.update_own`
+    - delete: `task.delete_own`
+    - reassign: `task.update_own`
     """
     try:
         logger.info(f"Bulk action {bulk_action.action} by {current_user.get('email')} on {len(bulk_action.task_ids)} tasks")
         
-        # 🆕 Check permission for the requested action
+        # Check permission for the requested action
         permission_map = {
-            "complete": "task.complete",
-            "delete": "task.delete",
-            "reassign": "task.update"
+            "complete": "task.update_own",
+            "delete": "task.delete_own",
+            "reassign": "task.update_own"
         }
         
         required_permission = permission_map.get(bulk_action.action)

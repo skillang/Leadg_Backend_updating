@@ -1,5 +1,6 @@
-# app/routers/permissions.py
-# 🔄 RBAC-ENABLED: Complete Permission Management - All 69 Permissions Across 9 Categories
+# app/routers/permissions.py - RBAC-ENABLED
+# Complete Permission Management - All 108 Permissions Across 12 Categories
+# 🔄 UPDATED: Documentation updated to reflect 108-permission system
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from typing import List, Optional, Dict, Any
@@ -22,7 +23,7 @@ from ..config.database import get_database
 
 logger = logging.getLogger(__name__)
 
-# 🆕 Initialize RBAC service
+# Initialize RBAC service
 rbac_service = RBACService()
 
 # Create router
@@ -30,24 +31,37 @@ router = APIRouter()
 
 
 # ============================================================================
-# 🆕 PERMISSION LISTING & DISCOVERY (NEW ENDPOINTS)
+# RBAC-ENABLED PERMISSION LISTING & DISCOVERY
 # ============================================================================
 
 @router.get("/list")
 async def list_all_permissions(
     category: Optional[str] = Query(None, description="Filter by category (lead_management, user_management, etc.)"),
     resource: Optional[str] = Query(None, description="Filter by resource (lead, contact, task, etc.)"),
-    action: Optional[str] = Query(None, description="Filter by action (create, read, update, delete, etc.)"),
-    # 🔄 UPDATED: Use RBAC permission check
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("permission.read"))
+    action: Optional[str] = Query(None, description="Filter by action (add, view, update, delete, etc.)"),
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("permission.view"))
 ):
     """
-    🆕 NEW: Get list of all 69 system permissions
+    🔄 RBAC-ENABLED: Get list of all 108 system permissions
     
-    **Required Permission:** `permission.read`
+    **Required Permission:** `permission.view`
     
     Returns all available permissions that can be assigned to roles.
     Can be filtered by category, resource, or action.
+    
+    **108 Permissions across 12 categories:**
+    - Lead Management (14 permissions)
+    - Contact Management (7 permissions)
+    - Task Management (9 permissions)
+    - Note Management (6 permissions)
+    - Document Management (7 permissions)
+    - User Management (8 permissions)
+    - Role & Permission Management (7 permissions)
+    - Team Management (6 permissions)
+    - Dashboard & Reporting (9 permissions)
+    - System Settings (7 permissions)
+    - Email & Communication (6 permissions)
+    - WhatsApp Management (22 permissions)
     """
     try:
         db = get_database()
@@ -110,15 +124,14 @@ async def list_all_permissions(
 
 @router.get("/categories")
 async def list_permission_categories(
-    # 🔄 UPDATED: Use RBAC permission check
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("permission.read"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("permission.view"))
 ):
     """
-    🆕 NEW: Get all permission categories with counts
+    🔄 RBAC-ENABLED: Get all permission categories with counts
     
-    **Required Permission:** `permission.read`
+    **Required Permission:** `permission.view`
     
-    Returns 9 permission categories with metadata.
+    Returns 12 permission categories with metadata (108-permission system).
     """
     try:
         db = get_database()
@@ -138,43 +151,55 @@ async def list_permission_categories(
         
         results = await db.permissions.aggregate(pipeline).to_list(None)
         
-        # Category display info
+        # Category display info (108-permission system)
         category_info = {
             "lead_management": {
                 "display_name": "Lead Management",
-                "description": "Permissions for managing leads and lead lifecycle"
+                "description": "Permissions for managing leads and lead lifecycle (14 permissions)"
             },
             "contact_management": {
                 "display_name": "Contact Management",
-                "description": "Permissions for managing contacts and relationships"
+                "description": "Permissions for managing contacts and relationships (7 permissions)"
             },
             "task_management": {
                 "display_name": "Task Management",
-                "description": "Permissions for creating and managing tasks"
+                "description": "Permissions for creating and managing tasks (9 permissions)"
+            },
+            "note_management": {
+                "display_name": "Note Management",
+                "description": "Permissions for creating and managing notes (6 permissions)"
+            },
+            "document_management": {
+                "display_name": "Document Management",
+                "description": "Permissions for managing documents and files (7 permissions)"
             },
             "user_management": {
                 "display_name": "User Management",
-                "description": "Permissions for managing users and accounts"
+                "description": "Permissions for managing users and accounts (8 permissions)"
             },
             "role_permission_management": {
                 "display_name": "Role & Permission Management",
-                "description": "Permissions for managing roles and permissions"
-            },
-            "dashboard_reporting": {
-                "display_name": "Dashboard & Reporting",
-                "description": "Permissions for viewing dashboards and reports"
-            },
-            "system_settings": {
-                "display_name": "System Settings",
-                "description": "Permissions for system configuration and settings"
-            },
-            "email_communication": {
-                "display_name": "Email & Communication",
-                "description": "Permissions for email and communication features"
+                "description": "Permissions for managing roles and permissions (7 permissions)"
             },
             "team_management": {
                 "display_name": "Team Management",
-                "description": "Permissions for managing team hierarchy and structure"
+                "description": "Permissions for managing team hierarchy and structure (6 permissions)"
+            },
+            "dashboard_reporting": {
+                "display_name": "Dashboard & Reporting",
+                "description": "Permissions for viewing dashboards and reports (9 permissions)"
+            },
+            "system_settings": {
+                "display_name": "System Settings",
+                "description": "Permissions for system configuration and settings (7 permissions)"
+            },
+            "email_communication": {
+                "display_name": "Email & Communication",
+                "description": "Permissions for email and communication features (6 permissions)"
+            },
+            "whatsapp_management": {
+                "display_name": "WhatsApp Management",
+                "description": "Permissions for WhatsApp messaging and integration (22 permissions)"
             }
         }
         
@@ -200,7 +225,8 @@ async def list_permission_categories(
         return {
             "success": True,
             "categories": categories,
-            "total_categories": len(categories)
+            "total_categories": len(categories),
+            "total_permissions": 108
         }
         
     except HTTPException:
@@ -215,15 +241,17 @@ async def list_permission_categories(
 
 @router.get("/matrix")
 async def get_permission_matrix(
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("permission.read"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("permission.view"))
 ):
     """
-    🆕 NEW: Get permission matrix view (for UI display)
+    🔄 RBAC-ENABLED: Get permission matrix view (for UI display)
     
-    **Required Permission:** `permission.read`
+    **Required Permission:** `permission.view`
     
     Returns permissions organized by category → action groups.
     Frontend-ready format with no transformation needed.
+    
+    **108 Permissions organized by 12 categories.**
     """
     try:
         db = get_database()
@@ -293,8 +321,9 @@ async def get_permission_matrix(
             detail=f"Failed to generate matrix: {str(e)}"
         )
 
+
 # ============================================================================
-# 🔄 USER PERMISSION MANAGEMENT (UPDATED)
+# RBAC-ENABLED USER PERMISSION MANAGEMENT
 # ============================================================================
 
 @router.get("/users")
@@ -302,12 +331,12 @@ async def get_users_with_permissions(
     include_admins: bool = Query(False, description="Include admin/super admin users"),
     include_inactive: bool = Query(False, description="Include inactive users"),
     role_filter: Optional[str] = Query(None, description="Filter by role name"),
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("permission.read"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("permission.view"))
 ):
     """
-    Get all users with their effective permissions AND team info (SIMPLIFIED - NO HIERARCHY)
+    🔄 RBAC-ENABLED: Get all users with their effective permissions AND team info
     
-    **Required Permission:** `permission.read`
+    **Required Permission:** `permission.view`
     
     Returns users with:
     - Permission data (effective_permissions, overrides, counts)
@@ -333,6 +362,8 @@ async def get_users_with_permissions(
             query,
             {
                 "email": 1,
+                "first_name": 1,
+                "last_name": 1,
                 "role_name": 1,
                 "role_id": 1,
                 "is_super_admin": 1,
@@ -340,6 +371,7 @@ async def get_users_with_permissions(
                 "effective_permissions": 1,
                 "permission_overrides": 1,
                 "permissions_last_computed": 1,
+                "team_id": 1,
                 "team_name": 1,
                 "is_team_lead": 1,
             }
@@ -360,8 +392,8 @@ async def get_users_with_permissions(
                 "name": f"{user.get('first_name', '')} {user.get('last_name', '')}".strip(),
                 
                 # Role info
-                # "role_name": user.get("role_name", "user"),
-                # "role_id": str(user.get("role_id")) if user.get("role_id") else None,
+                "role_name": user.get("role_name", "user"),
+                "role_id": str(user.get("role_id")) if user.get("role_id") else None,
                 "is_super_admin": user.get("is_super_admin", False),
                 "is_active": user.get("is_active", True),
                 
@@ -369,17 +401,14 @@ async def get_users_with_permissions(
                 "permissions_count": len(user.get("effective_permissions", [])),
                 "has_overrides": len(user.get("permission_overrides", [])) > 0,
                 
-                # 🔄 UPDATED: Simplified team info (NO HIERARCHY)
+                # Team info (simplified - no hierarchy)
                 "team_id": str(user.get("team_id")) if user.get("team_id") else None,
                 "team_name": user.get("team_name"),
                 "is_team_lead": user.get("is_team_lead", False),
                 "assigned_leads_count": leads_count,
-                
-                # Metadata
-                # "created_at": user.get("created_at")
             })
         
-        # 🔄 UPDATED: Summary statistics (NO HIERARCHY)
+        # Summary statistics (simplified - no hierarchy)
         total_users = await db.users.count_documents(query)
         users_with_permissions = sum(1 for u in formatted_users if u["permissions_count"] > 0)
         users_in_teams = sum(1 for u in formatted_users if u["team_id"])
@@ -414,13 +443,12 @@ async def get_users_with_permissions(
 @router.get("/users/{user_email}/effective")
 async def get_user_effective_permissions(
     user_email: str,
-    # 🔄 UPDATED: Use RBAC permission check
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("permission.read"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("permission.view"))
 ):
     """
-    🆕 NEW: Get user's computed effective permissions
+    🔄 RBAC-ENABLED: Get user's computed effective permissions
     
-    **Required Permission:** `permission.read`
+    **Required Permission:** `permission.view`
     
     Returns complete list of permissions from:
     1. Role-based permissions
@@ -487,11 +515,10 @@ async def add_permission_override(
     permission_code: str = Query(..., description="Permission code (e.g., 'lead.delete')"),
     granted: bool = Query(..., description="true to grant, false to deny"),
     reason: str = Query(..., description="Reason for override (required for audit)"),
-    # 🔄 UPDATED: Use RBAC permission check
     current_user: Dict[str, Any] = Depends(get_user_with_permission("permission.manage"))
 ):
     """
-    🆕 NEW: Add permission override for a specific user
+    🔄 RBAC-ENABLED: Add permission override for a specific user
     
     **Required Permission:** `permission.manage`
     
@@ -579,11 +606,10 @@ async def add_permission_override(
 async def remove_permission_override(
     user_email: str,
     permission_code: str,
-    # 🔄 UPDATED: Use RBAC permission check
     current_user: Dict[str, Any] = Depends(get_user_with_permission("permission.manage"))
 ):
     """
-    🆕 NEW: Remove permission override from a user
+    🔄 RBAC-ENABLED: Remove permission override from a user
     
     **Required Permission:** `permission.manage`
     
@@ -647,11 +673,10 @@ async def remove_permission_override(
 @router.post("/users/{user_email}/recompute")
 async def recompute_user_permissions(
     user_email: str,
-    # 🔄 UPDATED: Use RBAC permission check
     current_user: Dict[str, Any] = Depends(get_user_with_permission("permission.manage"))
 ):
     """
-    🆕 NEW: Manually recompute user's effective permissions
+    🔄 RBAC-ENABLED: Manually recompute user's effective permissions
     
     **Required Permission:** `permission.manage`
     
@@ -707,20 +732,20 @@ async def recompute_user_permissions(
 
 
 # ============================================================================
-# 🆕 PERMISSION STATISTICS & ANALYTICS (NEW)
+# RBAC-ENABLED PERMISSION STATISTICS & ANALYTICS
 # ============================================================================
 
 @router.get("/statistics")
 async def get_permission_statistics(
-    # 🔄 UPDATED: Use RBAC permission check
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("permission.read"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("permission.view"))
 ):
     """
-    🆕 NEW: Get comprehensive permission system statistics
+    🔄 RBAC-ENABLED: Get comprehensive permission system statistics
     
-    **Required Permission:** `permission.read`
+    **Required Permission:** `permission.view`
     
     Returns system-wide statistics about permission usage.
+    Shows distribution across 108 permissions and 12 categories.
     """
     try:
         db = get_database()

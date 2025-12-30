@@ -1,17 +1,26 @@
-# app/routers/team.py - SIMPLIFIED TEAM MANAGEMENT (NO HIERARCHY)
-# Manages named teams with team leads and members
+# app/routers/team.py - RBAC-ENABLED
+# Simplified Team Management with 108-Permission RBAC Integration
+# 🔄 UPDATED: Manual permission checks replaced with dependency-based RBAC
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from typing import Optional, List, Dict, Any
 import logging
 from pydantic import BaseModel, EmailStr
-from ..utils.dependencies import get_current_active_user, get_admin_user
+from ..utils.dependencies import get_user_with_permission, get_current_active_user
 from ..services.team_service import team_service
-from ..services.rbac_service import rbac_service
+from ..services.rbac_service import RBACService
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/team", tags=["Team Management"])
+
+# Initialize RBAC service
+rbac_service = RBACService()
+
+
+# ============================================================================
+# REQUEST MODELS
+# ============================================================================
 
 class AddMemberRequest(BaseModel):
     user_email: EmailStr
@@ -19,8 +28,9 @@ class AddMemberRequest(BaseModel):
 class SetTeamLeadRequest(BaseModel):
     new_lead_email: EmailStr
 
+
 # ============================================================================
-# GET MY TEAM (SIMPLIFIED)
+# GET MY TEAM (NO PERMISSION REQUIRED - PERSONAL DATA)
 # ============================================================================
 
 @router.get("/my-team")
@@ -30,13 +40,15 @@ async def get_my_team(
     """
     Get current user's team information (simplified - no hierarchy)
     
+    **Required Permission:** None (personal data)
+    
     **Returns:**
     - Team details if user is in a team
     - Team members list
     - User's role in team (team_lead or member)
     
     **Example Response:**
-```json
+    ```json
     {
         "success": true,
         "user": {
@@ -54,7 +66,7 @@ async def get_my_team(
         },
         "team_members": [...]
     }
-```
+    ```
     """
     try:
         user_email = current_user.get("email")
@@ -117,7 +129,7 @@ async def get_my_team(
 
 
 # ============================================================================
-# CREATE TEAM
+# RBAC-ENABLED CREATE TEAM
 # ============================================================================
 
 @router.post("/create")
@@ -126,12 +138,12 @@ async def create_team(
     team_lead_email: str,
     department: Optional[str] = None,
     description: Optional[str] = None,
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("team.add"))
 ):
     """
-    Create a new team
+    🔄 RBAC-ENABLED: Create a new team
     
-    **Required Permission:** Admin only
+    **Required Permission:** `team.add`
     
     **Parameters:**
     - name: Team name (must be unique)
@@ -140,17 +152,17 @@ async def create_team(
     - description: Optional description
     
     **Example Request:**
-```json
+    ```json
     {
         "name": "Sales Team Alpha",
         "team_lead_email": "john@company.com",
         "department": "Sales",
         "description": "Enterprise sales team"
     }
-```
+    ```
     
     **Example Response:**
-```json
+    ```json
     {
         "success": true,
         "message": "Team created successfully",
@@ -162,22 +174,10 @@ async def create_team(
             "member_count": 1
         }
     }
-```
+    ```
     """
     try:
         logger.info(f"Creating team '{name}' with lead {team_lead_email}")
-        
-        # Check permission
-        has_permission = await rbac_service.check_permission(
-            user=current_user,
-            permission_code="team.create"
-        )
-        
-        if not has_permission:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You don't have permission to create teams"
-            )
         
         # Create team
         team = await team_service.create_team(
@@ -211,7 +211,7 @@ async def create_team(
 
 
 # ============================================================================
-# LIST TEAMS
+# RBAC-ENABLED LIST TEAMS
 # ============================================================================
 
 @router.get("/list")
@@ -220,12 +220,12 @@ async def list_teams(
     department: Optional[str] = Query(None, description="Filter by department"),
     skip: int = Query(0, ge=0, description="Pagination skip"),
     limit: int = Query(100, ge=1, le=500, description="Pagination limit"),
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("team.view"))
 ):
     """
-    List all teams with optional filters
+    🔄 RBAC-ENABLED: List all teams with optional filters
     
-    **Required Permission:** `team.view_structure` or admin
+    **Required Permission:** `team.view`
     
     **Query Parameters:**
     - include_inactive: Include inactive teams (default: false)
@@ -234,7 +234,7 @@ async def list_teams(
     - limit: Pagination limit (default: 100, max: 500)
     
     **Example Response:**
-```json
+    ```json
     {
         "success": true,
         "teams": [
@@ -247,22 +247,10 @@ async def list_teams(
         ],
         "total_count": 10
     }
-```
+    ```
     """
     try:
         logger.info(f"Listing teams (inactive: {include_inactive}, dept: {department})")
-        
-        # Check permission
-        has_permission = await rbac_service.check_permission(
-            user=current_user,
-            permission_code="team.view_structure"
-        )
-        
-        if not has_permission:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You don't have permission to view teams"
-            )
         
         # Get teams
         teams = await team_service.list_teams(
@@ -295,21 +283,21 @@ async def list_teams(
 
 
 # ============================================================================
-# GET TEAM DETAILS
+# RBAC-ENABLED GET TEAM DETAILS
 # ============================================================================
 
 @router.get("/{team_id}")
 async def get_team(
     team_id: str,
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("team.view"))
 ):
     """
-    Get team details by ID
+    🔄 RBAC-ENABLED: Get team details by ID
     
-    **Required Permission:** `team.view_structure` or admin
+    **Required Permission:** `team.view`
     
     **Example Response:**
-```json
+    ```json
     {
         "success": true,
         "team": {
@@ -321,22 +309,10 @@ async def get_team(
             "member_count": 5
         }
     }
-```
+    ```
     """
     try:
         logger.info(f"Getting team details for: {team_id}")
-        
-        # Check permission
-        has_permission = await rbac_service.check_permission(
-            user=current_user,
-            permission_code="team.view_structure"
-        )
-        
-        if not has_permission:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You don't have permission to view team details"
-            )
         
         # Get team
         team = await team_service.get_team(team_id)
@@ -365,7 +341,7 @@ async def get_team(
 
 
 # ============================================================================
-# UPDATE TEAM
+# RBAC-ENABLED UPDATE TEAM
 # ============================================================================
 
 @router.put("/{team_id}")
@@ -375,36 +351,24 @@ async def update_team(
     description: Optional[str] = None,
     department: Optional[str] = None,
     is_active: Optional[bool] = None,
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("team.update"))
 ):
     """
-    Update team information
+    🔄 RBAC-ENABLED: Update team information
     
-    **Required Permission:** Admin only
+    **Required Permission:** `team.update`
     
     **Example Request:**
-```json
+    ```json
     {
         "name": "Sales Team Beta",
         "description": "Updated description",
         "department": "Sales"
     }
-```
+    ```
     """
     try:
         logger.info(f"Updating team: {team_id}")
-        
-        # Check permission
-        has_permission = await rbac_service.check_permission(
-            user=current_user,
-            permission_code="team.update"
-        )
-        
-        if not has_permission:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You don't have permission to update teams"
-            )
         
         # Update team
         team = await team_service.update_team(
@@ -441,35 +405,23 @@ async def update_team(
 
 
 # ============================================================================
-# DELETE TEAM
+# RBAC-ENABLED DELETE TEAM
 # ============================================================================
 
 @router.delete("/{team_id}")
 async def delete_team(
     team_id: str,
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("team.delete"))
 ):
     """
-    Delete a team (soft delete - marks as inactive and removes members)
+    🔄 RBAC-ENABLED: Delete a team (soft delete - marks as inactive and removes members)
     
-    **Required Permission:** Admin only
+    **Required Permission:** `team.delete`
     
     **Warning:** This will remove all members from the team!
     """
     try:
         logger.info(f"Deleting team: {team_id}")
-        
-        # Check permission
-        has_permission = await rbac_service.check_permission(
-            user=current_user,
-            permission_code="team.delete"
-        )
-        
-        if not has_permission:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You don't have permission to delete teams"
-            )
         
         # Delete team
         success = await team_service.delete_team(team_id)
@@ -503,22 +455,22 @@ async def delete_team(
 
 
 # ============================================================================
-# GET TEAM MEMBERS
+# RBAC-ENABLED GET TEAM MEMBERS
 # ============================================================================
 
 @router.get("/{team_id}/members")
 async def get_team_members(
     team_id: str,
     include_inactive: bool = Query(False, description="Include inactive users"),
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("team.view"))
 ):
     """
-    Get all members of a team
+    🔄 RBAC-ENABLED: Get all members of a team
     
-    **Required Permission:** `team.view_structure` or admin
+    **Required Permission:** `team.view`
     
     **Example Response:**
-```json
+    ```json
     {
         "success": true,
         "team_id": "team_123",
@@ -532,22 +484,10 @@ async def get_team_members(
         ],
         "total_count": 5
     }
-```
+    ```
     """
     try:
         logger.info(f"Getting team members for: {team_id}")
-        
-        # Check permission
-        has_permission = await rbac_service.check_permission(
-            user=current_user,
-            permission_code="team.view_structure"
-        )
-        
-        if not has_permission:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You don't have permission to view team members"
-            )
         
         # Get members
         members = await team_service.get_team_members(
@@ -581,19 +521,19 @@ async def get_team_members(
 
 
 # ============================================================================
-# ADD MEMBER TO TEAM
+# RBAC-ENABLED ADD MEMBER TO TEAM
 # ============================================================================
 
 @router.post("/{team_id}/members/add")
 async def add_team_member(
     team_id: str,
     request: AddMemberRequest,
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("team.manage_members"))
 ):
     """
-    Add a member to a team
+    🔄 RBAC-ENABLED: Add a member to a team
     
-    **Required Permission:** Admin only
+    **Required Permission:** `team.manage_members`
     
     **Business Rules:**
     - User must exist and be active
@@ -601,27 +541,15 @@ async def add_team_member(
     - User cannot already be in this team
     
     **Example Request:**
-```json
+    ```json
     {
         "user_email": "newmember@company.com"
     }
-```
+    ```
     """
     try:
         user_email = request.user_email
         logger.info(f"Adding {user_email} to team {team_id}")
-        
-        # Check permission
-        has_permission = await rbac_service.check_permission(
-            user=current_user,
-            permission_code="team.manage_members"
-        )
-        
-        if not has_permission:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You don't have permission to manage team members"
-            )
         
         # Add member
         team = await team_service.add_member(
@@ -655,46 +583,34 @@ async def add_team_member(
 
 
 # ============================================================================
-# REMOVE MEMBER FROM TEAM
+# RBAC-ENABLED REMOVE MEMBER FROM TEAM
 # ============================================================================
 
 @router.post("/{team_id}/members/remove")
 async def remove_team_member(
     team_id: str,
     request: AddMemberRequest,
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("team.manage_members"))
 ):
     """
-    Remove a member from a team
+    🔄 RBAC-ENABLED: Remove a member from a team
     
-    **Required Permission:** Admin only
+    **Required Permission:** `team.manage_members`
     
     **Business Rules:**
     - User must be in the team
     - Cannot remove team lead (change team lead first)
     
     **Example Request:**
-```json
+    ```json
     {
         "user_email": "member@company.com"
     }
-```
+    ```
     """
     try:
         user_email = request.user_email
         logger.info(f"Removing {user_email} from team {team_id}")
-        
-        # Check permission
-        has_permission = await rbac_service.check_permission(
-            user=current_user,
-            permission_code="team.manage_members"
-        )
-        
-        if not has_permission:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You don't have permission to manage team members"
-            )
         
         # Remove member
         team = await team_service.remove_member(
@@ -728,45 +644,34 @@ async def remove_team_member(
 
 
 # ============================================================================
-# SET TEAM LEAD
+# RBAC-ENABLED SET TEAM LEAD
 # ============================================================================
 
 @router.post("/{team_id}/lead/set")
 async def set_team_lead(
     team_id: str,
     request: SetTeamLeadRequest,
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("team.assign_leads"))
 ):
     """
-    Change team lead
+    🔄 RBAC-ENABLED: Change team lead
     
-    **Required Permission:** Admin only
+    **Required Permission:** `team.assign_leads`
     
     **Business Rules:**
     - New lead must be a member of the team
     - Old lead will be demoted to regular member
     
     **Example Request:**
-```json
+    ```json
     {
         "new_lead_email": "newlead@company.com"
     }
-```
+    ```
     """
     try:
+        new_lead_email = request.new_lead_email  # 🐛 FIX: Extract from request object
         logger.info(f"Setting new team lead {new_lead_email} for team {team_id}")
-        
-        # Check permission
-        has_permission = await rbac_service.check_permission(
-            user=current_user,
-            permission_code="team.manage_members"
-        )
-        
-        if not has_permission:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You don't have permission to change team lead"
-            )
         
         # Set team lead
         team = await team_service.set_team_lead(

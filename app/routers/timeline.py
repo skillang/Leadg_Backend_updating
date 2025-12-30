@@ -1,15 +1,22 @@
-# app/routers/timeline.py - FIXED VERSION
+# app/routers/timeline.py - RBAC-Enabled Timeline Router
+# 🔄 UPDATED: Role checks replaced with RBAC permission checks (108 permissions)
+# ✅ All endpoints now use permission-based access control
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta
 from app.decorators.timezone_decorator import convert_activity_dates, convert_dates_to_ist
-from app.utils.dependencies import get_current_user
+from app.utils.dependencies import get_current_active_user, get_user_with_permission
+from app.services.rbac_service import RBACService
 from app.config.database import get_database
 from bson import ObjectId
 import logging
 
 router = APIRouter(prefix="/timeline", tags=["timeline"])
 logger = logging.getLogger(__name__)
+
+# Initialize RBAC service
+rbac_service = RBACService()
 
 # Timeline activity types (content-focused)
 TIMELINE_CONTENT_ACTIVITIES = [
@@ -31,6 +38,38 @@ TIMELINE_CONTENT_ACTIVITIES = [
     "note_deleted"
 ]
 
+
+# =====================================
+# RBAC HELPER FUNCTIONS
+# =====================================
+
+async def check_lead_access_for_timeline(lead_id: str, user_email: str, current_user: Dict) -> bool:
+    """
+    Check if user has access to a lead (for timeline operations)
+    
+    Returns True if:
+    - User has timeline.view_all permission, OR
+    - Lead is assigned to user (primary or co-assignee)
+    """
+    # Check if user has view_all permission
+    has_view_all = await rbac_service.check_permission(current_user, "timeline.view_all")
+    if has_view_all:
+        return True
+    
+    # Check if user has access to the lead
+    db = get_database()
+    lead = await db.leads.find_one({"lead_id": lead_id})
+    
+    if not lead:
+        return False
+    
+    # Check if user is assigned to the lead (primary or co-assignee)
+    assigned_to = lead.get("assigned_to")
+    co_assignees = lead.get("co_assignees", [])
+    
+    return user_email in ([assigned_to] + co_assignees)
+
+
 def convert_objectid_to_str(obj):
     """Recursively convert ObjectId to string in any data structure"""
     if isinstance(obj, ObjectId):
@@ -42,26 +81,27 @@ def convert_objectid_to_str(obj):
     else:
         return obj
 
+
+# =====================================
+# DEBUG ENDPOINTS (No auth required)
+# =====================================
+
 @router.get("/debug/test/{lead_id}")
 async def debug_timeline_data(lead_id: str):
     """
-    Debug endpoint to test your data structure - FIXED ObjectId serialization
+    Debug endpoint to test your data structure - No authentication required
     """
     try:
         db = get_database()
         
         # Test the exact query
-        query = {
-            "lead_id": lead_id,
-            # "activity_type": {"$in": TIMELINE_CONTENT_ACTIVITIES}
-        }
+        query = {"lead_id": lead_id}
         
         count = await db.lead_activities.count_documents(query)
         
         # Get sample activities and convert ObjectIds to strings
         sample = []
         async for activity in db.lead_activities.find(query).limit(3):
-            # Convert ObjectIds to strings for JSON serialization
             converted_activity = convert_objectid_to_str(activity)
             sample.append(converted_activity)
         
@@ -93,6 +133,7 @@ async def debug_timeline_data(lead_id: str):
             "error_type": type(e).__name__
         }
 
+
 async def get_activity_types_for_lead(db, lead_id: str):
     """Get all activity types for a specific lead"""
     try:
@@ -114,35 +155,65 @@ async def get_activity_types_for_lead(db, lead_id: str):
         logger.error(f"Error getting activity types: {str(e)}")
         return []
 
+
+@router.get("/activity-types")
+@convert_dates_to_ist()
+async def get_timeline_activity_types():
+    """
+    Get available activity types for timeline filtering - No authentication required
+    """
+    return {
+        "timeline_activities": TIMELINE_CONTENT_ACTIVITIES,
+        "categories": {
+            "tasks": [act for act in TIMELINE_CONTENT_ACTIVITIES if act.startswith("task_")],
+            "documents": [act for act in TIMELINE_CONTENT_ACTIVITIES if act.startswith("document_")],
+            "notes": [act for act in TIMELINE_CONTENT_ACTIVITIES if act.startswith("note_")]
+        },
+        "display_info": get_all_activity_display_info()
+    }
+
+
+# =====================================
+# RBAC-ENABLED TIMELINE ENDPOINTS
+# =====================================
+
 @router.get("/leads/{lead_id}")
 @convert_dates_to_ist(['timestamp', 'created_at', 'updated_at'])
 async def get_lead_timeline(
     lead_id: str,
-    current_user: dict = Depends(get_current_user),
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(20, ge=1, le=100, description="Items per page"),
     activity_type: Optional[str] = Query(None, description="Filter by activity type"),
     date_from: Optional[str] = Query(None, description="Start date (ISO format)"),
     date_to: Optional[str] = Query(None, description="End date (ISO format)"),
-    search: Optional[str] = Query(None, description="Search in descriptions")
+    search: Optional[str] = Query(None, description="Search in descriptions"),
+    current_user: dict = Depends(get_user_with_permission("timeline.view"))
 ):
     """
-    Get Timeline for a specific lead - CONTENT ACTIVITIES ONLY
+    🔄 RBAC-ENABLED: Get Timeline for a specific lead - CONTENT ACTIVITIES ONLY
+    
+    **Required Permission:**
+    - `timeline.view` - View timeline for assigned leads
+    - `timeline.view_all` - View all timelines (admin)
     """
     try:
-        # Check lead access permissions
-        await check_lead_access(lead_id, current_user)
+        # Check if user has access to this lead
+        user_email = current_user.get("email")
+        has_access = await check_lead_access_for_timeline(lead_id, user_email, current_user)
+        
+        if not has_access:
+            raise HTTPException(
+                status_code=403,
+                detail="You don't have permission to view timeline for this lead"
+            )
         
         db = get_database()
         
-        # Build base query - ONLY content activities for this lead
-        query = {
-            "lead_id": lead_id,
-            # "activity_type": {"$in": TIMELINE_CONTENT_ACTIVITIES}
-        }
+        # Build base query - content activities for this lead
+        query = {"lead_id": lead_id}
         
         # Add activity type filter
-        if activity_type :
+        if activity_type:
             query["activity_type"] = activity_type
         
         # Add date range filter
@@ -173,7 +244,6 @@ async def get_lead_timeline(
         # Get activities with sorting (newest first)
         activities = []
         async for activity in db.lead_activities.find(query).sort("created_at", -1).skip(skip).limit(limit):
-            # Don't format dates manually - let decorator handle it
             clean_activity = convert_objectid_to_str(activity)
             # Add timestamp field if it doesn't exist (use created_at)
             if 'timestamp' not in clean_activity and 'created_at' in clean_activity:
@@ -210,18 +280,29 @@ async def get_lead_timeline(
         logger.error(f"Timeline error for lead {lead_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Timeline fetch failed: {str(e)}")
 
+
 @router.get("/leads/{lead_id}/stats")
 @convert_activity_dates()
 async def get_timeline_stats(
     lead_id: str,
-    current_user: dict = Depends(get_current_user),
-    days: int = Query(30, ge=1, le=365, description="Stats for last N days")
+    days: int = Query(30, ge=1, le=365, description="Stats for last N days"),
+    current_user: dict = Depends(get_user_with_permission("timeline.view"))
 ):
     """
-    Get timeline statistics for a lead
+    🔄 RBAC-ENABLED: Get timeline statistics for a lead
+    
+    **Required Permission:** `timeline.view`
     """
     try:
-        await check_lead_access(lead_id, current_user)
+        # Check if user has access to this lead
+        user_email = current_user.get("email")
+        has_access = await check_lead_access_for_timeline(lead_id, user_email, current_user)
+        
+        if not has_access:
+            raise HTTPException(
+                status_code=403,
+                detail="You don't have permission to view stats for this lead"
+            )
         
         db = get_database()
         
@@ -233,7 +314,6 @@ async def get_timeline_stats(
             {
                 "$match": {
                     "lead_id": lead_id,
-                    # "activity_type": {"$in": TIMELINE_CONTENT_ACTIVITIES},
                     "created_at": {"$gte": start_date}
                 }
             },
@@ -285,25 +365,14 @@ async def get_timeline_stats(
         logger.error(f"Timeline stats error for lead {lead_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/activity-types")
-@convert_dates_to_ist()
-async def get_timeline_activity_types():
-    """
-    Get available activity types for timeline filtering
-    """
-    return {
-        "timeline_activities": TIMELINE_CONTENT_ACTIVITIES,
-        "categories": {
-            "tasks": [act for act in TIMELINE_CONTENT_ACTIVITIES if act.startswith("task_")],
-            "documents": [act for act in TIMELINE_CONTENT_ACTIVITIES if act.startswith("document_")],
-            "notes": [act for act in TIMELINE_CONTENT_ACTIVITIES if act.startswith("note_")]
-        },
-        "display_info": get_all_activity_display_info()
-    }
+
+# =====================================
+# DISPLAY HELPER FUNCTIONS
+# =====================================
 
 def format_timeline_activity(activity: dict) -> dict:
     """
-    Format activity for timeline display - FIXED ObjectId handling
+    Format activity for timeline display
     """
     activity_type = activity["activity_type"]
     
@@ -320,12 +389,12 @@ def format_timeline_activity(activity: dict) -> dict:
         "description": activity["description"],
         "created_by_name": activity.get("created_by_name", "Unknown User"),
         "created_by_id": str(activity["created_by"]) if activity.get("created_by") else None,
-        "timestamp": created_at,  # ← Let the decorator handle this
-        "created_at": created_at,  # ← Let the decorator handle this
+        "timestamp": created_at,
+        "created_at": created_at,
         "date_display": format_date_display(created_at),
         "time_display": format_time_display(created_at),
         "is_system_generated": activity.get("is_system_generated", True),
-        "metadata": convert_objectid_to_str(activity.get("metadata", {})),  # Convert ObjectIds in metadata
+        "metadata": convert_objectid_to_str(activity.get("metadata", {})),
         "display": {
             "icon": display_info["icon"],
             "color": display_info["color"],
@@ -335,6 +404,7 @@ def format_timeline_activity(activity: dict) -> dict:
     }
     
     return formatted
+
 
 def get_activity_display_info(activity_type: str) -> dict:
     """
@@ -421,12 +491,14 @@ def get_activity_display_info(activity_type: str) -> dict:
         "priority": 99
     })
 
+
 def get_all_activity_display_info() -> dict:
     """
     Get display info for all activity types
     """
     return {activity_type: get_activity_display_info(activity_type) 
             for activity_type in TIMELINE_CONTENT_ACTIVITIES}
+
 
 def format_date_display(dt: datetime) -> str:
     """
@@ -447,66 +519,9 @@ def format_date_display(dt: datetime) -> str:
     else:
         return dt.strftime("%b %d, %Y")
 
+
 def format_time_display(dt: datetime) -> str:
     """
     Format time for display
     """
     return dt.strftime("%I:%M %p")
-
-async def check_lead_access(lead_id: str, current_user: dict):
-    """
-    Check if user has access to this lead - FIXED for co-assignees
-    """
-    db = get_database()
-    
-    # Get lead
-    lead = await db.leads.find_one({"lead_id": lead_id})
-    if not lead:
-        raise HTTPException(status_code=404, detail="Lead not found")
-    
-    # Check permissions
-    user_role = current_user.get("role", "user")
-    user_email = current_user.get("email") or str(current_user.get("user_id") or current_user.get("_id"))
-    
-    # ✅ FIXED: Check BOTH assigned_to AND co_assignees
-    if user_role != "admin":
-        lead_assigned_to = lead.get("assigned_to", "")
-        lead_co_assignees = lead.get("co_assignees", [])  # 🆕 ADDED
-        
-        # Check if user has access (primary assignee or co-assignee)
-        has_lead_access = (
-            lead_assigned_to == user_email or 
-            user_email in lead_co_assignees
-        )
-        
-        if not has_lead_access:
-            raise HTTPException(
-                status_code=403, 
-                detail="Not authorized to access this lead"
-            )
-    
-    return lead
-    """
-    Check if user has access to this lead
-    """
-    db = get_database()
-    
-    # Get lead
-    lead = await db.leads.find_one({"lead_id": lead_id})
-    if not lead:
-        raise HTTPException(status_code=404, detail="Lead not found")
-    
-    # Check permissions
-    user_role = current_user.get("role", "user")
-    user_email = current_user.get("email") or str(current_user.get("user_id") or current_user.get("_id"))
-    
-    if user_role != "admin":
-        # Regular users can only access leads assigned to them
-        lead_assigned_to = lead.get("assigned_to", "")
-        if lead_assigned_to != user_email:
-            raise HTTPException(
-                status_code=403, 
-                detail="Not authorized to access this lead"
-            )
-    
-    return lead

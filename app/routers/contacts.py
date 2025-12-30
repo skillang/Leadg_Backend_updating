@@ -1,5 +1,5 @@
 # app/routers/contacts.py - RBAC-Enabled Contact Management Router
-# 🔄 UPDATED: Role checks replaced with RBAC permission checks
+# 🔄 UPDATED: Role checks replaced with RBAC permission checks (108 permissions)
 # ✅ All endpoints now use permission-based access control
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query  
@@ -9,12 +9,12 @@ from datetime import datetime
 
 # Services
 from app.services.contact_service import contact_service
-from app.services.rbac_service import RBACService  # 🆕 NEW
+from app.services.rbac_service import RBACService
 
 # Dependencies
 from app.utils.dependencies import (
     get_current_active_user,
-    get_user_with_permission  # 🆕 NEW - RBAC dependency
+    get_user_with_permission
 )
 
 # Decorators
@@ -37,25 +37,25 @@ logger = logging.getLogger(__name__)
 # Create router
 router = APIRouter()
 
-# 🆕 Initialize RBAC service
+# Initialize RBAC service
 rbac_service = RBACService()
 
 
 # ============================================================================
-# 🆕 RBAC HELPER FUNCTIONS
+# RBAC HELPER FUNCTIONS
 # ============================================================================
 
 async def check_contact_access(contact: Dict, user_email: str, current_user: Dict) -> bool:
     """
-    🆕 Check if user has access to a specific contact using RBAC
+    Check if user has access to a specific contact using RBAC
     
     Returns True if:
-    - User has contact.read_all permission, OR
+    - User has contact.view_all permission, OR
     - Contact's lead is assigned to user (primary or co-assignee)
     """
-    # Check if user has read_all permission
-    has_read_all = await rbac_service.check_permission(current_user, "contact.read_all")
-    if has_read_all:
+    # Check if user has view_all permission
+    has_view_all = await rbac_service.check_permission(current_user, "contact.view_all")
+    if has_view_all:
         return True
     
     # Check if user has access to the contact's lead
@@ -78,11 +78,11 @@ async def check_contact_access(contact: Dict, user_email: str, current_user: Dic
 
 async def check_lead_access_for_contact(lead_id: str, user_email: str, current_user: Dict) -> bool:
     """
-    🆕 Check if user has access to a lead (for contact operations)
+    Check if user has access to a lead (for contact operations)
     """
-    # Check if user has read_all permission
-    has_read_all = await rbac_service.check_permission(current_user, "contact.read_all")
-    if has_read_all:
+    # Check if user has view_all permission
+    has_view_all = await rbac_service.check_permission(current_user, "contact.view_all")
+    if has_view_all:
         return True
     
     # Check if user has access to the lead
@@ -100,20 +100,19 @@ async def check_lead_access_for_contact(lead_id: str, user_email: str, current_u
 
 
 # ============================================================================
-# 🔄 RBAC-ENABLED CONTACT CRUD OPERATIONS
+# RBAC-ENABLED CONTACT CRUD OPERATIONS
 # ============================================================================
 
 @router.post("/leads/{lead_id}/contacts", status_code=status.HTTP_201_CREATED)
 async def create_contact(
     lead_id: str,
     contact_data: ContactCreate,
-    # 🔄 UPDATED: Use RBAC permission check
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("contact.create"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("contact.add"))
 ):
     """
     🔄 RBAC-ENABLED: Create a new contact for a specific lead
     
-    **Required Permission:** `contact.create`
+    **Required Permission:** `contact.add`
     
     Features:
     - Auto-logs activity to lead_activities collection
@@ -121,7 +120,7 @@ async def create_contact(
     - Permission checking for lead access
     """
     try:
-        # 🆕 Check if user has access to this lead
+        # Check if user has access to this lead
         user_email = current_user.get("email")
         has_access = await check_lead_access_for_contact(lead_id, user_email, current_user)
         
@@ -155,20 +154,19 @@ async def get_lead_contacts(
     lead_id: str,
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
-    # 🔄 UPDATED: Use RBAC permission check
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("contact.read_own"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("contact.view"))
 ):
     """
     🔄 RBAC-ENABLED: Get all contacts for a specific lead with pagination
     
     **Required Permission:**
-    - `contact.read_own` - See contacts for assigned leads
-    - `contact.read_all` - See all contacts (admin)
+    - `contact.view` - See contacts for assigned leads
+    - `contact.view_all` - See all contacts (admin)
     
     Returns contacts with summary statistics and lead info.
     """
     try:
-        # 🆕 Check if user has access to this lead
+        # Check if user has access to this lead
         user_email = current_user.get("email")
         has_access = await check_lead_access_for_contact(lead_id, user_email, current_user)
         
@@ -217,7 +215,6 @@ async def get_lead_contacts(
 @router.patch("/{contact_id}/primary")
 async def set_primary_contact(
     contact_id: str,
-    # 🔄 UPDATED: Use RBAC permission check
     current_user: Dict[str, Any] = Depends(get_user_with_permission("contact.update"))
 ):
     """
@@ -235,7 +232,7 @@ async def set_primary_contact(
         if not contact:
             raise HTTPException(status_code=404, detail="Contact not found")
         
-        # 🆕 Check if user has access to this contact
+        # Check if user has access to this contact
         user_email = current_user.get("email")
         has_access = await check_contact_access(contact, user_email, current_user)
         
@@ -267,15 +264,14 @@ async def set_primary_contact(
 @convert_dates_to_ist()
 async def get_contact(
     contact_id: str,
-    # 🔄 UPDATED: Use RBAC permission check
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("contact.read_own"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("contact.view"))
 ):
     """
     🔄 RBAC-ENABLED: Get a specific contact by ID
     
     **Required Permission:**
-    - `contact.read_own` - See contacts for assigned leads
-    - `contact.read_all` - See all contacts (admin)
+    - `contact.view` - See contacts for assigned leads
+    - `contact.view_all` - See all contacts (admin)
     
     Includes all contact details and linked leads.
     """
@@ -287,7 +283,7 @@ async def get_contact(
         if not contact:
             raise HTTPException(status_code=404, detail="Contact not found")
         
-        # 🆕 Check if user has access to this contact
+        # Check if user has access to this contact
         user_email = current_user.get("email")
         has_access = await check_contact_access(contact, user_email, current_user)
         
@@ -319,7 +315,6 @@ async def get_contact(
 async def update_contact(
     contact_id: str,
     contact_data: ContactUpdate,
-    # 🔄 UPDATED: Use RBAC permission check
     current_user: Dict[str, Any] = Depends(get_user_with_permission("contact.update"))
 ):
     """
@@ -340,7 +335,7 @@ async def update_contact(
         if not contact:
             raise HTTPException(status_code=404, detail="Contact not found")
         
-        # 🆕 Check if user has access to this contact
+        # Check if user has access to this contact
         user_email = current_user.get("email")
         has_access = await check_contact_access(contact, user_email, current_user)
         
@@ -371,7 +366,6 @@ async def update_contact(
 @router.delete("/{contact_id}")
 async def delete_contact(
     contact_id: str,
-    # 🔄 UPDATED: Use RBAC permission check
     current_user: Dict[str, Any] = Depends(get_user_with_permission("contact.delete"))
 ):
     """
@@ -391,7 +385,7 @@ async def delete_contact(
         if not contact:
             raise HTTPException(status_code=404, detail="Contact not found")
         
-        # 🆕 Check if user has access to this contact
+        # Check if user has access to this contact
         user_email = current_user.get("email")
         has_access = await check_contact_access(contact, user_email, current_user)
         
@@ -426,26 +420,25 @@ async def delete_contact(
 @router.get("/stats")
 @convert_dates_to_ist()
 async def get_contact_statistics(
-    # 🔄 UPDATED: Use RBAC permission check
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("contact.read_own"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("contact.view"))
 ):
     """
     🔄 RBAC-ENABLED: Get contact statistics
     
-    **Required Permission:** `contact.read_own`
+    **Required Permission:** `contact.view`
     
     Statistics are filtered based on user's permission level:
-    - contact.read_own: See stats for own lead contacts
-    - contact.read_all: See all contact stats
+    - contact.view: See stats for own lead contacts
+    - contact.view_all: See all contact stats
     """
     try:
         db = get_database()
         user_email = current_user.get("email")
         
         # Build query based on permissions
-        has_read_all = await rbac_service.check_permission(current_user, "contact.read_all")
+        has_view_all = await rbac_service.check_permission(current_user, "contact.view_all")
         
-        if has_read_all:
+        if has_view_all:
             # Admin - see all contacts
             base_query = {}
         else:
@@ -493,7 +486,7 @@ async def get_contact_statistics(
                 "contacts_by_role": contacts_by_role,
                 "contacts_by_relationship": contacts_by_relationship,
                 "user": user_email,
-                "scope": "all" if has_read_all else "own_leads"
+                "scope": "all" if has_view_all else "own_leads"
             },
             "timestamp": datetime.utcnow().isoformat()
         }
@@ -572,25 +565,25 @@ async def health_check():
     return {
         "status": "healthy",
         "service": "contact_service",
-        "rbac_enabled": True,  # 🆕 Indicate RBAC is active
+        "rbac_enabled": True,
         "timestamp": datetime.utcnow().isoformat(),
-        "version": "2.0.0",  # 🔄 Version bump for RBAC
+        "version": "2.0.0",
         "endpoints": {
-            "create_contact": "POST /leads/{lead_id}/contacts [contact.create]",
-            "get_lead_contacts": "GET /leads/{lead_id}/contacts [contact.read_own]", 
-            "get_contact": "GET /{contact_id} [contact.read_own]",
+            "create_contact": "POST /leads/{lead_id}/contacts [contact.add]",
+            "get_lead_contacts": "GET /leads/{lead_id}/contacts [contact.view]", 
+            "get_contact": "GET /{contact_id} [contact.view]",
             "update_contact": "PUT /{contact_id} [contact.update]",
             "delete_contact": "DELETE /{contact_id} [contact.delete]",
             "set_primary_contact": "PATCH /{contact_id}/primary [contact.update]",
-            "get_statistics": "GET /stats [contact.read_own]",
+            "get_statistics": "GET /stats [contact.view]",
             "debug_test": "GET /debug/test [no auth]",
             "test_methods": "GET /debug/test-method [no auth]",
             "health_check": "GET /health [no auth]"
         },
         "required_permissions": [
-            "contact.create",
-            "contact.read_own",
-            "contact.read_all",
+            "contact.add",
+            "contact.view",
+            "contact.view_all",
             "contact.update",
             "contact.delete"
         ]

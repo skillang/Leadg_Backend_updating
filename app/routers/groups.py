@@ -1,6 +1,10 @@
-# app/routers/groups.py
+# app/routers/groups.py - RBAC-Enabled Lead Group Management
+# 🔄 UPDATED: Role checks replaced with RBAC permission checks (108 permissions)
+# ✅ All endpoints now use permission-based access control
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status, Body
 from app.decorators.timezone_decorator import convert_dates_to_ist
+from app.services.rbac_service import RBACService
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 from bson import ObjectId
@@ -10,38 +14,39 @@ from ..models.group import (
     GroupCreate, GroupUpdate, GroupAddLeads, GroupRemoveLeads,
     GroupResponse, GroupWithLeadsResponse, GroupListResponse, GroupDeleteResponse
 )
-from ..utils.dependencies import get_admin_user, get_current_active_user
+from ..utils.dependencies import get_current_active_user, get_user_with_permission
 from ..config.database import get_database
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Groups"])
 
-# ============================================================================
+# Initialize RBAC service
+rbac_service = RBACService()
+
+
+# =====================================
 # HELPER FUNCTIONS
-# ============================================================================
+# =====================================
 
 async def generate_group_id(db) -> str:
     """Generate unique group ID like GRP-001, GRP-002, etc."""
     try:
-        # Find the last created group
         last_group = await db.lead_groups.find_one(
             sort=[("created_at", -1)]
         )
         
         if last_group and "group_id" in last_group:
-            # Extract number from last group_id (e.g., "GRP-001" -> 1)
             last_num = int(last_group["group_id"].split("-")[1])
             new_num = last_num + 1
         else:
             new_num = 1
         
-        # Format with leading zeros (GRP-001, GRP-002, etc.)
         return f"GRP-{new_num:03d}"
         
     except Exception as e:
         logger.error(f"Error generating group ID: {e}")
-        # Fallback to timestamp-based ID
         return f"GRP-{int(datetime.utcnow().timestamp())}"
+
 
 async def validate_lead_ids(db, lead_ids: List[str]) -> tuple[bool, List[str]]:
     """
@@ -52,7 +57,6 @@ async def validate_lead_ids(db, lead_ids: List[str]) -> tuple[bool, List[str]]:
         if not lead_ids:
             return True, []
         
-        # Find all leads with these IDs (removed status filter)
         valid_leads = await db.leads.find(
             {"lead_id": {"$in": lead_ids}}
         ).to_list(length=None)
@@ -65,6 +69,7 @@ async def validate_lead_ids(db, lead_ids: List[str]) -> tuple[bool, List[str]]:
     except Exception as e:
         logger.error(f"Error validating lead IDs: {e}")
         return False, lead_ids
+
 
 async def get_user_name_from_id(db, user_id: str) -> str:
     """
@@ -87,18 +92,21 @@ async def get_user_name_from_id(db, user_id: str) -> str:
         logger.error(f"Error getting user name for ID {user_id}: {e}")
         return "Unknown User"
 
-# ============================================================================
-# CREATE GROUP
-# ============================================================================
+
+# =====================================
+# RBAC-ENABLED GROUP CRUD OPERATIONS
+# =====================================
 
 @router.post("/", response_model=GroupResponse, status_code=status.HTTP_201_CREATED)
 @convert_dates_to_ist()
 async def create_group(
     group_data: GroupCreate,
-    current_user: Dict[str, Any] = Depends(get_current_active_user)  # ✅ Changed to allow all users
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("group.add"))
 ):
     """
-    Create a new group (All users can create)
+    🔄 RBAC-ENABLED: Create a new group
+    
+    **Required Permission:** `group.add`
     
     - **name**: Group name (required, unique)
     - **description**: Optional description
@@ -139,7 +147,7 @@ async def create_group(
             "description": group_data.description or "",
             "lead_ids": group_data.lead_ids or [],
             "lead_count": len(group_data.lead_ids) if group_data.lead_ids else 0,
-            "created_by": str(current_user["_id"]),  # Store ID internally
+            "created_by": str(current_user["_id"]),
             "created_at": datetime.utcnow(),
             "updated_at": datetime.utcnow(),
             "updated_by": None
@@ -150,17 +158,16 @@ async def create_group(
         
         logger.info(f"✅ Group created: {group_id} by {current_user.get('email')}")
         
-        # Return response with user names (not IDs)
         return GroupResponse(
             group_id=group_doc["group_id"],
             name=group_doc["name"],
             description=group_doc["description"],
             lead_ids=group_doc["lead_ids"],
             lead_count=group_doc["lead_count"],
-            created_by_name=created_by_name,  # ✅ Send name instead of ID
+            created_by_name=created_by_name,
             created_at=group_doc["created_at"],
             updated_at=group_doc["updated_at"],
-            updated_by_name=None  # ✅ Send name instead of ID
+            updated_by_name=None
         )
         
     except HTTPException:
@@ -172,9 +179,6 @@ async def create_group(
             detail=f"Failed to create group: {str(e)}"
         )
 
-# ============================================================================
-# GET ALL GROUPS (with pagination and search) - ✅ UPDATED WITH AGGREGATION
-# ============================================================================
 
 @router.get("/", response_model=GroupListResponse)
 @convert_dates_to_ist()
@@ -182,10 +186,14 @@ async def get_groups(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(20, ge=1, le=100, description="Items per page"),
     search: Optional[str] = Query(None, description="Search by group name"),
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("group.view"))
 ):
     """
-    Get all groups with pagination and search
+    🔄 RBAC-ENABLED: Get all groups with pagination and search
+    
+    **Required Permission:**
+    - `group.view` - View own groups
+    - `group.view_all` - View all groups (admin)
     
     - **page**: Page number (default: 1)
     - **limit**: Items per page (default: 20, max: 100)
@@ -196,12 +204,13 @@ async def get_groups(
         
         # Build match query
         match_query = {}
-
-        user_role = current_user.get("role")
-        user_id = str(current_user.get("_id"))
         
-        if user_role != "admin":
+        # Check if user has view_all permission
+        has_view_all = await rbac_service.check_permission(current_user, "group.view_all")
+        
+        if not has_view_all:
             # Regular users can only see their own groups
+            user_id = str(current_user.get("_id"))
             match_query["created_by"] = user_id
             logger.info(f"User {current_user.get('email')} accessing own groups only")
         else:
@@ -216,7 +225,7 @@ async def get_groups(
         # Calculate skip for pagination
         skip = (page - 1) * limit
         
-        # 🔥 AGGREGATION PIPELINE - Populate user names
+        # Aggregation pipeline - Populate user names
         pipeline = [
             {"$match": match_query},
             {"$sort": {"created_at": -1}},
@@ -278,17 +287,16 @@ async def get_groups(
                 if not updated_by_name:
                     updated_by_name = updater.get('email', None)
             
-            # ✅ Create response with names (no IDs)
             group_responses.append(GroupResponse(
                 group_id=group["group_id"],
                 name=group["name"],
                 description=group.get("description", ""),
                 lead_ids=group.get("lead_ids", []),
                 lead_count=group.get("lead_count", 0),
-                created_by_name=created_by_name,  # ✅ Name instead of ID
+                created_by_name=created_by_name,
                 created_at=group["created_at"],
                 updated_at=group["updated_at"],
-                updated_by_name=updated_by_name  # ✅ Name instead of ID
+                updated_by_name=updated_by_name
             ))
         
         return GroupListResponse(
@@ -297,7 +305,7 @@ async def get_groups(
                 "page": page,
                 "limit": limit,
                 "total": total,
-                "pages": (total + limit - 1) // limit,  # Calculate total pages
+                "pages": (total + limit - 1) // limit,
                 "has_next": skip + limit < total,
                 "has_prev": page > 1
             }
@@ -310,18 +318,17 @@ async def get_groups(
             detail=f"Failed to fetch groups: {str(e)}"
         )
 
-# ============================================================================
-# GET SINGLE GROUP BY ID (with populated lead details)
-# ============================================================================
 
 @router.get("/{group_id}", response_model=GroupResponse)
 @convert_dates_to_ist()
 async def get_group_with_leads(
     group_id: str,
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("group.view"))
 ):
     """
-    Get group details (without populated lead details)
+    🔄 RBAC-ENABLED: Get group details (without populated lead details)
+    
+    **Required Permission:** `group.view`
     
     - **group_id**: Group ID (e.g., GRP-001)
     
@@ -338,6 +345,16 @@ async def get_group_with_leads(
             raise HTTPException(
                 status_code=404,
                 detail=f"Group with ID '{group_id}' not found"
+            )
+        
+        # Check if user has view_all permission or owns the group
+        has_view_all = await rbac_service.check_permission(current_user, "group.view_all")
+        user_id = str(current_user.get("_id"))
+        
+        if not has_view_all and group["created_by"] != user_id:
+            raise HTTPException(
+                status_code=403,
+                detail="You don't have permission to view this group"
             )
         
         # Get creator and updater names
@@ -365,23 +382,21 @@ async def get_group_with_leads(
             detail=f"Failed to fetch group details: {str(e)}"
         )
 
-# ============================================================================
-# UPDATE GROUP - ✅ UPDATED: Only name and description (NO lead_ids replacement)
-# ============================================================================
 
 @router.put("/{group_id}", response_model=GroupResponse)
 @convert_dates_to_ist()
 async def update_group(
     group_id: str,
     group_data: GroupUpdate,
-    current_user: Dict[str, Any] = Depends(get_current_active_user)  # ✅ All users can update
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("group.update"))
 ):
     """
-    Update group details (All users can update any group)
+    🔄 RBAC-ENABLED: Update group details
+    
+    **Required Permission:** `group.update`
     
     - **name**: Optional new name
     - **description**: Optional new description
-    - Any user can update any group's name and description
     
     NOTE: To add or remove leads, use /groups/{group_id}/leads/add or /groups/{group_id}/leads/remove endpoints
     """
@@ -416,9 +431,6 @@ async def update_group(
         if group_data.description is not None:
             update_fields["description"] = group_data.description
         
-        # ❌ REMOVED: lead_ids replacement logic
-        # Users must use /add or /remove endpoints to manage leads
-        
         if not update_fields:
             raise HTTPException(
                 status_code=400,
@@ -450,10 +462,10 @@ async def update_group(
             description=updated_group.get("description", ""),
             lead_ids=updated_group.get("lead_ids", []),
             lead_count=updated_group.get("lead_count", 0),
-            created_by_name=created_by_name,  # ✅ Name instead of ID
+            created_by_name=created_by_name,
             created_at=updated_group["created_at"],
             updated_at=updated_group["updated_at"],
-            updated_by_name=updated_by_name  # ✅ Name instead of ID
+            updated_by_name=updated_by_name
         )
         
     except HTTPException:
@@ -465,23 +477,22 @@ async def update_group(
             detail=f"Failed to update group: {str(e)}"
         )
 
-# ============================================================================
-# ADD LEADS TO GROUP - ✅ This is the PRIMARY way to add leads
-# ============================================================================
 
 @router.post("/{group_id}/leads/add", response_model=GroupResponse)
 async def add_leads_to_group(
     group_id: str,
     lead_data: GroupAddLeads,
-    current_user: Dict[str, Any] = Depends(get_current_active_user)  # ✅ All users can add
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("group.manage_leads"))
 ):
     """
-    Add leads to any group (All users can add their assigned leads)
+    🔄 RBAC-ENABLED: Add leads to a group
+    
+    **Required Permission:** `group.manage_leads`
     
     - **lead_ids**: Array of lead IDs to add (in request body)
-    - Duplicates are automatically handled (no duplicates in final array)
-    - Users can add their assigned leads to ANY group
-    - Admins can add any leads to any group
+    - Users can add their assigned leads to groups
+    - Admins with group.view_all can add any leads
+    - Duplicates are automatically handled
     
     Example Request Body:
     {
@@ -500,12 +511,13 @@ async def add_leads_to_group(
                 detail=f"Group with ID '{group_id}' not found"
             )
         
-        # ✅ NEW: For non-admin users, validate they can only add their assigned leads
-        user_email = current_user.get("email")
-        user_role = current_user.get("role")
+        # Check if user has view_all permission
+        has_view_all = await rbac_service.check_permission(current_user, "group.view_all")
         
-        if user_role != "admin":
-            # Check if all leads are assigned to the current user
+        if not has_view_all:
+            # Regular users can only add their assigned leads
+            user_email = current_user.get("email")
+            
             for lead_id in lead_data.lead_ids:
                 lead = await db.leads.find_one({"lead_id": lead_id})
                 if not lead:
@@ -570,10 +582,10 @@ async def add_leads_to_group(
             description=updated_group.get("description", ""),
             lead_ids=updated_group.get("lead_ids", []),
             lead_count=updated_group.get("lead_count", 0),
-            created_by_name=created_by_name,  # ✅ Name instead of ID
+            created_by_name=created_by_name,
             created_at=updated_group["created_at"],
             updated_at=updated_group["updated_at"],
-            updated_by_name=updated_by_name  # ✅ Name instead of ID
+            updated_by_name=updated_by_name
         )
         
     except HTTPException:
@@ -585,22 +597,21 @@ async def add_leads_to_group(
             detail=f"Failed to add leads: {str(e)}"
         )
 
-# ============================================================================
-# REMOVE LEADS FROM GROUP
-# ============================================================================
 
 @router.post("/{group_id}/leads/remove", response_model=GroupResponse)
 async def remove_leads_from_group(
     group_id: str,
     lead_data: GroupRemoveLeads,
-    current_user: Dict[str, Any] = Depends(get_current_active_user)  # ✅ All users can remove
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("group.manage_leads"))
 ):
     """
-    Remove leads from any group (All users can remove their assigned leads)
+    🔄 RBAC-ENABLED: Remove leads from a group
+    
+    **Required Permission:** `group.manage_leads`
     
     - **lead_ids**: Array of lead IDs to remove (in request body)
-    - Users can remove their assigned leads from ANY group
-    - Admins can remove any leads from any group
+    - Users can remove their assigned leads from groups
+    - Admins with group.view_all can remove any leads
     
     Example Request Body:
     {
@@ -619,12 +630,13 @@ async def remove_leads_from_group(
                 detail=f"Group with ID '{group_id}' not found"
             )
         
-        # ✅ NEW: For non-admin users, validate they can only remove their assigned leads
-        user_email = current_user.get("email")
-        user_role = current_user.get("role")
+        # Check if user has view_all permission
+        has_view_all = await rbac_service.check_permission(current_user, "group.view_all")
         
-        if user_role != "admin":
-            # Check if all leads are assigned to the current user
+        if not has_view_all:
+            # Regular users can only remove their assigned leads
+            user_email = current_user.get("email")
+            
             for lead_id in lead_data.lead_ids:
                 lead = await db.leads.find_one({"lead_id": lead_id})
                 if not lead:
@@ -678,10 +690,10 @@ async def remove_leads_from_group(
             description=updated_group.get("description", ""),
             lead_ids=updated_group.get("lead_ids", []),
             lead_count=updated_group.get("lead_count", 0),
-            created_by_name=created_by_name,  # ✅ Name instead of ID
+            created_by_name=created_by_name,
             created_at=updated_group["created_at"],
             updated_at=updated_group["updated_at"],
-            updated_by_name=updated_by_name  # ✅ Name instead of ID
+            updated_by_name=updated_by_name
         )
         
     except HTTPException:
@@ -693,21 +705,19 @@ async def remove_leads_from_group(
             detail=f"Failed to remove leads: {str(e)}"
         )
 
-# ============================================================================
-# DELETE GROUP
-# ============================================================================
 
 @router.delete("/{group_id}", response_model=GroupDeleteResponse)
 async def delete_group(
     group_id: str,
-    current_user: Dict[str, Any] = Depends(get_current_active_user)  # ✅ All users can delete
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("group.delete"))
 ):
     """
-    Delete a group (All users can delete any group)
+    🔄 RBAC-ENABLED: Delete a group
+    
+    **Required Permission:** `group.delete`
     
     - **group_id**: Group ID to delete
     - This is a hard delete (permanent removal)
-    - Any user can delete any group
     """
     try:
         db = get_database()

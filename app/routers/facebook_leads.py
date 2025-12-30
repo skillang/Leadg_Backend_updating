@@ -1,5 +1,7 @@
-# app/routers/facebook_leads.py
+# app/routers/facebook_leads.py - RBAC-Enabled
 # API endpoints for Facebook Leads Center integration
+# 🔄 UPDATED: Role checks replaced with RBAC (108 permissions)
+# ✅ All endpoints now use permission-based access control
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Query, BackgroundTasks
 from pydantic import BaseModel, Field
@@ -9,7 +11,8 @@ from datetime import datetime
 
 from ..services.facebook_leads_service import facebook_leads_service
 from ..services.facebook_category_mapper import facebook_category_mapper
-from ..utils.dependencies import get_current_active_user, get_admin_user
+from ..services.rbac_service import RBACService
+from ..utils.dependencies import get_current_active_user, get_user_with_permission
 
 logger = logging.getLogger(__name__)
 
@@ -18,9 +21,13 @@ router = APIRouter(
     responses={404: {"description": "Not found"}}
 )
 
-# ============================================================================
+# Initialize RBAC service
+rbac_service = RBACService()
+
+
+# =====================================
 # REQUEST/RESPONSE MODELS
-# ============================================================================
+# =====================================
 
 class FacebookConfigRequest(BaseModel):
     """Request model for Facebook API configuration"""
@@ -30,6 +37,7 @@ class FacebookConfigRequest(BaseModel):
     page_id: str = Field(..., description="Facebook Page ID")
     webhook_verify_token: Optional[str] = Field(None, description="Webhook verification token")
 
+
 class LeadImportRequest(BaseModel):
     """Request model for importing leads from Facebook"""
     form_id: str = Field(..., description="Facebook Lead Form ID")
@@ -37,21 +45,27 @@ class LeadImportRequest(BaseModel):
     auto_assign: bool = Field(True, description="Auto-assign leads to users")
     limit: int = Field(100, ge=1, le=500, description="Number of leads to import")
 
+
 class BulkImportRequest(BaseModel):
     """Request model for bulk importing from multiple forms"""
     form_ids: List[str] = Field(..., description="List of Facebook Lead Form IDs")
     category_overrides: Optional[Dict[str, str]] = Field(None, description="Form ID → Category overrides")
     auto_assign: bool = Field(True, description="Auto-assign leads to users")
 
-# ============================================================================
-# CONFIGURATION & TESTING ENDPOINTS
-# ============================================================================
+
+# =====================================
+# RBAC-ENABLED CONFIGURATION & TESTING
+# =====================================
 
 @router.get("/test-connection", summary="Test Facebook API connection")
 async def test_facebook_connection(
-    current_user: dict = Depends(get_admin_user)
+    current_user: dict = Depends(get_user_with_permission("facebook_leads.manage"))
 ):
-    """Test Facebook API connection and permissions"""
+    """
+    🔄 RBAC-ENABLED: Test Facebook API connection and permissions
+    
+    **Required Permission:** `facebook_leads.manage`
+    """
     try:
         result = await facebook_leads_service.verify_facebook_access()
         
@@ -78,15 +92,20 @@ async def test_facebook_connection(
             detail=f"Connection test failed: {str(e)}"
         )
 
-# ============================================================================
-# LEAD FORM MANAGEMENT ENDPOINTS
-# ============================================================================
+
+# =====================================
+# RBAC-ENABLED LEAD FORM MANAGEMENT
+# =====================================
 
 @router.get("/forms", summary="Get Facebook lead forms with category mapping")
 async def get_lead_forms_with_mapping(
-    current_user: dict = Depends(get_current_active_user)
+    current_user: dict = Depends(get_user_with_permission("facebook_leads.view"))
 ):
-    """Get all lead forms with smart category mapping preview"""
+    """
+    🔄 RBAC-ENABLED: Get all lead forms with smart category mapping preview
+    
+    **Required Permission:** `facebook_leads.view`
+    """
     try:
         # Get forms from Facebook
         result = await facebook_leads_service.get_lead_forms()
@@ -134,13 +153,18 @@ async def get_lead_forms_with_mapping(
             detail=f"Failed to get lead forms: {str(e)}"
         )
 
+
 @router.get("/forms/{form_id}/preview", summary="Preview leads from specific form")
 async def preview_leads_from_form(
     form_id: str,
     limit: int = Query(10, ge=1, le=50, description="Number of leads to preview"),
-    current_user: dict = Depends(get_current_active_user)
+    current_user: dict = Depends(get_user_with_permission("facebook_leads.view"))
 ):
-    """Preview leads from a specific Facebook form without importing"""
+    """
+    🔄 RBAC-ENABLED: Preview leads from a specific Facebook form without importing
+    
+    **Required Permission:** `facebook_leads.view`
+    """
     try:
         result = await facebook_leads_service.get_leads_from_form(form_id, limit)
         
@@ -156,17 +180,21 @@ async def preview_leads_from_form(
             detail=f"Failed to preview leads: {str(e)}"
         )
 
-# ============================================================================
-# LEAD IMPORT ENDPOINTS  
-# ============================================================================
+
+# =====================================
+# RBAC-ENABLED LEAD IMPORT
+# =====================================
 
 @router.post("/import/single-form", summary="Import leads from single Facebook form")
 async def import_leads_single_form(
     import_request: LeadImportRequest,
-    # Remove background_tasks parameter - we don't need it anymore
-    current_user: dict = Depends(get_admin_user)
+    current_user: dict = Depends(get_user_with_permission("facebook_leads.import"))
 ):
-    """Import leads from a single Facebook form with immediate stats response"""
+    """
+    🔄 RBAC-ENABLED: Import leads from a single Facebook form with immediate stats response
+    
+    **Required Permission:** `facebook_leads.import`
+    """
     try:
         # Get form info for category mapping
         forms_result = await facebook_leads_service.get_lead_forms()
@@ -193,7 +221,7 @@ async def import_leads_single_form(
             category = mapping["category"]
             logger.info(f"Auto-mapped form '{target_form['name']}' to category '{category}'")
         
-        # CHANGED: Call import directly (synchronous) instead of background task
+        # Call import directly (synchronous)
         import_result = await facebook_leads_service.import_leads_to_crm(
             import_request.form_id,
             current_user.get('email'),
@@ -203,7 +231,7 @@ async def import_leads_single_form(
         
         logger.info(f"Completed Facebook lead import from form {import_request.form_id} by {current_user.get('email')}")
         
-        # CHANGED: Return the actual import results instead of "in_progress"
+        # Return the actual import results
         if import_result["success"]:
             return {
                 "success": True,
@@ -214,7 +242,6 @@ async def import_leads_single_form(
                     "assigned_category": category,
                 },
                 "import_status": "completed",
-                # Add the stats the frontend team wants
                 "stats": {
                     "total_facebook_leads": import_result["summary"]["total_facebook_leads"],
                     "imported_count": import_result["summary"]["imported_count"],
@@ -237,9 +264,11 @@ async def import_leads_single_form(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to import leads: {str(e)}"
         )
-# ============================================================================
-# WEBHOOK ENDPOINTS FOR AUTOMATIC LEAD IMPORT
-# ============================================================================
+
+
+# =====================================
+# WEBHOOK ENDPOINTS (UNAUTHENTICATED)
+# =====================================
 
 @router.get("/webhook", summary="Facebook webhook verification")
 async def verify_webhook(
@@ -248,7 +277,11 @@ async def verify_webhook(
     hub_verify_token: str = Query(alias="hub.verify_token"), 
     hub_challenge: str = Query(alias="hub.challenge")
 ):
-    """Verify Facebook webhook during setup"""
+    """
+    ℹ️ UNAUTHENTICATED: Verify Facebook webhook during setup
+    
+    **No Authentication Required** - Called by Facebook's servers
+    """
     try:
         from ..config.settings import settings
         
@@ -263,12 +296,17 @@ async def verify_webhook(
         logger.error(f"Webhook verification error: {str(e)}")
         raise HTTPException(status_code=500, detail="Verification error")
 
+
 @router.post("/webhook", summary="Facebook webhook for automatic lead import")
 async def receive_webhook(
     request: Request,
     background_tasks: BackgroundTasks
 ):
-    """Receive Facebook webhook notifications for automatic lead import"""
+    """
+    ℹ️ UNAUTHENTICATED: Receive Facebook webhook notifications for automatic lead import
+    
+    **No Authentication Required** - Called by Facebook's servers
+    """
     try:
         webhook_data = await request.json()
         
@@ -286,15 +324,20 @@ async def receive_webhook(
         logger.error(f"Webhook processing error: {str(e)}")
         return {"status": "error", "message": str(e)}
 
-# ============================================================================
-# DASHBOARD & ANALYTICS ENDPOINTS  
-# ============================================================================
+
+# =====================================
+# RBAC-ENABLED DASHBOARD & ANALYTICS
+# =====================================
 
 @router.get("/dashboard", summary="Facebook leads dashboard data")
 async def get_facebook_dashboard(
-    current_user: dict = Depends(get_admin_user)
+    current_user: dict = Depends(get_user_with_permission("facebook_leads.view"))
 ):
-    """Get dashboard data for Facebook leads management"""
+    """
+    🔄 RBAC-ENABLED: Get dashboard data for Facebook leads management
+    
+    **Required Permission:** `facebook_leads.view`
+    """
     try:
         # Get forms with mapping
         forms_result = await facebook_leads_service.get_lead_forms()
@@ -331,12 +374,17 @@ async def get_facebook_dashboard(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get dashboard data: {str(e)}"
         )
-    
+
+
 @router.get("/debug-config", summary="Debug Facebook configuration")
 async def debug_facebook_config(
-    current_user: dict = Depends(get_admin_user)
+    current_user: dict = Depends(get_user_with_permission("facebook_leads.manage"))
 ):
-    """Debug what configuration the server is using"""
+    """
+    🔄 RBAC-ENABLED: Debug what configuration the server is using
+    
+    **Required Permission:** `facebook_leads.manage`
+    """
     try:
         result = await facebook_leads_service.verify_facebook_access()
         token_preview = facebook_leads_service.access_token[:30] + "..." if facebook_leads_service.access_token else "None"

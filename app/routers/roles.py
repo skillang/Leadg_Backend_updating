@@ -1,5 +1,6 @@
-# app/routers/roles.py
-# Complete Role Management Router with RBAC Integration
+# app/routers/roles.py - RBAC-Enabled
+# Complete Role Management Router with 108-Permission RBAC Integration
+# 🔄 UPDATED: Manual permission checks replaced with dependency-based RBAC
 
 import logging
 from typing import Dict, Any, Optional, List
@@ -12,49 +13,44 @@ from ..models.role import (
     RoleAssignRequest, RoleAssignResponse, RoleCloneRequest
 )
 from ..services.role_service import role_service
-from ..services.rbac_service import rbac_service
-from ..utils.dependencies import get_current_active_user
+from ..services.rbac_service import RBACService
+from ..utils.dependencies import get_user_with_permission
 from ..config.database import get_database
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+# Initialize RBAC service
+rbac_service = RBACService()
 
-# ========================================
-# CORE ROLE MANAGEMENT ENDPOINTS
-# ========================================
+
+# =====================================
+# RBAC-ENABLED CORE ROLE MANAGEMENT
+# =====================================
 
 @router.post("/", response_model=RoleResponse, status_code=status.HTTP_201_CREATED)
 async def create_role(
     role_data: RoleCreate,
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("role.add"))
 ):
     """
-    Create a new custom role
+    🔄 RBAC-ENABLED: Create a new custom role
     
-    Requires: role.create permission
+    **Required Permission:** `role.add`
     
     Args:
         role_data: Role creation data including name, permissions, etc.
-        current_user: Authenticated user with role.create permission
+        current_user: Authenticated user with role.add permission
         
     Returns:
         RoleResponse: Created role with all details
         
     Raises:
-        403: User lacks role.create permission
+        403: User lacks role.add permission
         400: Role name already exists
         500: Server error
     """
     try:
-        # Check permission
-        has_permission = await rbac_service.check_permission(current_user, "role.create")
-        if not has_permission:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You don't have permission to create roles"
-            )
-        
         logger.info(f"Creating role '{role_data.name}' by {current_user.get('email')}")
         
         # Create role
@@ -79,34 +75,26 @@ async def create_role(
 async def list_roles(
     include_inactive: bool = Query(False, description="Include inactive roles in results"),
     role_type: Optional[str] = Query(None, description="Filter by type: 'system' or 'custom'"),
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("role.view"))
 ):
     """
-    List all roles with optional filtering
+    🔄 RBAC-ENABLED: List all roles with optional filtering
     
-    Requires: role.read permission
+    **Required Permission:** `role.view`
     
     Args:
         include_inactive: If true, includes deactivated roles
         role_type: Filter by 'system' or 'custom' roles
-        current_user: Authenticated user with role.read permission
+        current_user: Authenticated user with role.view permission
         
     Returns:
         RoleListResponse: List of roles matching filters
         
     Raises:
-        403: User lacks role.read permission
+        403: User lacks role.view permission
         500: Server error
     """
     try:
-        # Check permission
-        has_permission = await rbac_service.check_permission(current_user, "role.read")
-        if not has_permission:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You don't have permission to view roles"
-            )
-        
         logger.info(f"Listing roles by {current_user.get('email')} (include_inactive={include_inactive}, type={role_type})")
         
         # List roles
@@ -130,34 +118,26 @@ async def list_roles(
 @router.get("/{role_id}", response_model=RoleResponse)
 async def get_role(
     role_id: str,
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("role.view"))
 ):
     """
-    Get detailed information about a specific role
+    🔄 RBAC-ENABLED: Get detailed information about a specific role
     
-    Requires: role.read permission
+    **Required Permission:** `role.view`
     
     Args:
         role_id: MongoDB ObjectId of the role as string
-        current_user: Authenticated user with role.read permission
+        current_user: Authenticated user with role.view permission
         
     Returns:
         RoleResponse: Complete role details including permissions
         
     Raises:
-        403: User lacks role.read permission
+        403: User lacks role.view permission
         404: Role not found
         500: Server error
     """
     try:
-        # Check permission
-        has_permission = await rbac_service.check_permission(current_user, "role.read")
-        if not has_permission:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You don't have permission to view roles"
-            )
-        
         logger.info(f"Getting role {role_id} by {current_user.get('email')}")
         
         # Get role
@@ -179,12 +159,12 @@ async def get_role(
 async def update_role(
     role_id: str,
     role_data: RoleUpdate,
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("role.update"))
 ):
     """
-    Update an existing role
+    🔄 RBAC-ENABLED: Update an existing role
     
-    Requires: role.update permission
+    **Required Permission:** `role.update`
     
     Note: Cannot modify system roles (Super Admin, Admin, User)
     
@@ -202,14 +182,6 @@ async def update_role(
         500: Server error
     """
     try:
-        # Check permission
-        has_permission = await rbac_service.check_permission(current_user, "role.update")
-        if not has_permission:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You don't have permission to update roles"
-            )
-        
         logger.info(f"Updating role {role_id} by {current_user.get('email')}")
         
         # Update role
@@ -235,12 +207,12 @@ async def update_role(
 async def delete_role(
     role_id: str,
     force: bool = Query(False, description="Force delete even if users are assigned to this role"),
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("role.delete"))
 ):
     """
-    Delete a custom role
+    🔄 RBAC-ENABLED: Delete a custom role
     
-    Requires: role.delete permission
+    **Required Permission:** `role.delete`
     
     Note: 
     - Cannot delete system roles
@@ -262,14 +234,6 @@ async def delete_role(
         500: Server error
     """
     try:
-        # Check permission
-        has_permission = await rbac_service.check_permission(current_user, "role.delete")
-        if not has_permission:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You don't have permission to delete roles"
-            )
-        
         logger.info(f"Deleting role {role_id} by {current_user.get('email')} (force={force})")
         
         # Delete role
@@ -291,19 +255,19 @@ async def delete_role(
         )
 
 
-# ========================================
-# ROLE ASSIGNMENT ENDPOINTS
-# ========================================
+# =====================================
+# RBAC-ENABLED ROLE ASSIGNMENT
+# =====================================
 
 @router.post("/assign", response_model=RoleAssignResponse)
 async def assign_role_to_user(
     request: RoleAssignRequest,
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("role.assign"))
 ):
     """
-    Assign a role to a specific user
+    🔄 RBAC-ENABLED: Assign a role to a specific user
     
-    Requires: role.assign permission
+    **Required Permission:** `role.assign`
     
     Args:
         request: Role assignment request with user_email, role_id, optional reason
@@ -318,14 +282,6 @@ async def assign_role_to_user(
         500: Server error
     """
     try:
-        # Check permission
-        has_permission = await rbac_service.check_permission(current_user, "role.assign")
-        if not has_permission:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You don't have permission to assign roles"
-            )
-        
         logger.info(f"Assigning role {request.role_id} to {request.user_email} by {current_user.get('email')}")
         
         # Assign role
@@ -354,12 +310,12 @@ async def assign_role_to_multiple_users(
     role_id: str,
     user_emails: List[str],
     reason: Optional[str] = None,
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("role.assign"))
 ):
     """
-    Assign a role to multiple users at once (bulk operation)
+    🔄 RBAC-ENABLED: Assign a role to multiple users at once (bulk operation)
     
-    Requires: role.assign permission
+    **Required Permission:** `role.assign`
     
     Args:
         role_id: Role to assign to all users
@@ -382,14 +338,6 @@ async def assign_role_to_multiple_users(
         }
     """
     try:
-        # Check permission
-        has_permission = await rbac_service.check_permission(current_user, "role.assign")
-        if not has_permission:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You don't have permission to assign roles"
-            )
-        
         logger.info(f"Bulk assigning role {role_id} to {len(user_emails)} users by {current_user.get('email')}")
         
         results = {
@@ -435,20 +383,20 @@ async def assign_role_to_multiple_users(
         )
 
 
-# ========================================
-# ROLE CLONING & UTILITIES
-# ========================================
+# =====================================
+# RBAC-ENABLED ROLE CLONING & UTILITIES
+# =====================================
 
 @router.post("/{role_id}/clone", response_model=RoleResponse)
 async def clone_role(
     role_id: str,
     request: RoleCloneRequest,
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("role.add"))
 ):
     """
-    Clone an existing role to create a new role with same permissions
+    🔄 RBAC-ENABLED: Clone an existing role to create a new role with same permissions
     
-    Requires: role.create permission
+    **Required Permission:** `role.add`
     
     Useful for:
     - Creating variations of existing roles
@@ -458,26 +406,18 @@ async def clone_role(
     Args:
         role_id: Source role ObjectId as string
         request: Clone request with new role name, display name, description
-        current_user: Authenticated user with role.create permission
+        current_user: Authenticated user with role.add permission
         
     Returns:
         RoleResponse: Newly cloned role with same permissions as source
         
     Raises:
-        403: User lacks role.create permission
+        403: User lacks role.add permission
         404: Source role not found
         400: New role name already exists
         500: Server error
     """
     try:
-        # Check permission
-        has_permission = await rbac_service.check_permission(current_user, "role.create")
-        if not has_permission:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You don't have permission to create roles"
-            )
-        
         logger.info(f"Cloning role {role_id} to '{request.new_role_name}' by {current_user.get('email')}")
         
         # Clone role
@@ -504,16 +444,16 @@ async def clone_role(
 @router.get("/{role_id}/users")
 async def get_users_with_role(
     role_id: str,
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("role.view"))
 ):
     """
-    Get list of all users assigned to a specific role
+    🔄 RBAC-ENABLED: Get list of all users assigned to a specific role
     
-    Requires: role.read permission
+    **Required Permission:** `role.view`
     
     Args:
         role_id: Role ObjectId as string
-        current_user: Authenticated user with role.read permission
+        current_user: Authenticated user with role.view permission
         
     Returns:
         dict: List of users with this role including basic user info
@@ -536,14 +476,6 @@ async def get_users_with_role(
         }
     """
     try:
-        # Check permission
-        has_permission = await rbac_service.check_permission(current_user, "role.read")
-        if not has_permission:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You don't have permission to view roles"
-            )
-        
         logger.info(f"Getting users with role {role_id} by {current_user.get('email')}")
         
         # Get users
@@ -569,34 +501,26 @@ async def get_users_with_role(
 @router.get("/by-name/{role_name}", response_model=RoleResponse)
 async def get_role_by_name(
     role_name: str,
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("role.view"))
 ):
     """
-    Get role by its unique name (alternative to getting by ID)
+    🔄 RBAC-ENABLED: Get role by its unique name (alternative to getting by ID)
     
-    Requires: role.read permission
+    **Required Permission:** `role.view`
     
     Args:
         role_name: Unique role name (e.g., "admin", "user", "team_lead", "sales_manager")
-        current_user: Authenticated user with role.read permission
+        current_user: Authenticated user with role.view permission
         
     Returns:
         RoleResponse: Role details
         
     Raises:
-        403: User lacks role.read permission
+        403: User lacks role.view permission
         404: Role with this name not found
         500: Server error
     """
     try:
-        # Check permission
-        has_permission = await rbac_service.check_permission(current_user, "role.read")
-        if not has_permission:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You don't have permission to view roles"
-            )
-        
         logger.info(f"Getting role by name '{role_name}' by {current_user.get('email')}")
         
         # Get role
@@ -620,19 +544,19 @@ async def get_role_by_name(
         )
 
 
-# ========================================
-# ROLE ACTIVATION/DEACTIVATION
-# ========================================
+# =====================================
+# RBAC-ENABLED ACTIVATION/DEACTIVATION
+# =====================================
 
 @router.post("/{role_id}/activate")
 async def activate_role(
     role_id: str,
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("role.update"))
 ):
     """
-    Activate a previously deactivated role
+    🔄 RBAC-ENABLED: Activate a previously deactivated role
     
-    Requires: role.update permission
+    **Required Permission:** `role.update`
     
     Args:
         role_id: Role ObjectId as string
@@ -647,14 +571,6 @@ async def activate_role(
         500: Server error
     """
     try:
-        # Check permission
-        has_permission = await rbac_service.check_permission(current_user, "role.update")
-        if not has_permission:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You don't have permission to update roles"
-            )
-        
         logger.info(f"Activating role {role_id} by {current_user.get('email')}")
         
         # Update role
@@ -685,12 +601,12 @@ async def activate_role(
 @router.post("/{role_id}/deactivate")
 async def deactivate_role(
     role_id: str,
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("role.update"))
 ):
     """
-    Deactivate a role (soft delete - doesn't remove from database)
+    🔄 RBAC-ENABLED: Deactivate a role (soft delete - doesn't remove from database)
     
-    Requires: role.update permission
+    **Required Permission:** `role.update`
     
     Note: 
     - Cannot deactivate system roles (Super Admin, Admin, User)
@@ -709,14 +625,6 @@ async def deactivate_role(
         500: Server error
     """
     try:
-        # Check permission
-        has_permission = await rbac_service.check_permission(current_user, "role.update")
-        if not has_permission:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You don't have permission to update roles"
-            )
-        
         logger.info(f"Deactivating role {role_id} by {current_user.get('email')}")
         
         # Update role
@@ -744,25 +652,25 @@ async def deactivate_role(
         )
 
 
-# ========================================
-# ADVANCED ROLE FEATURES
-# ========================================
+# =====================================
+# RBAC-ENABLED ADVANCED FEATURES
+# =====================================
 
 @router.get("/available-permissions")
 async def get_available_permissions(
     category: Optional[str] = Query(None, description="Filter by permission category"),
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("role.view"))
 ):
     """
-    Get all available permissions that can be assigned to roles
+    🔄 RBAC-ENABLED: Get all available permissions that can be assigned to roles
     
-    Requires: role.read permission
+    **Required Permission:** `role.view`
     
     Used for: Role creation/editing UI to show permission matrix
     
     Args:
         category: Optional filter by category (lead_management, user_management, etc.)
-        current_user: Authenticated user with role.read permission
+        current_user: Authenticated user with role.view permission
         
     Returns:
         dict: Permissions grouped by category with metadata
@@ -785,19 +693,11 @@ async def get_available_permissions(
                 "user_management": [...],
                 ...
             },
-            "total_permissions": 69,
+            "total_permissions": 108,
             "categories": ["lead_management", "user_management", ...]
         }
     """
     try:
-        # Check permission
-        has_permission = await rbac_service.check_permission(current_user, "role.read")
-        if not has_permission:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You don't have permission to view roles"
-            )
-        
         db = get_database()
         
         # Build query
@@ -845,12 +745,12 @@ async def get_available_permissions(
 
 @router.get("/statistics")
 async def get_role_statistics(
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("role.view"))
 ):
     """
-    Get role statistics and analytics
+    🔄 RBAC-ENABLED: Get role statistics and analytics
     
-    Requires: role.read permission
+    **Required Permission:** `role.view`
     
     Provides:
     - Total roles breakdown (active/inactive, system/custom)
@@ -878,14 +778,6 @@ async def get_role_statistics(
         }
     """
     try:
-        # Check permission
-        has_permission = await rbac_service.check_permission(current_user, "role.read")
-        if not has_permission:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You don't have permission to view roles"
-            )
-        
         db = get_database()
         
         # Get counts
@@ -954,12 +846,12 @@ async def get_role_statistics(
 async def compare_roles(
     role_id_1: str = Query(..., description="First role ID to compare"),
     role_id_2: str = Query(..., description="Second role ID to compare"),
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("role.view"))
 ):
     """
-    Compare permissions between two roles
+    🔄 RBAC-ENABLED: Compare permissions between two roles
     
-    Requires: role.read permission
+    **Required Permission:** `role.view`
     
     Useful for:
     - Understanding permission differences
@@ -969,7 +861,7 @@ async def compare_roles(
     Args:
         role_id_1: First role ObjectId as string
         role_id_2: Second role ObjectId as string
-        current_user: Authenticated user with role.read permission
+        current_user: Authenticated user with role.view permission
         
     Returns:
         dict: Detailed permission comparison
@@ -977,27 +869,19 @@ async def compare_roles(
     Example Response:
         {
             "success": true,
-            "role_1": {"id": "...", "name": "admin", "total_permissions": 65},
-            "role_2": {"id": "...", "name": "user", "total_permissions": 30},
+            "role_1": {"id": "...", "name": "admin", "total_permissions": 85},
+            "role_2": {"id": "...", "name": "user", "total_permissions": 28},
             "comparison": {
                 "only_in_role_1": ["lead.delete", "user.delete", ...],
                 "only_in_role_2": [],
                 "in_both_roles": ["lead.create", "lead.read_own", ...],
-                "unique_to_role_1_count": 35,
+                "unique_to_role_1_count": 57,
                 "unique_to_role_2_count": 0,
-                "common_count": 30
+                "common_count": 28
             }
         }
     """
     try:
-        # Check permission
-        has_permission = await rbac_service.check_permission(current_user, "role.read")
-        if not has_permission:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You don't have permission to view roles"
-            )
-        
         logger.info(f"Comparing roles {role_id_1} and {role_id_2} by {current_user.get('email')}")
         
         # Get both roles

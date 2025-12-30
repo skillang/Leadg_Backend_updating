@@ -1,6 +1,8 @@
 """
-Batch Attendance API Routes
+Batch Attendance API Routes - RBAC-Enabled
 Handles attendance marking and tracking
+🔄 UPDATED: Permission checks replaced with RBAC (108 permissions)
+✅ All endpoints now use permission-based access control
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -19,15 +21,20 @@ from ..models.batch_attendance import (
 )
 from ..services.batch_attendance_service import batch_attendance_service
 from ..services.batch_session_service import batch_session_service
-from ..config.auth import get_current_user, check_permission
+from ..services.rbac_service import RBACService
+from ..utils.dependencies import get_user_with_permission
 from bson import ObjectId
 
 router = APIRouter(prefix="/attendance", tags=["Batch Attendance"])
 logger = logging.getLogger(__name__)
 
-# ============================================================================
+# Initialize RBAC service
+rbac_service = RBACService()
+
+
+# =====================================
 # HELPER FUNCTIONS
-# ============================================================================
+# =====================================
 
 def format_attendance_response(attendance_doc: Dict[str, Any]) -> Dict[str, Any]:
     """Format attendance document for API response"""
@@ -53,19 +60,20 @@ def format_attendance_response(attendance_doc: Dict[str, Any]) -> Dict[str, Any]
         "updated_at": attendance_doc["updated_at"].isoformat() if isinstance(attendance_doc["updated_at"], datetime) else attendance_doc["updated_at"]
     }
 
-# ============================================================================
-# ATTENDANCE MARKING ENDPOINTS
-# ============================================================================
+
+# =====================================
+# RBAC-ENABLED ATTENDANCE MARKING
+# =====================================
 
 @router.post("/mark", status_code=status.HTTP_201_CREATED)
 async def mark_session_attendance(
     attendance_data: BatchAttendanceCreate,
-    current_user: Dict[str, Any] = Depends(check_permission("attendance.mark"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("attendance.mark"))
 ):
     """
-    Mark attendance for a session
+    🔄 RBAC-ENABLED: Mark attendance for a session
     
-    Required permission: attendance.mark
+    **Required Permission:** `attendance.mark`
     
     This will:
     1. Create attendance records for all students
@@ -125,16 +133,17 @@ async def mark_session_attendance(
             detail=f"Failed to mark attendance: {str(e)}"
         )
 
+
 @router.put("/{attendance_id}")
 async def update_attendance_record(
     attendance_id: str,
     update_data: BatchAttendanceUpdate,
-    current_user: Dict[str, Any] = Depends(check_permission("attendance.edit"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("attendance.update"))
 ):
     """
-    Update a single attendance record (fix mistakes)
+    🔄 RBAC-ENABLED: Update a single attendance record (fix mistakes)
     
-    Required permission: attendance.edit
+    **Required Permission:** `attendance.update`
     
     This will:
     1. Update the attendance status
@@ -175,19 +184,20 @@ async def update_attendance_record(
             detail=f"Failed to update attendance: {str(e)}"
         )
 
-# ============================================================================
-# ATTENDANCE QUERY ENDPOINTS
-# ============================================================================
+
+# =====================================
+# RBAC-ENABLED ATTENDANCE QUERY
+# =====================================
 
 @router.get("/session/{session_id}")
 async def get_session_attendance(
     session_id: str,
-    current_user: Dict[str, Any] = Depends(check_permission("attendance.view"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("attendance.view"))
 ):
     """
-    Get all attendance records for a session
+    🔄 RBAC-ENABLED: Get all attendance records for a session
     
-    Required permission: attendance.view
+    **Required Permission:** `attendance.view`
     
     Returns attendance for all students in that session
     """
@@ -229,16 +239,17 @@ async def get_session_attendance(
             detail=f"Failed to fetch attendance: {str(e)}"
         )
 
+
 @router.get("/student/{lead_id}")
 async def get_student_attendance(
     lead_id: str,
     batch_id: Optional[str] = Query(None, description="Filter by specific batch"),
-    current_user: Dict[str, Any] = Depends(check_permission("attendance.view"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("attendance.view"))
 ):
     """
-    Get all attendance records for a student
+    🔄 RBAC-ENABLED: Get all attendance records for a student
     
-    Required permission: attendance.view
+    **Required Permission:** `attendance.view`
     
     Shows attendance history across all batches or specific batch
     """
@@ -265,19 +276,20 @@ async def get_student_attendance(
             detail=f"Failed to fetch student attendance: {str(e)}"
         )
 
-# ============================================================================
-# ATTENDANCE REPORTS
-# ============================================================================
+
+# =====================================
+# RBAC-ENABLED ATTENDANCE REPORTS
+# =====================================
 
 @router.get("/batch/{batch_id}/report")
 async def get_batch_attendance_report(
     batch_id: str,
-    current_user: Dict[str, Any] = Depends(check_permission("attendance.view"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("attendance.view"))
 ):
     """
-    Generate comprehensive attendance report for a batch
+    🔄 RBAC-ENABLED: Generate comprehensive attendance report for a batch
     
-    Required permission: attendance.view
+    **Required Permission:** `attendance.view`
     
     Returns:
     - Student-wise attendance summary
@@ -307,13 +319,16 @@ async def get_batch_attendance_report(
             detail=f"Failed to generate report: {str(e)}"
         )
 
+
 @router.get("/batch/{batch_id}/summary")
 async def get_batch_attendance_summary(
     batch_id: str,
-    current_user: Dict[str, Any] = Depends(check_permission("attendance.view"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("attendance.view"))
 ):
     """
-    Get quick attendance summary for a batch
+    🔄 RBAC-ENABLED: Get quick attendance summary for a batch
+    
+    **Required Permission:** `attendance.view`
     
     Returns aggregate statistics without detailed records
     """
@@ -372,16 +387,17 @@ async def get_batch_attendance_summary(
             detail=f"Failed to fetch summary: {str(e)}"
         )
 
+
 @router.get("/batch/{batch_id}/export")
 async def export_batch_attendance(
     batch_id: str,
     format: str = Query("csv", description="Export format: csv or excel"),
-    current_user: Dict[str, Any] = Depends(check_permission("attendance.view"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("attendance.export"))
 ):
     """
-    Export batch attendance data
+    🔄 RBAC-ENABLED: Export batch attendance data
     
-    Required permission: attendance.view
+    **Required Permission:** `attendance.export`
     
     Formats: csv, excel
     

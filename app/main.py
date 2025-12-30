@@ -1,6 +1,6 @@
-# app/main.py
-# 🔄 RBAC-ENABLED: Updated with Role-Based Access Control Support
-# ✅ Added: Permission seeding, default roles creation, RBAC routers
+# app/main.py - RBAC-ENABLED
+# 🔄 UPDATED: Complete 108-Permission RBAC System
+# ✅ Features: Permission seeding, default roles creation, RBAC routers
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,7 +21,7 @@ from .routers import (
     tata_auth, tata_calls, tata_users, bulk_whatsapp, realtime, notifications, 
     integrations, admin_calls, password_reset, cv_processing, facebook_leads, 
     automation_campaigns, fcm_notifications, fcm_test, groups,
-    roles, team  # 🆕 NEW: RBAC routers
+    roles, team, batches, batch_enrollments  # 🆕 RBAC routers
 )
 
 logging.basicConfig(
@@ -37,11 +37,11 @@ async def lifespan(app: FastAPI):
     logger.info("🚀 Starting LeadG CRM API...")
     await connect_to_mongo()
     
-    # 🆕 NEW: Seed RBAC permissions (69 permissions across 9 categories)
+    # 🔄 UPDATED: Seed RBAC permissions (108 permissions across 12 categories)
     await seed_rbac_permissions()
     logger.info("✅ RBAC permissions seeded")
     
-    # 🆕 NEW: Create default roles (Super Admin, Admin, User)
+    # 🔄 UPDATED: Create default roles (Super Admin, Admin, User)
     await create_default_roles()
     logger.info("✅ Default roles created")
     
@@ -104,7 +104,7 @@ async def lifespan(app: FastAPI):
     logger.info("✅ APPLICATION STARTUP COMPLETE")
     logger.info("=" * 60)
     logger.info("🎭 RBAC System: Enabled")
-    logger.info("🔑 Permissions: 69 across 9 categories")
+    logger.info("🔑 Permissions: 108 across 12 categories")  # 🔄 UPDATED
     logger.info("👥 Default Roles: Super Admin, Admin, User")
     logger.info("=" * 60)
     
@@ -135,20 +135,35 @@ async def lifespan(app: FastAPI):
 
 
 # ============================================================================
-# 🆕 NEW: RBAC INITIALIZATION FUNCTIONS
+# 🔄 UPDATED: RBAC INITIALIZATION FUNCTIONS (108-Permission System)
 # ============================================================================
 
 async def seed_rbac_permissions():
     """
-    Seed all 69 RBAC permissions into the database
+    🔄 UPDATED: Seed all 108 RBAC permissions into the database
     
     This function runs on startup and ensures all system permissions exist.
     If permissions already exist, it skips creation.
+    
+    **108 Permissions across 12 categories:**
+    - Lead Management (14 permissions)
+    - Contact Management (7 permissions)
+    - Task Management (9 permissions)
+    - Note Management (6 permissions)
+    - Document Management (7 permissions)
+    - User Management (8 permissions)
+    - Role & Permission Management (7 permissions)
+    - Team Management (6 permissions)
+    - Dashboard & Reporting (9 permissions)
+    - System Settings (7 permissions)
+    - Email & Communication (6 permissions)
+    - WhatsApp Management (22 permissions)
     """
     try:
-        from app.utils.seed_permissions import seed_permissions
+        # 🔄 UPDATED: Import v2 seed file (108 permissions)
+        from app.utils.seed_permissions_v2 import seed_permissions
         
-        logger.info("🔑 Seeding RBAC permissions...")
+        logger.info("🔑 Seeding RBAC permissions (108 permissions)...")
         
         result = await seed_permissions(
             mongodb_url=settings.mongodb_url,
@@ -171,17 +186,19 @@ async def seed_rbac_permissions():
 
 async def create_default_roles():
     """
-    Create 3 default system roles:
-    - Super Admin (69/69 permissions)
-    - Admin (57/69 permissions)
-    - User (24/69 permissions)
+    🔄 UPDATED: Create 3 default system roles for 108-permission system
+    
+    - Super Admin (108/108 permissions) - Full system access
+    - Admin (85/108 permissions) - Most management capabilities
+    - User (28/108 permissions) - Basic user operations
     
     This function runs on startup and ensures default roles exist.
     """
     try:
-        from app.utils.create_default_roles import create_default_roles as create_roles_func
+        # 🔄 UPDATED: Import v2 create roles file (108 permissions)
+        from app.utils.create_default_roles_v2 import create_default_roles as create_roles_func
         
-        logger.info("🎭 Creating default roles...")
+        logger.info("🎭 Creating default roles (108-permission system)...")
         
         result = await create_roles_func(
             mongodb_url=settings.mongodb_url,
@@ -230,7 +247,8 @@ async def create_super_admin_from_env():
             logger.info("   - SUPER_ADMIN_PASSWORD=SecurePassword123!")
             return
         
-        from app.utils.create_default_roles import create_super_admin_user
+        # 🔄 UPDATED: Import v2 create roles file
+        from app.utils.create_default_roles_v2 import create_super_admin_user
         
         logger.info(f"👤 Creating super admin user: {super_admin_email}")
         
@@ -547,7 +565,7 @@ async def cleanup_realtime_connections():
 app = FastAPI(
     title=settings.app_name,
     version=settings.version,
-    description="LeadG CRM - Customer Relationship Management API with RBAC, Real-time WhatsApp, Email, Granular Permissions, Call Analytics and Skillang Integration",
+    description="LeadG CRM - Customer Relationship Management API with 108-Permission RBAC, Real-time WhatsApp, Email, Granular Permissions, Call Analytics and Skillang Integration",
     lifespan=lifespan,
     docs_url="/docs" if settings.debug else None,
     redoc_url="/redoc" if settings.debug else None,
@@ -583,14 +601,14 @@ async def health_check():
         "status": "healthy",
         "message": "LeadG CRM API is running",
         "version": settings.version,
-        "rbac_enabled": True,  # 🆕 NEW
+        "rbac_enabled": True,
         "modules": [
             "auth", "leads", "tasks", "notes", "documents", "timeline", "contacts", 
             "stages", "statuses", "course-levels", "sources", "whatsapp", "realtime", 
             "emails", "permissions", "tata-auth", "tata-calls", "tata-users", 
             "bulk-whatsapp", "integrations", "admin-calls", "cv-processing",
             "automation-campaigns", "groups",
-            "roles", "team"  # 🆕 NEW: RBAC modules
+            "roles", "team"  # RBAC modules
         ]
     }
 
@@ -598,12 +616,12 @@ async def health_check():
 @app.get("/")
 async def root():
     return {
-        "message": "Welcome to LeadG CRM API with RBAC",
+        "message": "Welcome to LeadG CRM API with 108-Permission RBAC",
         "version": settings.version,
-        "rbac": {  # 🆕 NEW
+        "rbac": {
             "enabled": True,
-            "permissions": 69,
-            "categories": 9,
+            "permissions": 108,  # 🔄 UPDATED
+            "categories": 12,    # 🔄 UPDATED
             "default_roles": ["super_admin", "admin", "user"]
         },
         "docs": "/docs" if settings.debug else "Docs disabled in production",
@@ -624,8 +642,8 @@ async def root():
             "realtime": "/realtime",
             "emails": "/emails",
             "permissions": "/permissions",
-            "roles": "/roles",  # 🆕 NEW
-            "team": "/team",  # 🆕 NEW
+            "roles": "/roles",
+            "team": "/team",
             "tata-auth": "/tata-auth",
             "tata-calls": "/tata-calls",
             "tata-users": "/tata-users",
@@ -746,7 +764,7 @@ app.include_router(
     tags=["Permissions"]
 )
 
-# 🆕 NEW: RBAC Routers
+# 🔄 UPDATED: RBAC Routers
 app.include_router(
     roles.router,
     prefix="/roles",
@@ -828,6 +846,17 @@ app.include_router(
     fcm_test.router,
     prefix="/fcm-test",
     tags=["FCM Testing"]
+)
+
+app.include_router(
+    batches.router,
+    tags=["Batches"]
+)
+
+app.include_router(
+    batch_enrollments.router,
+    prefix="/batches",
+    tags=["Batch Enrollments"]
 )
 
 

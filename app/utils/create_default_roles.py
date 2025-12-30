@@ -1,5 +1,5 @@
 # app/utils/create_default_roles.py
-# 🎭 RBAC Default Roles Creation Utility
+# 🎭 RBAC Default Roles Creation Utility - UPDATED for 108 Permissions
 # Creates 3 system roles: Super Admin, Admin, User with proper permission distribution
 
 import asyncio
@@ -13,15 +13,15 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================================
-# 🎯 ROLE DEFINITIONS - 3 DEFAULT SYSTEM ROLES
+# 🎯 ROLE DEFINITIONS - 3 DEFAULT SYSTEM ROLES (108 Permissions)
 # ============================================================================
 
 async def get_all_permission_codes(db) -> List[str]:
     """
-    Get all 69 permission codes from database
+    Get all 108 permission codes from database
     
     Returns list of permission codes like:
-    ['lead.create', 'lead.read_own', 'contact.create', ...]
+    ['lead.view', 'lead.add_single', 'contact.add', ...]
     """
     try:
         permissions = await db.permissions.find(
@@ -40,19 +40,19 @@ async def get_all_permission_codes(db) -> List[str]:
 
 def get_super_admin_role_definition(all_permissions: List[str]) -> Dict[str, Any]:
     """
-    🔴 SUPER ADMIN ROLE - ALL 69 PERMISSIONS
+    🔴 SUPER ADMIN ROLE - ALL 108 PERMISSIONS
     
     Full system access with all permissions.
     - Can do EVERYTHING
     - Cannot be deleted
     - Only one super admin recommended
     
-    **Permission Count:** 69/69 (100%)
+    **Permission Count:** 108/108 (100%)
     """
     return {
         "name": "super_admin",
         "display_name": "Super Admin",
-        "description": "Full system access with all 69 permissions. Can manage roles, users, and all system data. Cannot be deleted.",
+        "description": "Full system access with all 108 permissions. Can manage roles, users, and all system data. Cannot be deleted.",
         "type": "system",
         "is_active": True,
         "permissions": [
@@ -82,115 +82,187 @@ def get_super_admin_role_definition(all_permissions: List[str]) -> Dict[str, Any
 
 def get_admin_role_definition() -> Dict[str, Any]:
     """
-    🟡 ADMIN ROLE - 57/69 PERMISSIONS (83%)
+    🟡 ADMIN ROLE - 85/108 PERMISSIONS (79%)
     
     Administrative access with user and data management.
-    - Can manage users, leads, contacts, tasks
+    - Can manage users, leads, contacts, tasks, documents, notes
     - Can view all data and reports
-    - CANNOT manage roles (no role.create/update/delete)
-    - CANNOT override permissions
-    - CANNOT view system logs
+    - Can manage teams
+    - Can manage system configuration
+    - CANNOT delete roles (only view/update)
+    - CANNOT delete users
+    - CANNOT view permission overrides
     
-    **Permission Count:** 57/69 (83%)
-    **Missing:** Role management, permission overrides, system logs, team ownership transfer
+    **Permission Count:** 85/108 (79%)
+    **Missing:** Some dangerous system operations
     """
     admin_permissions = [
-        # ✅ LEAD MANAGEMENT (14/14) - ALL
-        "lead.create",
-        "lead.read_own",
-        "lead.read_team",
-        "lead.read_all",
-        "lead.update_own",
-        "lead.update_team",
-        "lead.update_all",
-        "lead.delete_own",
-        "lead.delete_all",
-        "lead.assign",
-        "lead.bulk_create",
-        "lead.export",
-        "lead.change_status",
-        "lead.view_history",
+        # ✅ DASHBOARD & REPORTING (6/6) - ALL
+        "dashboard.view",
+        "dashboard.view_team",
+        "dashboard.view_all",
+        "report.view",
+        "report.view_team",
+        "report.view_all",
         
-        # ✅ CONTACT MANAGEMENT (7/7) - ALL
-        "contact.create",
-        "contact.read_own",
-        "contact.read_all",
+        # ✅ LEAD MANAGEMENT (17/17) - ALL
+        # My Leads (10)
+        "lead.view",
+        "lead.view_team",
+        "lead.view_all",
+        "lead.add_single",
+        "lead.add_bulk",
+        "lead.add_via_cv",
+        "lead.update",
+        "lead.update_all",
+        "lead.export",
+        "lead.assign",
+        
+        # Lead Groups (7)
+        "lead_group.view",
+        "lead_group.view_team",
+        "lead_group.view_all",
+        "lead_group.create",
+        "lead_group.add",
+        "lead_group.delete",
+        "lead_group.update",
+        
+        # ✅ CONTACT MANAGEMENT (6/6) - ALL
+        "contact.view",
+        "contact.view_all",
+        "contact.add",
         "contact.update_own",
         "contact.update_all",
         "contact.delete",
-        "contact.export",
         
-        # ✅ TASK MANAGEMENT (9/9) - ALL
-        "task.create",
-        "task.read_own",
-        "task.read_team",
-        "task.read_all",
-        "task.update",
-        "task.complete",
-        "task.delete",
-        "task.assign",
-        "task.change_priority",
+        # ✅ TASK MANAGEMENT (8/8) - ALL
+        "task.view",
+        "task.view_all",
+        "task.add",
+        "task.update_own",
+        "task.update_team",
+        "task.delete_own",
+        "task.delete_team",
+        "task.delete_all",
         
-        # ✅ USER MANAGEMENT (8/8) - ALL
+        # 🟡 USER MANAGEMENT (4/5) - MOST
         "user.create",
-        "user.read",
+        "user.view",
+        # ❌ "user.delete",        # Cannot delete users (super admin only)
         "user.update",
-        "user.delete",
-        "user.activate_deactivate",
         "user.reset_password",
-        "user.view_activity",
-        "user.manage_departments",
         
-        # 🟡 ROLE & PERMISSION MANAGEMENT (3/7) - LIMITED
-        "role.read",           # ✅ Can view roles
-        "role.assign",         # ✅ Can assign roles to users
-        "permission.read",     # ✅ Can view permissions
-        # ❌ role.create       # Cannot create roles
-        # ❌ role.update       # Cannot modify roles
-        # ❌ role.delete       # Cannot delete roles
-        # ❌ permission.manage # Cannot override permissions
+        # 🟡 ROLE & PERMISSION MANAGEMENT (4/5) - MOST
+        "role.create",
+        "role.read",
+        "role.update",
+        # ❌ "role.delete",        # Cannot delete roles (super admin only)
+        "permission.view",
         
-        # ✅ DASHBOARD & REPORTING (9/9) - ALL
-        "dashboard.view_own",
-        "dashboard.view_team",
-        "dashboard.view_all",
-        "report.generate_own",
-        "report.generate_team",
-        "report.generate_all",
-        "report.schedule",
-        "analytics.view_advanced",
-        "analytics.export",
+        # ✅ SYSTEM CONFIGURATION (24/24) - ALL
+        # Department (4)
+        "department.create",
+        "department.edit",
+        "department.view",
+        "department.delete",
         
-        # 🟡 SYSTEM SETTINGS (6/7) - MOST
-        "settings.view",
-        "settings.update",
-        "department.manage",
-        "stage.manage",
-        "status.manage",
-        "source.manage",
-        # ❌ system.manage     # Cannot access system logs
+        # Lead Category (4)
+        "lead_category.create",
+        "lead_category.edit",
+        "lead_category.view",
+        "lead_category.delete",
         
-        # ✅ EMAIL & COMMUNICATION (6/6) - ALL
+        # Status (4)
+        "status.create",
+        "status.edit",
+        "status.view",
+        "status.delete",
+        
+        # Stages (4)
+        "stage.create",
+        "stage.edit",
+        "stage.view",
+        "stage.delete",
+        
+        # Course Level (4)
+        "course_level.create",
+        "course_level.edit",
+        "course_level.view",
+        "course_level.delete",
+        
+        # Lead Source (4)
+        "source.create",
+        "source.edit",
+        "source.view",
+        "source.delete",
+        
+        # ✅ COMMUNICATION (10/10) - ALL
+        # Email (4)
         "email.send_single",
         "email.send_bulk",
-        "email.view_templates",
-        "email.manage_templates",
-        "whatsapp.send",
-        "call.make",
+        "email.single_history",
+        "email.bulk_history",
         
-        # 🟡 TEAM MANAGEMENT (5/6) - MOST
-        "team.view_structure",
-        "team.manage_hierarchy",
-        "team.assign_members",
-        "team.view_performance",
-        "team.manage_targets",
-        # ❌ team.transfer_ownership # Only super admin can transfer ownership
+        # WhatsApp (4)
+        "whatsapp.send_single",
+        "whatsapp.send_bulk",
+        "whatsapp.history_single",
+        "whatsapp.history_bulk",
+        
+        # Call (2)
+        "call.make",
+        "call.history",
+        
+        # ✅ TEAM MANAGEMENT (5/5) - ALL
+        "team.view",
+        "team.view_all",
+        "team.create",
+        "team.update",
+        "team.delete",
+        
+        # ✅ CONTENT & ACTIVITY (10/10) - ALL
+        # Notes (4)
+        "note.view",
+        "note.add",
+        "note.delete",
+        "note.update",
+        
+        # Timeline (1)
+        "timeline.view",
+        
+        # Documents (5)
+        "document.view",
+        "document.view_all",
+        "document.add",
+        "document.delete",
+        "document.update",
+        
+        # ✅ SPECIALIZED MODULES (12/12) - ALL
+        # Attendance (4)
+        "attendance.view",
+        "attendance.add",
+        "attendance.delete",
+        "attendance.update",
+        
+        # Facebook Leads (2)
+        "facebook_leads.view",
+        "facebook_leads.convert",
+        
+        # Batch (5)
+        "batch.create",
+        "batch.view",
+        "batch.add",
+        "batch.delete",
+        "batch.update",
+        
+        # Notification (1)
+        "notification.view"
     ]
     
     return {
         "name": "admin",
         "display_name": "Admin",
-        "description": "Administrative access with user and data management capabilities. Can manage users and view all data, but cannot modify system roles or access system logs. (57/69 permissions)",
+        "description": "Administrative access with user and data management capabilities. Can manage users and view all data, but cannot delete users or roles. (85/108 permissions)",
         "type": "system",
         "is_active": True,
         "permissions": [
@@ -220,79 +292,110 @@ def get_admin_role_definition() -> Dict[str, Any]:
 
 def get_user_role_definition() -> Dict[str, Any]:
     """
-    🟢 USER ROLE - 24/69 PERMISSIONS (35%)
+    🟢 USER ROLE - 28/108 PERMISSIONS (26%)
     
     Standard user with access to their own data.
-    - Can manage own leads, contacts, tasks
+    - Can manage own leads, contacts, tasks, notes, documents
     - Can view own dashboard and generate own reports
+    - Can send communications
     - CANNOT manage other users
     - CANNOT assign leads
     - CANNOT view all data
     - CANNOT manage system settings
+    - CANNOT manage teams
     
-    **Permission Count:** 24/69 (35%)
+    **Permission Count:** 28/108 (26%)
     **Scope:** Primarily "own" scope permissions
     """
     user_permissions = [
-        # ✅ LEAD MANAGEMENT (6/14) - OWN SCOPE ONLY
-        "lead.create",
-        "lead.read_own",
-        "lead.update_own",
-        "lead.delete_own",
-        "lead.change_status",
-        "lead.view_history",
-        # ❌ No read_team, read_all, update_all, assign, bulk_create, export
+        # ✅ DASHBOARD & REPORTING (2/6) - OWN ONLY
+        "dashboard.view",
+        "report.view",
+        # ❌ No team/all views
         
-        # ✅ CONTACT MANAGEMENT (3/7) - OWN SCOPE ONLY
-        "contact.create",
-        "contact.read_own",
+        # ✅ LEAD MANAGEMENT (4/17) - OWN SCOPE ONLY
+        # My Leads
+        "lead.view",
+        "lead.add_single",
+        "lead.update",
+        "lead.add_via_cv",
+        # ❌ No view_team, view_all, add_bulk, update_all, export, assign
+        # ❌ No lead groups
+        
+        # ✅ CONTACT MANAGEMENT (3/6) - OWN SCOPE ONLY
+        "contact.view",
+        "contact.add",
         "contact.update_own",
-        # ❌ No read_all, update_all, delete, export
+        # ❌ No view_all, update_all, delete
         
-        # ✅ TASK MANAGEMENT (5/9) - OWN SCOPE ONLY
-        "task.create",
-        "task.read_own",
-        "task.update",
-        "task.complete",
-        "task.change_priority",
-        # ❌ No read_team, read_all, delete, assign
+        # ✅ TASK MANAGEMENT (3/8) - OWN SCOPE ONLY
+        "task.view",
+        "task.add",
+        "task.update_own",
+        # ❌ No view_all, update_team, delete operations
         
-        # ❌ USER MANAGEMENT (0/8) - NONE
+        # ❌ USER MANAGEMENT (0/5) - NONE
         # Cannot manage any users
         
-        # ❌ ROLE & PERMISSION MANAGEMENT (0/7) - NONE
+        # ❌ ROLE & PERMISSION MANAGEMENT (0/5) - NONE
         # Cannot manage roles or permissions
         
-        # ✅ DASHBOARD & REPORTING (2/9) - OWN ONLY
-        "dashboard.view_own",
-        "report.generate_own",
-        # ❌ No team/all views, no scheduling, no analytics
+        # ❌ SYSTEM CONFIGURATION (0/24) - NONE
+        # Cannot manage any system configuration
         
-        # ✅ SYSTEM SETTINGS (1/7) - VIEW ONLY
-        "settings.view",
-        # ❌ Cannot update any settings
-        
-        # ✅ EMAIL & COMMUNICATION (4/6) - LIMITED
+        # ✅ COMMUNICATION (6/10) - LIMITED
+        # Email (2)
         "email.send_single",
-        "email.view_templates",
-        "whatsapp.send",
+        "email.single_history",
+        # ❌ No bulk email
+        
+        # WhatsApp (2)
+        "whatsapp.send_single",
+        "whatsapp.history_single",
+        # ❌ No bulk WhatsApp
+        
+        # Call (2)
         "call.make",
-        # ❌ No bulk email, no template management
+        "call.history",
         
-        # ✅ TEAM MANAGEMENT (1/6) - VIEW ONLY
-        "team.view_structure",
-        # ❌ Cannot manage hierarchy, assign members, etc.
+        # ✅ TEAM MANAGEMENT (1/5) - VIEW ONLY
+        "team.view",
+        # ❌ Cannot manage teams
         
-        # ✅ NOTES & DOCUMENTS (2/3) - OWN ONLY
-        "note.create",
-        "note.read_own",
-        # ❌ No delete
+        # ✅ CONTENT & ACTIVITY (6/10) - OWN ONLY
+        # Notes (4)
+        "note.view",
+        "note.add",
+        "note.delete",
+        "note.update",
+        
+        # Timeline (1)
+        "timeline.view",
+        
+        # Documents (1)
+        "document.view",
+        # ❌ No document.add, delete, update, view_all
+        
+        # ✅ SPECIALIZED MODULES (3/12) - LIMITED
+        # Attendance (2)
+        "attendance.view",
+        "attendance.add",
+        # ❌ No delete, update
+        
+        # Batch (1)
+        "batch.view",
+        # ❌ No create, add, delete, update
+        
+        # Notification (1) - Changed from 0 to 1
+        "notification.view",
+        
+        # ❌ No Facebook Leads
     ]
     
     return {
         "name": "user",
         "display_name": "User",
-        "description": "Standard user with access to their own data and basic operations. Can manage own leads, contacts, and tasks. (24/69 permissions)",
+        "description": "Standard user with access to their own data and basic operations. Can manage own leads, contacts, tasks, and notes. (28/108 permissions)",
         "type": "system",
         "is_active": True,
         "permissions": [
@@ -332,9 +435,9 @@ async def create_default_roles(
     Create the 3 default system roles
     
     **Roles Created:**
-    1. Super Admin - 69/69 permissions (100%)
-    2. Admin - 57/69 permissions (83%)
-    3. User - 24/69 permissions (35%)
+    1. Super Admin - 108/108 permissions (100%)
+    2. Admin - 85/108 permissions (79%)
+    3. User - 28/108 permissions (26%)
     
     Args:
         mongodb_url: MongoDB connection URL
@@ -345,7 +448,7 @@ async def create_default_roles(
     """
     client = None
     try:
-        logger.info("🎭 Creating default roles...")
+        logger.info("🎭 Creating default roles (v2 - 108 permissions)...")
         logger.info(f"📦 Database: {database_name}")
         
         # Connect to MongoDB
@@ -394,11 +497,15 @@ async def create_default_roles(
         
         logger.info(f"📋 Found {len(all_permissions)} permissions in database")
         
+        if len(all_permissions) != 108:
+            logger.warning(f"⚠️  Expected 108 permissions, found {len(all_permissions)}")
+            logger.warning(f"⚠️  This may indicate incomplete permission seeding")
+        
         # Define the 3 default roles
         roles_to_create = [
-            get_super_admin_role_definition(all_permissions),  # 69/69 permissions
-            get_admin_role_definition(),                       # 57/69 permissions
-            get_user_role_definition()                         # 24/69 permissions
+            get_super_admin_role_definition(all_permissions),  # 108/108 permissions
+            get_admin_role_definition(),                       # 85/108 permissions
+            get_user_role_definition()                         # 28/108 permissions
         ]
         
         created_roles = []
@@ -468,9 +575,9 @@ async def create_default_roles(
             "roles": created_roles,
             "skipped": False,
             "summary": {
-                "super_admin": "69/69 permissions (100%)",
-                "admin": "57/69 permissions (83%)",
-                "user": "24/69 permissions (35%)"
+                "super_admin": "108/108 permissions (100%)",
+                "admin": "85/108 permissions (79%)",
+                "user": "28/108 permissions (26%)"
             }
         }
         
@@ -506,7 +613,7 @@ async def create_super_admin_user(
     **What This Does:**
     1. Creates user with super_admin role
     2. Sets is_super_admin flag
-    3. Computes all 69 permissions
+    3. Computes all 108 permissions
     4. Updates role users_count
     
     Args:
@@ -621,7 +728,7 @@ async def create_super_admin_user(
             "team_members": [],
             "team_level": 0,
             "permission_overrides": [],
-            "effective_permissions": all_permissions,  # All 69 permissions
+            "effective_permissions": all_permissions,  # All 108 permissions
             "permissions_last_computed": datetime.utcnow(),
             
             # Lead Assignment
@@ -654,7 +761,7 @@ async def create_super_admin_user(
         logger.info(f"📧 Email: {email}")
         logger.info(f"🆔 User ID: {user_id}")
         logger.info(f"🎭 Role: Super Admin")
-        logger.info(f"🔑 Permissions: {len(all_permissions)}/69 (100%)")
+        logger.info(f"🔑 Permissions: {len(all_permissions)}/108 (100%)")
         logger.info("=" * 60)
         
         return {
@@ -709,7 +816,7 @@ async def main():
     load_dotenv()
     
     logger.info("=" * 60)
-    logger.info("🎭 LEADG CRM - DEFAULT ROLES SETUP")
+    logger.info("🎭 LEADG CRM - DEFAULT ROLES SETUP (v2 - 108 Permissions)")
     logger.info("=" * 60)
     
     # Get database config

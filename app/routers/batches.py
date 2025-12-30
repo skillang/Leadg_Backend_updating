@@ -1,6 +1,8 @@
 """
-Batch Management API Routes
+Batch Management API Routes - RBAC-Enabled
 Handles batch CRUD operations, listing, and statistics
+🔄 UPDATED: Manual permission checks replaced with RBAC (108 permissions)
+✅ All endpoints now use permission-based access control
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -18,15 +20,20 @@ from ..models.batch import (
 )
 from ..services.batch_service import batch_service
 from ..services.batch_session_service import batch_session_service
-from ..config.auth import get_current_user, check_permission
+from ..services.rbac_service import RBACService
+from ..utils.dependencies import get_current_active_user, get_user_with_permission
 from bson import ObjectId
 
 router = APIRouter(prefix="/batches", tags=["Batches"])
 logger = logging.getLogger(__name__)
 
-# ============================================================================
+# Initialize RBAC service
+rbac_service = RBACService()
+
+
+# =====================================
 # HELPER FUNCTIONS
-# ============================================================================
+# =====================================
 
 def format_batch_response(batch_doc: Dict[str, Any]) -> Dict[str, Any]:
     """Format batch document for API response"""
@@ -59,6 +66,7 @@ def format_batch_response(batch_doc: Dict[str, Any]) -> Dict[str, Any]:
         "updated_at": batch_doc["updated_at"].isoformat() if isinstance(batch_doc["updated_at"], datetime) else batch_doc["updated_at"]
     }
 
+
 def convert_objectid_to_str(obj):
     """Recursively convert ObjectId to string in nested structures"""
     if isinstance(obj, ObjectId):
@@ -70,19 +78,20 @@ def convert_objectid_to_str(obj):
     else:
         return obj
 
-# ============================================================================
-# BATCH CRUD ENDPOINTS
-# ============================================================================
+
+# =====================================
+# RBAC-ENABLED BATCH CRUD
+# =====================================
 
 @router.post("/", status_code=status.HTTP_201_CREATED)
 async def create_batch(
     batch_data: BatchCreate,
-    current_user: Dict[str, Any] = Depends(check_permission("batch.create"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("batch.add"))
 ):
     """
-    Create a new batch with auto-generated sessions
+    🔄 RBAC-ENABLED: Create a new batch with auto-generated sessions
     
-    Required permission: batch.create
+    **Required Permission:** `batch.add`
     
     This will:
     1. Create the batch
@@ -120,6 +129,7 @@ async def create_batch(
             detail=f"Failed to create batch: {str(e)}"
         )
 
+
 @router.get("/")
 async def list_batches(
     # Filters
@@ -138,14 +148,14 @@ async def list_batches(
     sort_by: str = Query("created_at", description="Field to sort by"),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     
-    current_user: Dict[str, Any] = Depends(get_current_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("batch.view"))
 ):
     """
-    List batches with filtering, pagination, and sorting
+    🔄 RBAC-ENABLED: List batches with filtering, pagination, and sorting
     
-    Permissions:
-    - batch.read_all: See all batches
-    - batch.read_own: See only batches where user is trainer
+    **Required Permission:**
+    - `batch.view` - View own batches (where user is trainer)
+    - `batch.view_all` - View all batches (admin)
     
     Filters:
     - batch_type: Filter by type (demo, training, etc.)
@@ -155,15 +165,8 @@ async def list_batches(
     - search: Search in batch name
     """
     try:
-        # Check permissions
-        has_read_all = current_user.get("permissions", {}).get("batch.read_all", False)
-        has_read_own = current_user.get("permissions", {}).get("batch.read_own", False)
-        
-        if not has_read_all and not has_read_own:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="No permission to view batches"
-            )
+        # Check permissions using RBAC
+        has_view_all = await rbac_service.check_permission(current_user, "batch.view_all")
         
         # Build filters
         filters = {}
@@ -183,8 +186,8 @@ async def list_batches(
         if start_date_to:
             filters["start_date_to"] = start_date_to
         
-        # If user has only read_own permission, filter by trainer
-        if has_read_own and not has_read_all:
+        # If user doesn't have view_all permission, filter by trainer
+        if not has_view_all:
             filters["trainer_id"] = str(current_user["_id"])
         elif trainer_id:
             # Admin can filter by any trainer
@@ -217,17 +220,18 @@ async def list_batches(
             detail=f"Failed to list batches: {str(e)}"
         )
 
+
 @router.get("/{batch_id}")
 async def get_batch(
     batch_id: str,
-    current_user: Dict[str, Any] = Depends(get_current_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("batch.view"))
 ):
     """
-    Get detailed information about a specific batch
+    🔄 RBAC-ENABLED: Get detailed information about a specific batch
     
-    Permissions checked:
-    - batch.read_all OR
-    - batch.read_own (if user is the trainer)
+    **Required Permission:**
+    - `batch.view` - View own batches (must be trainer)
+    - `batch.view_all` - View any batch (admin)
     """
     try:
         # Fetch batch
@@ -239,18 +243,15 @@ async def get_batch(
                 detail=f"Batch {batch_id} not found"
             )
         
-        # Check permissions
-        has_read_all = current_user.get("permissions", {}).get("batch.read_all", False)
-        has_read_own = current_user.get("permissions", {}).get("batch.read_own", False)
+        # Check permissions using RBAC
+        has_view_all = await rbac_service.check_permission(current_user, "batch.view_all")
         
-        if not has_read_all:
+        if not has_view_all:
             # Check if user is the trainer
-            if has_read_own and batch["trainer"]["user_id"] == str(current_user["_id"]):
-                pass  # Allow access
-            else:
+            if batch["trainer"]["user_id"] != str(current_user["_id"]):
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
-                    detail="No permission to view this batch"
+                    detail="You don't have permission to view this batch"
                 )
         
         # Format response
@@ -270,16 +271,17 @@ async def get_batch(
             detail=f"Failed to fetch batch: {str(e)}"
         )
 
+
 @router.put("/{batch_id}")
 async def update_batch(
     batch_id: str,
     update_data: BatchUpdate,
-    current_user: Dict[str, Any] = Depends(check_permission("batch.update"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("batch.update"))
 ):
     """
-    Update batch details
+    🔄 RBAC-ENABLED: Update batch details
     
-    Required permission: batch.update
+    **Required Permission:** `batch.update`
     
     Note: Cannot update start_date, duration_weeks, or class_days after creation
     """
@@ -317,16 +319,17 @@ async def update_batch(
             detail=f"Failed to update batch: {str(e)}"
         )
 
+
 @router.delete("/{batch_id}")
 async def delete_batch(
     batch_id: str,
     force: bool = Query(False, description="Force delete even with enrollments"),
-    current_user: Dict[str, Any] = Depends(check_permission("batch.delete"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("batch.delete"))
 ):
     """
-    Delete a batch
+    🔄 RBAC-ENABLED: Delete a batch
     
-    Required permission: batch.delete
+    **Required Permission:** `batch.delete`
     
     By default, cannot delete batches with active enrollments.
     Use force=true to override.
@@ -362,18 +365,21 @@ async def delete_batch(
             detail=f"Failed to delete batch: {str(e)}"
         )
 
-# ============================================================================
-# BATCH SESSIONS ENDPOINTS
-# ============================================================================
+
+# =====================================
+# RBAC-ENABLED BATCH SESSIONS
+# =====================================
 
 @router.get("/{batch_id}/sessions")
 async def get_batch_sessions(
     batch_id: str,
     session_status: Optional[str] = Query(None, description="Filter by session status"),
-    current_user: Dict[str, Any] = Depends(get_current_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("batch.view"))
 ):
     """
-    Get all sessions for a batch
+    🔄 RBAC-ENABLED: Get all sessions for a batch
+    
+    **Required Permission:** `batch.view`
     
     Returns sessions sorted by session_number
     """
@@ -386,6 +392,17 @@ async def get_batch_sessions(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Batch {batch_id} not found"
             )
+        
+        # Check permissions using RBAC
+        has_view_all = await rbac_service.check_permission(current_user, "batch.view_all")
+        
+        if not has_view_all:
+            # Check if user is the trainer
+            if batch["trainer"]["user_id"] != str(current_user["_id"]):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="You don't have permission to view sessions for this batch"
+                )
         
         # Fetch sessions
         sessions = await batch_session_service.get_batch_sessions(
@@ -411,13 +428,16 @@ async def get_batch_sessions(
             detail=f"Failed to fetch sessions: {str(e)}"
         )
 
+
 @router.get("/{batch_id}/sessions/pending-attendance")
 async def get_pending_attendance_sessions(
     batch_id: str,
-    current_user: Dict[str, Any] = Depends(check_permission("attendance.mark"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("attendance.mark"))
 ):
     """
-    Get sessions where attendance hasn't been marked yet
+    🔄 RBAC-ENABLED: Get sessions where attendance hasn't been marked yet
+    
+    **Required Permission:** `attendance.mark`
     
     Useful for trainers to see which sessions need attendance
     """
@@ -439,17 +459,20 @@ async def get_pending_attendance_sessions(
             detail=f"Failed to fetch pending sessions: {str(e)}"
         )
 
-# ============================================================================
-# BATCH STATISTICS ENDPOINTS
-# ============================================================================
+
+# =====================================
+# RBAC-ENABLED BATCH STATISTICS
+# =====================================
 
 @router.get("/{batch_id}/stats")
 async def get_batch_statistics(
     batch_id: str,
-    current_user: Dict[str, Any] = Depends(get_current_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("batch.view"))
 ):
     """
-    Get comprehensive statistics for a batch
+    🔄 RBAC-ENABLED: Get comprehensive statistics for a batch
+    
+    **Required Permission:** `batch.view`
     
     Includes:
     - Enrollment stats
@@ -457,6 +480,26 @@ async def get_batch_statistics(
     - Average attendance
     """
     try:
+        # Check batch access
+        batch = await batch_service.get_batch_by_id(batch_id)
+        
+        if not batch:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Batch {batch_id} not found"
+            )
+        
+        # Check permissions using RBAC
+        has_view_all = await rbac_service.check_permission(current_user, "batch.view_all")
+        
+        if not has_view_all:
+            # Check if user is the trainer
+            if batch["trainer"]["user_id"] != str(current_user["_id"]):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="You don't have permission to view stats for this batch"
+                )
+        
         stats = await batch_service.get_batch_stats(batch_id)
         
         if "error" in stats:
@@ -479,14 +522,15 @@ async def get_batch_statistics(
             detail=f"Failed to fetch batch statistics: {str(e)}"
         )
 
+
 @router.get("/summary/all")
 async def get_all_batches_summary(
-    current_user: Dict[str, Any] = Depends(check_permission("batch.read_all"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("batch.view_all"))
 ):
     """
-    Get summary statistics for all batches
+    🔄 RBAC-ENABLED: Get summary statistics for all batches
     
-    Required permission: batch.read_all
+    **Required Permission:** `batch.view_all`
     
     Returns:
     - Total batches
@@ -509,13 +553,16 @@ async def get_all_batches_summary(
             detail=f"Failed to fetch summary: {str(e)}"
         )
 
+
 @router.get("/{batch_id}/capacity")
 async def check_batch_capacity(
     batch_id: str,
-    current_user: Dict[str, Any] = Depends(get_current_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("batch.view"))
 ):
     """
-    Check available capacity in a batch
+    🔄 RBAC-ENABLED: Check available capacity in a batch
+    
+    **Required Permission:** `batch.view`
     
     Returns:
     - Max capacity
@@ -538,19 +585,20 @@ async def check_batch_capacity(
             detail=f"Failed to check capacity: {str(e)}"
         )
 
-# ============================================================================
+
+# =====================================
 # TRAINER-SPECIFIC ENDPOINTS
-# ============================================================================
+# =====================================
 
 @router.get("/my/batches")
 async def get_my_batches(
     status: Optional[BatchStatus] = None,
-    current_user: Dict[str, Any] = Depends(check_permission("batch.read_own"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("batch.view"))
 ):
     """
-    Get all batches where current user is the trainer
+    🔄 RBAC-ENABLED: Get all batches where current user is the trainer
     
-    Required permission: batch.read_own
+    **Required Permission:** `batch.view`
     """
     try:
         batches = await batch_service.get_trainer_batches(
@@ -573,22 +621,25 @@ async def get_my_batches(
             detail=f"Failed to fetch your batches: {str(e)}"
         )
 
+
 @router.get("/today/sessions")
 async def get_today_sessions(
-    current_user: Dict[str, Any] = Depends(get_current_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("batch.view"))
 ):
     """
-    Get all sessions scheduled for today
+    🔄 RBAC-ENABLED: Get all sessions scheduled for today
+    
+    **Required Permission:** `batch.view`
     
     Useful for trainer dashboard
     """
     try:
         sessions = await batch_session_service.get_today_sessions()
         
-        # Filter by trainer if user has read_own permission only
-        has_read_all = current_user.get("permissions", {}).get("batch.read_all", False)
+        # Check permissions using RBAC
+        has_view_all = await rbac_service.check_permission(current_user, "batch.view_all")
         
-        if not has_read_all:
+        if not has_view_all:
             # Filter sessions by trainer
             user_id = str(current_user["_id"])
             filtered_sessions = []

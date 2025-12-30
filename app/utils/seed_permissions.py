@@ -1,4 +1,5 @@
-
+# app/utils/seed_permissions.py
+# 🔄 UPDATED: 108 Permissions across 11 Categories
 
 import asyncio
 import logging
@@ -10,156 +11,205 @@ logger = logging.getLogger(__name__)
 
 
 # ========================================
-# PERMISSION DEFINITIONS (69 Total)
+# PERMISSION DEFINITIONS (108 Total)
 # ========================================
 
 def get_all_permissions() -> List[Dict[str, Any]]:
     """
-    Returns all 69 permission definitions
-    Organized by 9 categories
+    Returns all 108 permission definitions
+    Organized by 11 categories
+    
+    Changes from v1 (69 permissions):
+    - Renamed 21 permissions (read → view, create → add)
+    - Removed 25 obsolete permissions
+    - Added 64 new permissions
+    - Reorganized into 11 categories (was 9)
     """
     
     permissions = []
     
     # ========================================
-    # CATEGORY 1: LEAD MANAGEMENT (14 permissions)
+    # CATEGORY 1: DASHBOARD & REPORTING (6 permissions)
+    # ========================================
+    
+    dashboard_permissions = [
+        {
+            "code": "dashboard.view",
+            "name": "View Dashboard",
+            "description": "Can view personal dashboard with own stats",
+            "category": "dashboard_reporting",
+            "resource": "dashboard",
+            "action": "view",
+            "scope": "own",
+            "is_system": True,
+            "metadata": {"ui_group": "Analytics & Reports", "icon": "bar-chart"}
+        },
+        {
+            "code": "dashboard.view_team",
+            "name": "View Team Dashboard",
+            "description": "Can view team dashboard with team stats",
+            "category": "dashboard_reporting",
+            "resource": "dashboard",
+            "action": "view",
+            "scope": "team",
+            "is_system": True,
+            "requires_permissions": ["dashboard.view"],
+            "metadata": {"ui_group": "Analytics & Reports", "icon": "users"}
+        },
+        {
+            "code": "dashboard.view_all",
+            "name": "View All Dashboards",
+            "description": "Can view organization-wide dashboard and analytics",
+            "category": "dashboard_reporting",
+            "resource": "dashboard",
+            "action": "view",
+            "scope": "all",
+            "is_system": True,
+            "requires_permissions": ["dashboard.view"],
+            "metadata": {"ui_group": "Analytics & Reports", "icon": "globe"}
+        },
+        {
+            "code": "report.view",
+            "name": "View Own Reports",
+            "description": "Can view and generate reports for own data",
+            "category": "dashboard_reporting",
+            "resource": "report",
+            "action": "view",
+            "scope": "own",
+            "is_system": True,
+            "metadata": {"ui_group": "Analytics & Reports", "icon": "file-text"}
+        },
+        {
+            "code": "report.view_team",
+            "name": "View Team Reports",
+            "description": "Can view and generate reports for team data",
+            "category": "dashboard_reporting",
+            "resource": "report",
+            "action": "view",
+            "scope": "team",
+            "is_system": True,
+            "requires_permissions": ["report.view"],
+            "metadata": {"ui_group": "Analytics & Reports", "icon": "users"}
+        },
+        {
+            "code": "report.view_all",
+            "name": "View All Reports",
+            "description": "Can view and generate organization-wide reports",
+            "category": "dashboard_reporting",
+            "resource": "report",
+            "action": "view",
+            "scope": "all",
+            "is_system": True,
+            "requires_permissions": ["report.view"],
+            "metadata": {"ui_group": "Analytics & Reports", "icon": "database"}
+        }
+    ]
+    
+    # ========================================
+    # CATEGORY 2: LEAD MANAGEMENT (17 permissions)
+    # 10 Lead + 7 Lead Group
     # ========================================
     
     lead_permissions = [
+        # My Leads (10)
         {
-            "code": "lead.create",
-            "name": "Create Leads",
-            "description": "Can create new leads",
+            "code": "lead.view",
+            "name": "View Own Leads",
+            "description": "Can view own assigned leads",
             "category": "lead_management",
             "resource": "lead",
-            "action": "create",
-            "scope": "own",
-            "is_system": True,
-            "metadata": {"ui_group": "Lead Operations", "icon": "plus"}
-        },
-        {
-            "code": "lead.read_own",
-            "name": "Read Own Leads",
-            "description": "Can view own leads only",
-            "category": "lead_management",
-            "resource": "lead",
-            "action": "read",
+            "action": "view",
             "scope": "own",
             "is_system": True,
             "metadata": {"ui_group": "Lead Operations", "icon": "eye"}
         },
         {
-            "code": "lead.read_team",
-            "name": "Read Team Leads",
+            "code": "lead.view_team",
+            "name": "View Team Leads",
             "description": "Can view team members' leads",
             "category": "lead_management",
             "resource": "lead",
-            "action": "read",
+            "action": "view",
             "scope": "team",
             "is_system": True,
-            "requires_permissions": ["lead.read_own"],
+            "requires_permissions": ["lead.view"],
             "metadata": {"ui_group": "Lead Operations", "icon": "users"}
         },
         {
-            "code": "lead.read_all",
-            "name": "Read All Leads",
+            "code": "lead.view_all",
+            "name": "View All Leads",
             "description": "Can view all leads in the system",
             "category": "lead_management",
             "resource": "lead",
-            "action": "read",
+            "action": "view",
             "scope": "all",
             "is_system": True,
-            "requires_permissions": ["lead.read_own"],
+            "requires_permissions": ["lead.view"],
             "metadata": {"ui_group": "Lead Operations", "icon": "database"}
         },
         {
-            "code": "lead.update_own",
+            "code": "lead.add_single",
+            "name": "Add Single Lead",
+            "description": "Can add individual leads one at a time",
+            "category": "lead_management",
+            "resource": "lead",
+            "action": "add",
+            "scope": "own",
+            "is_system": True,
+            "metadata": {"ui_group": "Lead Operations", "icon": "plus"}
+        },
+        {
+            "code": "lead.add_bulk",
+            "name": "Add Bulk Leads",
+            "description": "Can import multiple leads via Excel/CSV bulk upload",
+            "category": "lead_management",
+            "resource": "lead",
+            "action": "add",
+            "scope": "all",
+            "is_system": True,
+            "requires_permissions": ["lead.add_single"],
+            "metadata": {"ui_group": "Lead Operations", "icon": "upload"}
+        },
+        {
+            "code": "lead.add_via_cv",
+            "name": "Add Lead from CV",
+            "description": "Can create leads by uploading and parsing CV/resume files",
+            "category": "lead_management",
+            "resource": "lead",
+            "action": "add",
+            "scope": "own",
+            "is_system": True,
+            "requires_permissions": ["lead.add_single"],
+            "metadata": {"ui_group": "Lead Operations", "icon": "file-text"}
+        },
+        {
+            "code": "lead.update",
             "name": "Update Own Leads",
-            "description": "Can edit own leads",
+            "description": "Can edit and modify own assigned leads",
             "category": "lead_management",
             "resource": "lead",
             "action": "update",
             "scope": "own",
             "is_system": True,
-            "requires_permissions": ["lead.read_own"],
+            "requires_permissions": ["lead.view"],
             "metadata": {"ui_group": "Lead Operations", "icon": "edit"}
-        },
-        {
-            "code": "lead.update_team",
-            "name": "Update Team Leads",
-            "description": "Can edit team members' leads",
-            "category": "lead_management",
-            "resource": "lead",
-            "action": "update",
-            "scope": "team",
-            "is_system": True,
-            "requires_permissions": ["lead.read_team", "lead.update_own"],
-            "metadata": {"ui_group": "Lead Operations"}
         },
         {
             "code": "lead.update_all",
             "name": "Update All Leads",
-            "description": "Can edit any lead in the system",
+            "description": "Can edit and modify any lead in the system",
             "category": "lead_management",
             "resource": "lead",
             "action": "update",
             "scope": "all",
             "is_system": True,
-            "requires_permissions": ["lead.read_all", "lead.update_own"],
-            "metadata": {"ui_group": "Lead Operations"}
-        },
-        {
-            "code": "lead.delete_own",
-            "name": "Delete Own Leads",
-            "description": "Can delete own leads",
-            "category": "lead_management",
-            "resource": "lead",
-            "action": "delete",
-            "scope": "own",
-            "is_system": True,
-            "requires_permissions": ["lead.read_own"],
-            "metadata": {"ui_group": "Lead Operations", "icon": "trash", "dangerous": True}
-        },
-        {
-            "code": "lead.delete_all",
-            "name": "Delete All Leads",
-            "description": "Can delete any lead in the system",
-            "category": "lead_management",
-            "resource": "lead",
-            "action": "delete",
-            "scope": "all",
-            "is_system": True,
-            "requires_permissions": ["lead.read_all"],
-            "metadata": {"ui_group": "Lead Operations", "icon": "trash", "dangerous": True}
-        },
-        {
-            "code": "lead.assign",
-            "name": "Assign Leads",
-            "description": "Can assign leads to other users",
-            "category": "lead_management",
-            "resource": "lead",
-            "action": "assign",
-            "scope": "all",
-            "is_system": True,
-            "requires_permissions": ["lead.read_all"],
-            "metadata": {"ui_group": "Lead Operations", "icon": "user-plus"}
-        },
-        {
-            "code": "lead.bulk_create",
-            "name": "Bulk Create Leads",
-            "description": "Can create multiple leads at once via import/bulk",
-            "category": "lead_management",
-            "resource": "lead",
-            "action": "bulk_create",
-            "scope": "all",
-            "is_system": True,
-            "requires_permissions": ["lead.create"],
-            "metadata": {"ui_group": "Lead Operations", "icon": "upload"}
+            "requires_permissions": ["lead.view_all", "lead.update"],
+            "metadata": {"ui_group": "Lead Operations", "icon": "edit"}
         },
         {
             "code": "lead.export",
             "name": "Export Leads",
-            "description": "Can export lead data to CSV/Excel",
+            "description": "Can export lead data to CSV/Excel files",
             "category": "lead_management",
             "resource": "lead",
             "action": "export",
@@ -168,81 +218,153 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "metadata": {"ui_group": "Lead Operations", "icon": "download"}
         },
         {
-            "code": "lead.change_status",
-            "name": "Change Lead Status",
-            "description": "Can change lead status/stage",
+            "code": "lead.assign",
+            "name": "Assign Leads",
+            "description": "Can assign or reassign leads to other users",
             "category": "lead_management",
             "resource": "lead",
-            "action": "change_status",
+            "action": "assign",
+            "scope": "all",
+            "is_system": True,
+            "requires_permissions": ["lead.view_all"],
+            "metadata": {"ui_group": "Lead Operations", "icon": "user-plus"}
+        },
+        
+        # Lead Groups (7)
+        {
+            "code": "lead_group.view",
+            "name": "View Own Lead Groups",
+            "description": "Can view own created lead groups",
+            "category": "lead_management",
+            "resource": "lead_group",
+            "action": "view",
             "scope": "own",
             "is_system": True,
-            "requires_permissions": ["lead.update_own"],
-            "metadata": {"ui_group": "Lead Operations"}
+            "metadata": {"ui_group": "Lead Groups", "icon": "folder"}
         },
         {
-            "code": "lead.view_history",
-            "name": "View Lead History",
-            "description": "Can view lead activity history and timeline",
+            "code": "lead_group.view_team",
+            "name": "View Team Lead Groups",
+            "description": "Can view team members' lead groups",
             "category": "lead_management",
-            "resource": "lead",
-            "action": "view_history",
+            "resource": "lead_group",
+            "action": "view",
+            "scope": "team",
+            "is_system": True,
+            "requires_permissions": ["lead_group.view"],
+            "metadata": {"ui_group": "Lead Groups", "icon": "users"}
+        },
+        {
+            "code": "lead_group.view_all",
+            "name": "View All Lead Groups",
+            "description": "Can view all lead groups in the system",
+            "category": "lead_management",
+            "resource": "lead_group",
+            "action": "view",
+            "scope": "all",
+            "is_system": True,
+            "requires_permissions": ["lead_group.view"],
+            "metadata": {"ui_group": "Lead Groups", "icon": "database"}
+        },
+        {
+            "code": "lead_group.create",
+            "name": "Create Lead Groups",
+            "description": "Can create new lead groups for organizing leads",
+            "category": "lead_management",
+            "resource": "lead_group",
+            "action": "create",
             "scope": "own",
             "is_system": True,
-            "requires_permissions": ["lead.read_own"],
-            "metadata": {"ui_group": "Lead Operations", "icon": "clock"}
+            "metadata": {"ui_group": "Lead Groups", "icon": "plus"}
+        },
+        {
+            "code": "lead_group.add",
+            "name": "Add Leads to Groups",
+            "description": "Can add leads to existing groups",
+            "category": "lead_management",
+            "resource": "lead_group",
+            "action": "add",
+            "scope": "own",
+            "is_system": True,
+            "requires_permissions": ["lead_group.create"],
+            "metadata": {"ui_group": "Lead Groups", "icon": "folder-plus"}
+        },
+        {
+            "code": "lead_group.delete",
+            "name": "Delete Lead Groups",
+            "description": "Can delete lead groups",
+            "category": "lead_management",
+            "resource": "lead_group",
+            "action": "delete",
+            "scope": "own",
+            "is_system": True,
+            "requires_permissions": ["lead_group.view"],
+            "metadata": {"ui_group": "Lead Groups", "icon": "trash", "dangerous": True}
+        },
+        {
+            "code": "lead_group.update",
+            "name": "Update Lead Groups",
+            "description": "Can modify lead group details and membership",
+            "category": "lead_management",
+            "resource": "lead_group",
+            "action": "update",
+            "scope": "own",
+            "is_system": True,
+            "requires_permissions": ["lead_group.view"],
+            "metadata": {"ui_group": "Lead Groups", "icon": "edit"}
         }
     ]
     
     # ========================================
-    # CATEGORY 2: CONTACT MANAGEMENT (7 permissions)
+    # CATEGORY 3: CONTACT MANAGEMENT (6 permissions)
     # ========================================
     
     contact_permissions = [
         {
-            "code": "contact.create",
-            "name": "Create Contacts",
-            "description": "Can create new contacts",
+            "code": "contact.view",
+            "name": "View Own Contacts",
+            "description": "Can view contacts for own assigned leads",
             "category": "contact_management",
             "resource": "contact",
-            "action": "create",
+            "action": "view",
             "scope": "own",
             "is_system": True,
-            "metadata": {"ui_group": "Contact Operations"}
+            "metadata": {"ui_group": "Contact Operations", "icon": "user"}
         },
         {
-            "code": "contact.read_own",
-            "name": "Read Own Contacts",
-            "description": "Can view own contacts",
-            "category": "contact_management",
-            "resource": "contact",
-            "action": "read",
-            "scope": "own",
-            "is_system": True,
-            "metadata": {"ui_group": "Contact Operations"}
-        },
-        {
-            "code": "contact.read_all",
-            "name": "Read All Contacts",
+            "code": "contact.view_all",
+            "name": "View All Contacts",
             "description": "Can view all contacts in the system",
             "category": "contact_management",
             "resource": "contact",
-            "action": "read",
+            "action": "view",
             "scope": "all",
             "is_system": True,
-            "requires_permissions": ["contact.read_own"],
-            "metadata": {"ui_group": "Contact Operations"}
+            "requires_permissions": ["contact.view"],
+            "metadata": {"ui_group": "Contact Operations", "icon": "users"}
+        },
+        {
+            "code": "contact.add",
+            "name": "Add Contacts",
+            "description": "Can create new contact records",
+            "category": "contact_management",
+            "resource": "contact",
+            "action": "add",
+            "scope": "own",
+            "is_system": True,
+            "metadata": {"ui_group": "Contact Operations", "icon": "plus"}
         },
         {
             "code": "contact.update_own",
             "name": "Update Own Contacts",
-            "description": "Can edit own contacts",
+            "description": "Can edit contacts for own assigned leads",
             "category": "contact_management",
             "resource": "contact",
             "action": "update",
             "scope": "own",
             "is_system": True,
-            "requires_permissions": ["contact.read_own"],
-            "metadata": {"ui_group": "Contact Operations"}
+            "requires_permissions": ["contact.view"],
+            "metadata": {"ui_group": "Contact Operations", "icon": "edit"}
         },
         {
             "code": "contact.update_all",
@@ -253,149 +375,126 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "action": "update",
             "scope": "all",
             "is_system": True,
-            "requires_permissions": ["contact.read_all"],
-            "metadata": {"ui_group": "Contact Operations"}
+            "requires_permissions": ["contact.view_all"],
+            "metadata": {"ui_group": "Contact Operations", "icon": "edit"}
         },
         {
             "code": "contact.delete",
             "name": "Delete Contacts",
-            "description": "Can delete contacts",
+            "description": "Can delete contact records",
             "category": "contact_management",
             "resource": "contact",
             "action": "delete",
             "scope": "all",
             "is_system": True,
-            "requires_permissions": ["contact.read_all"],
-            "metadata": {"ui_group": "Contact Operations", "dangerous": True}
-        },
-        {
-            "code": "contact.export",
-            "name": "Export Contacts",
-            "description": "Can export contact data",
-            "category": "contact_management",
-            "resource": "contact",
-            "action": "export",
-            "scope": "all",
-            "is_system": True,
-            "metadata": {"ui_group": "Contact Operations"}
+            "requires_permissions": ["contact.view_all"],
+            "metadata": {"ui_group": "Contact Operations", "icon": "trash", "dangerous": True}
         }
     ]
     
     # ========================================
-    # CATEGORY 3: TASK MANAGEMENT (9 permissions)
+    # CATEGORY 4: TASK MANAGEMENT (8 permissions)
     # ========================================
     
     task_permissions = [
         {
-            "code": "task.create",
-            "name": "Create Tasks",
-            "description": "Can create new tasks",
+            "code": "task.view",
+            "name": "View Own Tasks",
+            "description": "Can view own assigned tasks",
             "category": "task_management",
             "resource": "task",
-            "action": "create",
+            "action": "view",
             "scope": "own",
             "is_system": True,
-            "metadata": {"ui_group": "Task Operations"}
+            "metadata": {"ui_group": "Task Operations", "icon": "check-square"}
         },
         {
-            "code": "task.read_own",
-            "name": "Read Own Tasks",
-            "description": "Can view own tasks",
-            "category": "task_management",
-            "resource": "task",
-            "action": "read",
-            "scope": "own",
-            "is_system": True,
-            "metadata": {"ui_group": "Task Operations"}
-        },
-        {
-            "code": "task.read_team",
-            "name": "Read Team Tasks",
-            "description": "Can view team members' tasks",
-            "category": "task_management",
-            "resource": "task",
-            "action": "read",
-            "scope": "team",
-            "is_system": True,
-            "requires_permissions": ["task.read_own"],
-            "metadata": {"ui_group": "Task Operations"}
-        },
-        {
-            "code": "task.read_all",
-            "name": "Read All Tasks",
+            "code": "task.view_all",
+            "name": "View All Tasks",
             "description": "Can view all tasks in the system",
             "category": "task_management",
             "resource": "task",
-            "action": "read",
+            "action": "view",
             "scope": "all",
             "is_system": True,
-            "requires_permissions": ["task.read_own"],
-            "metadata": {"ui_group": "Task Operations"}
+            "requires_permissions": ["task.view"],
+            "metadata": {"ui_group": "Task Operations", "icon": "list"}
+        },
+        {
+            "code": "task.add",
+            "name": "Add Tasks",
+            "description": "Can create new tasks",
+            "category": "task_management",
+            "resource": "task",
+            "action": "add",
+            "scope": "own",
+            "is_system": True,
+            "metadata": {"ui_group": "Task Operations", "icon": "plus"}
         },
         {
             "code": "task.update_own",
             "name": "Update Own Tasks",
-            "description": "Can edit own tasks",
+            "description": "Can edit own assigned tasks",
             "category": "task_management",
             "resource": "task",
             "action": "update",
             "scope": "own",
             "is_system": True,
-            "requires_permissions": ["task.read_own"],
-            "metadata": {"ui_group": "Task Operations"}
+            "requires_permissions": ["task.view"],
+            "metadata": {"ui_group": "Task Operations", "icon": "edit"}
         },
         {
-            "code": "task.update_all",
-            "name": "Update All Tasks",
-            "description": "Can edit any task in the system",
+            "code": "task.update_team",
+            "name": "Update Team Tasks",
+            "description": "Can edit team members' tasks",
             "category": "task_management",
             "resource": "task",
             "action": "update",
-            "scope": "all",
+            "scope": "team",
             "is_system": True,
-            "requires_permissions": ["task.read_all"],
-            "metadata": {"ui_group": "Task Operations"}
+            "requires_permissions": ["task.view_all"],
+            "metadata": {"ui_group": "Task Operations", "icon": "users"}
         },
         {
-            "code": "task.delete",
-            "name": "Delete Tasks",
-            "description": "Can delete tasks",
+            "code": "task.delete_own",
+            "name": "Delete Own Tasks",
+            "description": "Can delete own assigned tasks",
+            "category": "task_management",
+            "resource": "task",
+            "action": "delete",
+            "scope": "own",
+            "is_system": True,
+            "requires_permissions": ["task.view"],
+            "metadata": {"ui_group": "Task Operations", "icon": "trash", "dangerous": True}
+        },
+        {
+            "code": "task.delete_team",
+            "name": "Delete Team Tasks",
+            "description": "Can delete team members' tasks",
+            "category": "task_management",
+            "resource": "task",
+            "action": "delete",
+            "scope": "team",
+            "is_system": True,
+            "requires_permissions": ["task.view_all"],
+            "metadata": {"ui_group": "Task Operations", "icon": "trash", "dangerous": True}
+        },
+        {
+            "code": "task.delete_all",
+            "name": "Delete All Tasks",
+            "description": "Can delete any task in the system",
             "category": "task_management",
             "resource": "task",
             "action": "delete",
             "scope": "all",
             "is_system": True,
-            "requires_permissions": ["task.read_all"],
-            "metadata": {"ui_group": "Task Operations", "dangerous": True}
-        },
-        {
-            "code": "task.assign",
-            "name": "Assign Tasks",
-            "description": "Can assign tasks to other users",
-            "category": "task_management",
-            "resource": "task",
-            "action": "assign",
-            "scope": "all",
-            "is_system": True,
-            "requires_permissions": ["task.read_all"],
-            "metadata": {"ui_group": "Task Operations"}
-        },
-        {
-            "code": "task.change_priority",
-            "name": "Change Task Priority",
-            "description": "Can change task priority levels",
-            "category": "task_management",
-            "resource": "task",
-            "action": "change_priority",
-            "scope": "own",
-            "is_system": True,
-            "requires_permissions": ["task.update_own"],
-            "metadata": {"ui_group": "Task Operations"}
+            "requires_permissions": ["task.view_all"],
+            "metadata": {"ui_group": "Task Operations", "icon": "trash", "dangerous": True}
         }
     ]
     
     # ========================================
-    # CATEGORY 4: USER MANAGEMENT (8 permissions)
+    # CATEGORY 5: USER MANAGEMENT (5 permissions)
     # ========================================
     
     user_permissions = [
@@ -408,30 +507,18 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "action": "create",
             "scope": "all",
             "is_system": True,
-            "metadata": {"ui_group": "User Administration", "dangerous": True}
+            "metadata": {"ui_group": "User Administration", "icon": "user-plus", "dangerous": True}
         },
         {
-            "code": "user.read",
+            "code": "user.view",
             "name": "View Users",
             "description": "Can view user accounts and profiles",
             "category": "user_management",
             "resource": "user",
-            "action": "read",
+            "action": "view",
             "scope": "all",
             "is_system": True,
-            "metadata": {"ui_group": "User Administration"}
-        },
-        {
-            "code": "user.update",
-            "name": "Update Users",
-            "description": "Can edit user accounts and profiles",
-            "category": "user_management",
-            "resource": "user",
-            "action": "update",
-            "scope": "all",
-            "is_system": True,
-            "requires_permissions": ["user.read"],
-            "metadata": {"ui_group": "User Administration", "dangerous": True}
+            "metadata": {"ui_group": "User Administration", "icon": "users"}
         },
         {
             "code": "user.delete",
@@ -442,20 +529,20 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "action": "delete",
             "scope": "all",
             "is_system": True,
-            "requires_permissions": ["user.read"],
-            "metadata": {"ui_group": "User Administration", "dangerous": True}
+            "requires_permissions": ["user.view"],
+            "metadata": {"ui_group": "User Administration", "icon": "trash", "dangerous": True}
         },
         {
-            "code": "user.activate_deactivate",
-            "name": "Activate/Deactivate Users",
-            "description": "Can enable or disable user accounts",
+            "code": "user.update",
+            "name": "Update Users",
+            "description": "Can edit user accounts and profiles",
             "category": "user_management",
             "resource": "user",
-            "action": "activate_deactivate",
+            "action": "update",
             "scope": "all",
             "is_system": True,
-            "requires_permissions": ["user.read"],
-            "metadata": {"ui_group": "User Administration"}
+            "requires_permissions": ["user.view"],
+            "metadata": {"ui_group": "User Administration", "icon": "edit", "dangerous": True}
         },
         {
             "code": "user.reset_password",
@@ -466,37 +553,13 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "action": "reset_password",
             "scope": "all",
             "is_system": True,
-            "requires_permissions": ["user.read"],
-            "metadata": {"ui_group": "User Administration", "dangerous": True}
-        },
-        {
-            "code": "user.view_activity",
-            "name": "View User Activity",
-            "description": "Can view user login history and activity logs",
-            "category": "user_management",
-            "resource": "user",
-            "action": "view_activity",
-            "scope": "all",
-            "is_system": True,
-            "requires_permissions": ["user.read"],
-            "metadata": {"ui_group": "User Administration"}
-        },
-        {
-            "code": "user.manage_departments",
-            "name": "Manage User Departments",
-            "description": "Can assign or change user departments",
-            "category": "user_management",
-            "resource": "user",
-            "action": "manage_departments",
-            "scope": "all",
-            "is_system": True,
-            "requires_permissions": ["user.update"],
-            "metadata": {"ui_group": "User Administration"}
+            "requires_permissions": ["user.view"],
+            "metadata": {"ui_group": "User Administration", "icon": "key", "dangerous": True}
         }
     ]
     
     # ========================================
-    # CATEGORY 5: ROLE & PERMISSION MANAGEMENT (7 permissions)
+    # CATEGORY 6: ROLE & PERMISSION MANAGEMENT (5 permissions)
     # ========================================
     
     role_permissions = [
@@ -509,7 +572,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "action": "create",
             "scope": "all",
             "is_system": True,
-            "metadata": {"ui_group": "Role Administration", "dangerous": True}
+            "metadata": {"ui_group": "Role Administration", "icon": "shield", "dangerous": True}
         },
         {
             "code": "role.read",
@@ -520,7 +583,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "action": "read",
             "scope": "all",
             "is_system": True,
-            "metadata": {"ui_group": "Role Administration"}
+            "metadata": {"ui_group": "Role Administration", "icon": "eye"}
         },
         {
             "code": "role.update",
@@ -532,7 +595,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "scope": "all",
             "is_system": True,
             "requires_permissions": ["role.read"],
-            "metadata": {"ui_group": "Role Administration", "dangerous": True}
+            "metadata": {"ui_group": "Role Administration", "icon": "edit", "dangerous": True}
         },
         {
             "code": "role.delete",
@@ -544,321 +607,456 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "scope": "all",
             "is_system": True,
             "requires_permissions": ["role.read"],
-            "metadata": {"ui_group": "Role Administration", "dangerous": True}
-        },
-        {
-            "code": "role.assign",
-            "name": "Assign Roles to Users",
-            "description": "Can assign or change user roles",
-            "category": "role_permission_management",
-            "resource": "role",
-            "action": "assign",
-            "scope": "all",
-            "is_system": True,
-            "requires_permissions": ["role.read", "user.read"],
-            "metadata": {"ui_group": "Role Administration", "dangerous": True}
+            "metadata": {"ui_group": "Role Administration", "icon": "trash", "dangerous": True}
         },
         {
             "code": "permission.view",
             "name": "View Permissions",
-            "description": "Can view all available permissions",
+            "description": "Can view all available system permissions",
             "category": "role_permission_management",
             "resource": "permission",
             "action": "view",
             "scope": "all",
             "is_system": True,
-            "metadata": {"ui_group": "Role Administration"}
-        },
-        {
-            "code": "permission.override",
-            "name": "Override User Permissions",
-            "description": "Can grant or deny specific permissions to individual users",
-            "category": "role_permission_management",
-            "resource": "permission",
-            "action": "override",
-            "scope": "all",
-            "is_system": True,
-            "requires_permissions": ["user.read", "permission.view"],
-            "metadata": {"ui_group": "Role Administration", "dangerous": True}
+            "metadata": {"ui_group": "Role Administration", "icon": "shield"}
         }
     ]
     
     # ========================================
-    # CATEGORY 6: DASHBOARD & REPORTING (9 permissions)
+    # CATEGORY 7: SYSTEM CONFIGURATION (24 permissions)
+    # 6 modules × 4 actions = 24 total
     # ========================================
     
-    dashboard_permissions = [
+    system_config_permissions = [
+        # Department (4)
         {
-            "code": "dashboard.view_own",
-            "name": "View Own Dashboard",
-            "description": "Can view personal dashboard with own stats",
-            "category": "dashboard_reporting",
-            "resource": "dashboard",
-            "action": "view",
-            "scope": "own",
-            "is_system": True,
-            "metadata": {"ui_group": "Analytics & Reports"}
-        },
-        {
-            "code": "dashboard.view_team",
-            "name": "View Team Dashboard",
-            "description": "Can view team dashboard with team stats",
-            "category": "dashboard_reporting",
-            "resource": "dashboard",
-            "action": "view",
-            "scope": "team",
-            "is_system": True,
-            "requires_permissions": ["dashboard.view_own"],
-            "metadata": {"ui_group": "Analytics & Reports"}
-        },
-        {
-            "code": "dashboard.view_all",
-            "name": "View Organization Dashboard",
-            "description": "Can view organization-wide dashboard and analytics",
-            "category": "dashboard_reporting",
-            "resource": "dashboard",
-            "action": "view",
-            "scope": "all",
-            "is_system": True,
-            "requires_permissions": ["dashboard.view_own"],
-            "metadata": {"ui_group": "Analytics & Reports"}
-        },
-        {
-            "code": "report.generate_own",
-            "name": "Generate Own Reports",
-            "description": "Can generate reports for own data",
-            "category": "dashboard_reporting",
-            "resource": "report",
-            "action": "generate",
-            "scope": "own",
-            "is_system": True,
-            "metadata": {"ui_group": "Analytics & Reports"}
-        },
-        {
-            "code": "report.generate_team",
-            "name": "Generate Team Reports",
-            "description": "Can generate reports for team data",
-            "category": "dashboard_reporting",
-            "resource": "report",
-            "action": "generate",
-            "scope": "team",
-            "is_system": True,
-            "requires_permissions": ["report.generate_own"],
-            "metadata": {"ui_group": "Analytics & Reports"}
-        },
-        {
-            "code": "report.generate_all",
-            "name": "Generate Organization Reports",
-            "description": "Can generate organization-wide reports",
-            "category": "dashboard_reporting",
-            "resource": "report",
-            "action": "generate",
-            "scope": "all",
-            "is_system": True,
-            "requires_permissions": ["report.generate_own"],
-            "metadata": {"ui_group": "Analytics & Reports"}
-        },
-        {
-            "code": "report.schedule",
-            "name": "Schedule Reports",
-            "description": "Can schedule automated report generation",
-            "category": "dashboard_reporting",
-            "resource": "report",
-            "action": "schedule",
-            "scope": "all",
-            "is_system": True,
-            "requires_permissions": ["report.generate_all"],
-            "metadata": {"ui_group": "Analytics & Reports"}
-        },
-        {
-            "code": "analytics.view_advanced",
-            "name": "View Advanced Analytics",
-            "description": "Can access advanced analytics and insights",
-            "category": "dashboard_reporting",
-            "resource": "analytics",
-            "action": "view_advanced",
-            "scope": "all",
-            "is_system": True,
-            "metadata": {"ui_group": "Analytics & Reports"}
-        },
-        {
-            "code": "analytics.export",
-            "name": "Export Analytics Data",
-            "description": "Can export analytics data and visualizations",
-            "category": "dashboard_reporting",
-            "resource": "analytics",
-            "action": "export",
-            "scope": "all",
-            "is_system": True,
-            "metadata": {"ui_group": "Analytics & Reports"}
-        }
-    ]
-    
-    # ========================================
-    # CATEGORY 7: SYSTEM SETTINGS (7 permissions)
-    # ========================================
-    
-    system_permissions = [
-        {
-            "code": "settings.view",
-            "name": "View System Settings",
-            "description": "Can view system configuration settings",
-            "category": "system_settings",
-            "resource": "settings",
-            "action": "view",
-            "scope": "all",
-            "is_system": True,
-            "metadata": {"ui_group": "System Administration"}
-        },
-        {
-            "code": "settings.update",
-            "name": "Update System Settings",
-            "description": "Can modify system configuration settings",
-            "category": "system_settings",
-            "resource": "settings",
-            "action": "update",
-            "scope": "all",
-            "is_system": True,
-            "requires_permissions": ["settings.view"],
-            "metadata": {"ui_group": "System Administration", "dangerous": True}
-        },
-        {
-            "code": "department.manage",
-            "name": "Manage Departments",
-            "description": "Can create, edit, and delete departments",
-            "category": "system_settings",
+            "code": "department.create",
+            "name": "Create Departments",
+            "description": "Can create new departments",
+            "category": "system_configuration",
             "resource": "department",
-            "action": "manage",
+            "action": "create",
             "scope": "all",
             "is_system": True,
-            "metadata": {"ui_group": "System Administration"}
+            "metadata": {"ui_group": "System Configuration", "icon": "building"}
         },
         {
-            "code": "stage.manage",
-            "name": "Manage Lead Stages",
-            "description": "Can create, edit, and delete lead stages",
-            "category": "system_settings",
-            "resource": "stage",
-            "action": "manage",
+            "code": "department.edit",
+            "name": "Edit Departments",
+            "description": "Can edit existing departments",
+            "category": "system_configuration",
+            "resource": "department",
+            "action": "edit",
             "scope": "all",
             "is_system": True,
-            "metadata": {"ui_group": "System Administration"}
+            "metadata": {"ui_group": "System Configuration", "icon": "edit"}
         },
         {
-            "code": "status.manage",
-            "name": "Manage Lead Statuses",
-            "description": "Can create, edit, and delete lead statuses",
-            "category": "system_settings",
-            "resource": "status",
-            "action": "manage",
-            "scope": "all",
-            "is_system": True,
-            "metadata": {"ui_group": "System Administration"}
-        },
-        {
-            "code": "source.manage",
-            "name": "Manage Lead Sources",
-            "description": "Can create, edit, and delete lead sources",
-            "category": "system_settings",
-            "resource": "source",
-            "action": "manage",
-            "scope": "all",
-            "is_system": True,
-            "metadata": {"ui_group": "System Administration"}
-        },
-        {
-            "code": "logs.view",
-            "name": "View System Logs",
-            "description": "Can view system activity logs and audit trails",
-            "category": "system_settings",
-            "resource": "logs",
+            "code": "department.view",
+            "name": "View Departments",
+            "description": "Can view department list and details",
+            "category": "system_configuration",
+            "resource": "department",
             "action": "view",
             "scope": "all",
             "is_system": True,
-            "metadata": {"ui_group": "System Administration"}
+            "metadata": {"ui_group": "System Configuration", "icon": "eye"}
+        },
+        {
+            "code": "department.delete",
+            "name": "Delete Departments",
+            "description": "Can delete departments",
+            "category": "system_configuration",
+            "resource": "department",
+            "action": "delete",
+            "scope": "all",
+            "is_system": True,
+            "metadata": {"ui_group": "System Configuration", "icon": "trash", "dangerous": True}
+        },
+        
+        # Lead Category (4)
+        {
+            "code": "lead_category.create",
+            "name": "Create Lead Categories",
+            "description": "Can create new lead categories",
+            "category": "system_configuration",
+            "resource": "lead_category",
+            "action": "create",
+            "scope": "all",
+            "is_system": True,
+            "metadata": {"ui_group": "System Configuration", "icon": "tag"}
+        },
+        {
+            "code": "lead_category.edit",
+            "name": "Edit Lead Categories",
+            "description": "Can edit existing lead categories",
+            "category": "system_configuration",
+            "resource": "lead_category",
+            "action": "edit",
+            "scope": "all",
+            "is_system": True,
+            "metadata": {"ui_group": "System Configuration", "icon": "edit"}
+        },
+        {
+            "code": "lead_category.view",
+            "name": "View Lead Categories",
+            "description": "Can view lead category list and details",
+            "category": "system_configuration",
+            "resource": "lead_category",
+            "action": "view",
+            "scope": "all",
+            "is_system": True,
+            "metadata": {"ui_group": "System Configuration", "icon": "eye"}
+        },
+        {
+            "code": "lead_category.delete",
+            "name": "Delete Lead Categories",
+            "description": "Can delete lead categories",
+            "category": "system_configuration",
+            "resource": "lead_category",
+            "action": "delete",
+            "scope": "all",
+            "is_system": True,
+            "metadata": {"ui_group": "System Configuration", "icon": "trash", "dangerous": True}
+        },
+        
+        # Status (4)
+        {
+            "code": "status.create",
+            "name": "Create Statuses",
+            "description": "Can create new lead statuses",
+            "category": "system_configuration",
+            "resource": "status",
+            "action": "create",
+            "scope": "all",
+            "is_system": True,
+            "metadata": {"ui_group": "System Configuration", "icon": "flag"}
+        },
+        {
+            "code": "status.edit",
+            "name": "Edit Statuses",
+            "description": "Can edit existing lead statuses",
+            "category": "system_configuration",
+            "resource": "status",
+            "action": "edit",
+            "scope": "all",
+            "is_system": True,
+            "metadata": {"ui_group": "System Configuration", "icon": "edit"}
+        },
+        {
+            "code": "status.view",
+            "name": "View Statuses",
+            "description": "Can view status list and details",
+            "category": "system_configuration",
+            "resource": "status",
+            "action": "view",
+            "scope": "all",
+            "is_system": True,
+            "metadata": {"ui_group": "System Configuration", "icon": "eye"}
+        },
+        {
+            "code": "status.delete",
+            "name": "Delete Statuses",
+            "description": "Can delete lead statuses",
+            "category": "system_configuration",
+            "resource": "status",
+            "action": "delete",
+            "scope": "all",
+            "is_system": True,
+            "metadata": {"ui_group": "System Configuration", "icon": "trash", "dangerous": True}
+        },
+        
+        # Stages (4)
+        {
+            "code": "stage.create",
+            "name": "Create Stages",
+            "description": "Can create new lead stages",
+            "category": "system_configuration",
+            "resource": "stage",
+            "action": "create",
+            "scope": "all",
+            "is_system": True,
+            "metadata": {"ui_group": "System Configuration", "icon": "layers"}
+        },
+        {
+            "code": "stage.edit",
+            "name": "Edit Stages",
+            "description": "Can edit existing lead stages",
+            "category": "system_configuration",
+            "resource": "stage",
+            "action": "edit",
+            "scope": "all",
+            "is_system": True,
+            "metadata": {"ui_group": "System Configuration", "icon": "edit"}
+        },
+        {
+            "code": "stage.view",
+            "name": "View Stages",
+            "description": "Can view stage list and details",
+            "category": "system_configuration",
+            "resource": "stage",
+            "action": "view",
+            "scope": "all",
+            "is_system": True,
+            "metadata": {"ui_group": "System Configuration", "icon": "eye"}
+        },
+        {
+            "code": "stage.delete",
+            "name": "Delete Stages",
+            "description": "Can delete lead stages",
+            "category": "system_configuration",
+            "resource": "stage",
+            "action": "delete",
+            "scope": "all",
+            "is_system": True,
+            "metadata": {"ui_group": "System Configuration", "icon": "trash", "dangerous": True}
+        },
+        
+        # Course Level (4)
+        {
+            "code": "course_level.create",
+            "name": "Create Course Levels",
+            "description": "Can create new course levels",
+            "category": "system_configuration",
+            "resource": "course_level",
+            "action": "create",
+            "scope": "all",
+            "is_system": True,
+            "metadata": {"ui_group": "System Configuration", "icon": "book"}
+        },
+        {
+            "code": "course_level.edit",
+            "name": "Edit Course Levels",
+            "description": "Can edit existing course levels",
+            "category": "system_configuration",
+            "resource": "course_level",
+            "action": "edit",
+            "scope": "all",
+            "is_system": True,
+            "metadata": {"ui_group": "System Configuration", "icon": "edit"}
+        },
+        {
+            "code": "course_level.view",
+            "name": "View Course Levels",
+            "description": "Can view course level list and details",
+            "category": "system_configuration",
+            "resource": "course_level",
+            "action": "view",
+            "scope": "all",
+            "is_system": True,
+            "metadata": {"ui_group": "System Configuration", "icon": "eye"}
+        },
+        {
+            "code": "course_level.delete",
+            "name": "Delete Course Levels",
+            "description": "Can delete course levels",
+            "category": "system_configuration",
+            "resource": "course_level",
+            "action": "delete",
+            "scope": "all",
+            "is_system": True,
+            "metadata": {"ui_group": "System Configuration", "icon": "trash", "dangerous": True}
+        },
+        
+        # Lead Source (4)
+        {
+            "code": "source.create",
+            "name": "Create Lead Sources",
+            "description": "Can create new lead sources",
+            "category": "system_configuration",
+            "resource": "source",
+            "action": "create",
+            "scope": "all",
+            "is_system": True,
+            "metadata": {"ui_group": "System Configuration", "icon": "target"}
+        },
+        {
+            "code": "source.edit",
+            "name": "Edit Lead Sources",
+            "description": "Can edit existing lead sources",
+            "category": "system_configuration",
+            "resource": "source",
+            "action": "edit",
+            "scope": "all",
+            "is_system": True,
+            "metadata": {"ui_group": "System Configuration", "icon": "edit"}
+        },
+        {
+            "code": "source.view",
+            "name": "View Lead Sources",
+            "description": "Can view lead source list and details",
+            "category": "system_configuration",
+            "resource": "source",
+            "action": "view",
+            "scope": "all",
+            "is_system": True,
+            "metadata": {"ui_group": "System Configuration", "icon": "eye"}
+        },
+        {
+            "code": "source.delete",
+            "name": "Delete Lead Sources",
+            "description": "Can delete lead sources",
+            "category": "system_configuration",
+            "resource": "source",
+            "action": "delete",
+            "scope": "all",
+            "is_system": True,
+            "metadata": {"ui_group": "System Configuration", "icon": "trash", "dangerous": True}
         }
     ]
     
     # ========================================
-    # CATEGORY 8: EMAIL & COMMUNICATION (6 permissions)
+    # CATEGORY 8: COMMUNICATION (10 permissions)
     # ========================================
     
     communication_permissions = [
+        # Email (4)
         {
             "code": "email.send_single",
             "name": "Send Single Emails",
             "description": "Can send individual emails to leads/contacts",
-            "category": "email_communication",
+            "category": "communication",
             "resource": "email",
             "action": "send_single",
             "scope": "own",
             "is_system": True,
-            "metadata": {"ui_group": "Communication"}
+            "metadata": {"ui_group": "Communication", "icon": "mail"}
         },
         {
             "code": "email.send_bulk",
             "name": "Send Bulk Emails",
-            "description": "Can send bulk/campaign emails",
-            "category": "email_communication",
+            "description": "Can send bulk email campaigns",
+            "category": "communication",
             "resource": "email",
             "action": "send_bulk",
             "scope": "all",
             "is_system": True,
             "requires_permissions": ["email.send_single"],
-            "metadata": {"ui_group": "Communication"}
+            "metadata": {"ui_group": "Communication", "icon": "send"}
         },
         {
-            "code": "email.view_templates",
-            "name": "View Email Templates",
-            "description": "Can view email templates",
-            "category": "email_communication",
+            "code": "email.single_history",
+            "name": "View Single Email History",
+            "description": "Can view individual email history and logs",
+            "category": "communication",
             "resource": "email",
-            "action": "view_templates",
-            "scope": "all",
-            "is_system": True,
-            "metadata": {"ui_group": "Communication"}
-        },
-        {
-            "code": "email.manage_templates",
-            "name": "Manage Email Templates",
-            "description": "Can create and edit email templates",
-            "category": "email_communication",
-            "resource": "email",
-            "action": "manage_templates",
-            "scope": "all",
-            "is_system": True,
-            "requires_permissions": ["email.view_templates"],
-            "metadata": {"ui_group": "Communication"}
-        },
-        {
-            "code": "whatsapp.send",
-            "name": "Send WhatsApp Messages",
-            "description": "Can send WhatsApp messages to leads/contacts",
-            "category": "email_communication",
-            "resource": "whatsapp",
-            "action": "send",
+            "action": "single_history",
             "scope": "own",
             "is_system": True,
-            "metadata": {"ui_group": "Communication"}
+            "metadata": {"ui_group": "Communication", "icon": "clock"}
         },
+        {
+            "code": "email.bulk_history",
+            "name": "View Bulk Email History",
+            "description": "Can view all email campaign history and analytics",
+            "category": "communication",
+            "resource": "email",
+            "action": "bulk_history",
+            "scope": "all",
+            "is_system": True,
+            "metadata": {"ui_group": "Communication", "icon": "bar-chart"}
+        },
+        
+        # WhatsApp (4)
+        {
+            "code": "whatsapp.send_single",
+            "name": "Send Single WhatsApp",
+            "description": "Can send individual WhatsApp messages",
+            "category": "communication",
+            "resource": "whatsapp",
+            "action": "send_single",
+            "scope": "own",
+            "is_system": True,
+            "metadata": {"ui_group": "Communication", "icon": "message-circle"}
+        },
+        {
+            "code": "whatsapp.send_bulk",
+            "name": "Send Bulk WhatsApp",
+            "description": "Can send bulk WhatsApp campaigns",
+            "category": "communication",
+            "resource": "whatsapp",
+            "action": "send_bulk",
+            "scope": "all",
+            "is_system": True,
+            "requires_permissions": ["whatsapp.send_single"],
+            "metadata": {"ui_group": "Communication", "icon": "send"}
+        },
+        {
+            "code": "whatsapp.history_single",
+            "name": "View Single WhatsApp History",
+            "description": "Can view individual WhatsApp message history",
+            "category": "communication",
+            "resource": "whatsapp",
+            "action": "history_single",
+            "scope": "own",
+            "is_system": True,
+            "metadata": {"ui_group": "Communication", "icon": "clock"}
+        },
+        {
+            "code": "whatsapp.history_bulk",
+            "name": "View Bulk WhatsApp History",
+            "description": "Can view all WhatsApp campaign history and analytics",
+            "category": "communication",
+            "resource": "whatsapp",
+            "action": "history_bulk",
+            "scope": "all",
+            "is_system": True,
+            "metadata": {"ui_group": "Communication", "icon": "bar-chart"}
+        },
+        
+        # Call (2)
         {
             "code": "call.make",
             "name": "Make Calls",
-            "description": "Can make calls to leads/contacts",
-            "category": "email_communication",
+            "description": "Can make calls to leads/contacts via integrated calling",
+            "category": "communication",
             "resource": "call",
             "action": "make",
             "scope": "own",
             "is_system": True,
-            "metadata": {"ui_group": "Communication"}
+            "metadata": {"ui_group": "Communication", "icon": "phone"}
+        },
+        {
+            "code": "call.history",
+            "name": "View Call History",
+            "description": "Can view call logs and history",
+            "category": "communication",
+            "resource": "call",
+            "action": "history",
+            "scope": "own",
+            "is_system": True,
+            "metadata": {"ui_group": "Communication", "icon": "phone-call"}
         }
     ]
     
     # ========================================
-    # CATEGORY 9: TEAM MANAGEMENT (8 permissions) 🔄 UPDATED
+    # CATEGORY 9: TEAM MANAGEMENT (5 permissions)
     # ========================================
     
     team_permissions = [
+        {
+            "code": "team.view",
+            "name": "View Own Team",
+            "description": "Can view own team information and members",
+            "category": "team_management",
+            "resource": "team",
+            "action": "view",
+            "scope": "own",
+            "is_system": True,
+            "metadata": {"ui_group": "Team Operations", "icon": "users"}
+        },
+        {
+            "code": "team.view_all",
+            "name": "View All Teams",
+            "description": "Can view all teams in the organization",
+            "category": "team_management",
+            "resource": "team",
+            "action": "view",
+            "scope": "all",
+            "is_system": True,
+            "requires_permissions": ["team.view"],
+            "metadata": {"ui_group": "Team Operations", "icon": "grid"}
+        },
         {
             "code": "team.create",
             "name": "Create Teams",
@@ -871,27 +1069,16 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "metadata": {"ui_group": "Team Operations", "icon": "plus"}
         },
         {
-            "code": "team.view_structure",
-            "name": "View Team Structure",
-            "description": "Can view organizational team structure",
-            "category": "team_management",
-            "resource": "team",
-            "action": "view_structure",
-            "scope": "all",
-            "is_system": True,
-            "metadata": {"ui_group": "Team Operations"}
-        },
-        {
             "code": "team.update",
             "name": "Update Teams",
-            "description": "Can edit team information and settings",
+            "description": "Can edit team information, add/remove members, assign team leads",
             "category": "team_management",
             "resource": "team",
             "action": "update",
             "scope": "all",
             "is_system": True,
-            "requires_permissions": ["team.view_structure"],
-            "metadata": {"ui_group": "Team Operations"}
+            "requires_permissions": ["team.view"],
+            "metadata": {"ui_group": "Team Operations", "icon": "edit"}
         },
         {
             "code": "team.delete",
@@ -902,71 +1089,305 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "action": "delete",
             "scope": "all",
             "is_system": True,
-            "requires_permissions": ["team.view_structure"],
-            "metadata": {"ui_group": "Team Operations", "dangerous": True}
-        },
-        {
-            "code": "team.manage_members",
-            "name": "Manage Team Members",
-            "description": "Can add or remove users from teams",
-            "category": "team_management",
-            "resource": "team",
-            "action": "manage_members",
-            "scope": "all",
-            "is_system": True,
-            "requires_permissions": ["team.view_structure"],
-            "metadata": {"ui_group": "Team Operations"}
-        },
-        {
-            "code": "team.change_lead",
-            "name": "Change Team Lead",
-            "description": "Can change team lead for teams",
-            "category": "team_management",
-            "resource": "team",
-            "action": "change_lead",
-            "scope": "all",
-            "is_system": True,
-            "requires_permissions": ["team.manage_members"],
-            "metadata": {"ui_group": "Team Operations", "dangerous": True}
-        },
-        {
-            "code": "team.view_performance",
-            "name": "View Team Performance",
-            "description": "Can view team performance metrics and KPIs",
-            "category": "team_management",
-            "resource": "team",
-            "action": "view_performance",
-            "scope": "team",
-            "is_system": True,
-            "metadata": {"ui_group": "Team Operations"}
-        },
-        {
-            "code": "team.manage_targets",
-            "name": "Manage Team Targets",
-            "description": "Can set and modify team targets/goals",
-            "category": "team_management",
-            "resource": "team",
-            "action": "manage_targets",
-            "scope": "team",
-            "is_system": True,
-            "requires_permissions": ["team.view_performance"],
-            "metadata": {"ui_group": "Team Operations"}
+            "requires_permissions": ["team.view"],
+            "metadata": {"ui_group": "Team Operations", "icon": "trash", "dangerous": True}
         }
     ]
- 
+    
+    # ========================================
+    # CATEGORY 10: CONTENT & ACTIVITY (10 permissions)
+    # ========================================
+    
+    content_permissions = [
+        # Notes (4)
+        {
+            "code": "note.view",
+            "name": "View Notes",
+            "description": "Can view notes on leads",
+            "category": "content_activity",
+            "resource": "note",
+            "action": "view",
+            "scope": "own",
+            "is_system": True,
+            "metadata": {"ui_group": "Content Management", "icon": "file-text"}
+        },
+        {
+            "code": "note.add",
+            "name": "Add Notes",
+            "description": "Can add notes to leads",
+            "category": "content_activity",
+            "resource": "note",
+            "action": "add",
+            "scope": "own",
+            "is_system": True,
+            "metadata": {"ui_group": "Content Management", "icon": "plus"}
+        },
+        {
+            "code": "note.delete",
+            "name": "Delete Notes",
+            "description": "Can delete notes from leads",
+            "category": "content_activity",
+            "resource": "note",
+            "action": "delete",
+            "scope": "own",
+            "is_system": True,
+            "requires_permissions": ["note.view"],
+            "metadata": {"ui_group": "Content Management", "icon": "trash", "dangerous": True}
+        },
+        {
+            "code": "note.update",
+            "name": "Update Notes",
+            "description": "Can edit existing notes",
+            "category": "content_activity",
+            "resource": "note",
+            "action": "update",
+            "scope": "own",
+            "is_system": True,
+            "requires_permissions": ["note.view"],
+            "metadata": {"ui_group": "Content Management", "icon": "edit"}
+        },
+        
+        # Timeline (1)
+        {
+            "code": "timeline.view",
+            "name": "View Activity Timeline",
+            "description": "Can view lead activity timeline and history",
+            "category": "content_activity",
+            "resource": "timeline",
+            "action": "view",
+            "scope": "own",
+            "is_system": True,
+            "metadata": {"ui_group": "Content Management", "icon": "clock"}
+        },
+        
+        # Documents (5)
+        {
+            "code": "document.view",
+            "name": "View Own Documents",
+            "description": "Can view documents for own leads",
+            "category": "content_activity",
+            "resource": "document",
+            "action": "view",
+            "scope": "own",
+            "is_system": True,
+            "metadata": {"ui_group": "Content Management", "icon": "file"}
+        },
+        {
+            "code": "document.view_all",
+            "name": "View All Documents",
+            "description": "Can view all documents in the system",
+            "category": "content_activity",
+            "resource": "document",
+            "action": "view",
+            "scope": "all",
+            "is_system": True,
+            "requires_permissions": ["document.view"],
+            "metadata": {"ui_group": "Content Management", "icon": "folder"}
+        },
+        {
+            "code": "document.add",
+            "name": "Add Documents",
+            "description": "Can upload documents to leads",
+            "category": "content_activity",
+            "resource": "document",
+            "action": "add",
+            "scope": "own",
+            "is_system": True,
+            "metadata": {"ui_group": "Content Management", "icon": "upload"}
+        },
+        {
+            "code": "document.delete",
+            "name": "Delete Documents",
+            "description": "Can delete documents from leads",
+            "category": "content_activity",
+            "resource": "document",
+            "action": "delete",
+            "scope": "own",
+            "is_system": True,
+            "requires_permissions": ["document.view"],
+            "metadata": {"ui_group": "Content Management", "icon": "trash", "dangerous": True}
+        },
+        {
+            "code": "document.update",
+            "name": "Update Documents",
+            "description": "Can update document metadata and details",
+            "category": "content_activity",
+            "resource": "document",
+            "action": "update",
+            "scope": "own",
+            "is_system": True,
+            "requires_permissions": ["document.view"],
+            "metadata": {"ui_group": "Content Management", "icon": "edit"}
+        }
+    ]
+    
+    # ========================================
+    # CATEGORY 11: SPECIALIZED MODULES (12 permissions)
+    # ========================================
+    
+    specialized_permissions = [
+        # Attendance (4)
+        {
+            "code": "attendance.view",
+            "name": "View Attendance",
+            "description": "Can view batch attendance records",
+            "category": "specialized_modules",
+            "resource": "attendance",
+            "action": "view",
+            "scope": "own",
+            "is_system": True,
+            "metadata": {"ui_group": "Batch Management", "icon": "check-circle"}
+        },
+        {
+            "code": "attendance.add",
+            "name": "Mark Attendance",
+            "description": "Can mark attendance for batch sessions",
+            "category": "specialized_modules",
+            "resource": "attendance",
+            "action": "add",
+            "scope": "own",
+            "is_system": True,
+            "metadata": {"ui_group": "Batch Management", "icon": "check"}
+        },
+        {
+            "code": "attendance.delete",
+            "name": "Delete Attendance",
+            "description": "Can delete attendance records",
+            "category": "specialized_modules",
+            "resource": "attendance",
+            "action": "delete",
+            "scope": "own",
+            "is_system": True,
+            "requires_permissions": ["attendance.view"],
+            "metadata": {"ui_group": "Batch Management", "icon": "trash", "dangerous": True}
+        },
+        {
+            "code": "attendance.update",
+            "name": "Update Attendance",
+            "description": "Can modify attendance records",
+            "category": "specialized_modules",
+            "resource": "attendance",
+            "action": "update",
+            "scope": "own",
+            "is_system": True,
+            "requires_permissions": ["attendance.view"],
+            "metadata": {"ui_group": "Batch Management", "icon": "edit"}
+        },
+        
+        # Facebook Leads (2)
+        {
+            "code": "facebook_leads.view",
+            "name": "View Facebook Leads",
+            "description": "Can view leads imported from Facebook Lead Ads",
+            "category": "specialized_modules",
+            "resource": "facebook_leads",
+            "action": "view",
+            "scope": "all",
+            "is_system": True,
+            "metadata": {"ui_group": "Integrations", "icon": "facebook"}
+        },
+        {
+            "code": "facebook_leads.convert",
+            "name": "Convert Facebook Leads",
+            "description": "Can convert Facebook leads to CRM leads",
+            "category": "specialized_modules",
+            "resource": "facebook_leads",
+            "action": "convert",
+            "scope": "all",
+            "is_system": True,
+            "requires_permissions": ["facebook_leads.view", "lead.add_single"],
+            "metadata": {"ui_group": "Integrations", "icon": "refresh-cw"}
+        },
+        
+        # Batch (5)
+        {
+            "code": "batch.create",
+            "name": "Create Batches",
+            "description": "Can create new training batches",
+            "category": "specialized_modules",
+            "resource": "batch",
+            "action": "create",
+            "scope": "all",
+            "is_system": True,
+            "metadata": {"ui_group": "Batch Management", "icon": "package"}
+        },
+        {
+            "code": "batch.view",
+            "name": "View Batches",
+            "description": "Can view batch information and details",
+            "category": "specialized_modules",
+            "resource": "batch",
+            "action": "view",
+            "scope": "all",
+            "is_system": True,
+            "metadata": {"ui_group": "Batch Management", "icon": "eye"}
+        },
+        {
+            "code": "batch.add",
+            "name": "Add Students to Batch",
+            "description": "Can enroll students/leads into batches",
+            "category": "specialized_modules",
+            "resource": "batch",
+            "action": "add",
+            "scope": "all",
+            "is_system": True,
+            "requires_permissions": ["batch.view"],
+            "metadata": {"ui_group": "Batch Management", "icon": "user-plus"}
+        },
+        {
+            "code": "batch.delete",
+            "name": "Delete Batches",
+            "description": "Can delete training batches",
+            "category": "specialized_modules",
+            "resource": "batch",
+            "action": "delete",
+            "scope": "all",
+            "is_system": True,
+            "requires_permissions": ["batch.view"],
+            "metadata": {"ui_group": "Batch Management", "icon": "trash", "dangerous": True}
+        },
+        {
+            "code": "batch.update",
+            "name": "Update Batches",
+            "description": "Can modify batch information and settings",
+            "category": "specialized_modules",
+            "resource": "batch",
+            "action": "update",
+            "scope": "all",
+            "is_system": True,
+            "requires_permissions": ["batch.view"],
+            "metadata": {"ui_group": "Batch Management", "icon": "edit"}
+        },
+        
+        # Notification (1)
+        {
+            "code": "notification.view",
+            "name": "View Notifications",
+            "description": "Can view system notifications and alerts",
+            "category": "specialized_modules",
+            "resource": "notification",
+            "action": "view",
+            "scope": "own",
+            "is_system": True,
+            "metadata": {"ui_group": "System", "icon": "bell"}
+        }
+    ]
+    
     # ========================================
     # COMBINE ALL PERMISSIONS
     # ========================================
     
-    permissions.extend(lead_permissions)
-    permissions.extend(contact_permissions)
-    permissions.extend(task_permissions)
-    permissions.extend(user_permissions)
-    permissions.extend(role_permissions)
-    permissions.extend(dashboard_permissions)
-    permissions.extend(system_permissions)
-    permissions.extend(communication_permissions)
-    permissions.extend(team_permissions)
+    permissions.extend(dashboard_permissions)          # 6
+    permissions.extend(lead_permissions)               # 17
+    permissions.extend(contact_permissions)            # 6
+    permissions.extend(task_permissions)               # 8
+    permissions.extend(user_permissions)               # 5
+    permissions.extend(role_permissions)               # 5
+    permissions.extend(system_config_permissions)      # 24
+    permissions.extend(communication_permissions)      # 10
+    permissions.extend(team_permissions)               # 5
+    permissions.extend(content_permissions)            # 10
+    permissions.extend(specialized_permissions)        # 12
     
     # Add timestamps to all permissions
     now = datetime.utcnow()
@@ -983,7 +1404,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
 
 async def seed_permissions(mongodb_url: str, database_name: str) -> Dict[str, Any]:
     """
-    Seeds all 69 permissions into MongoDB
+    Seeds all 108 permissions into MongoDB
     
     Args:
         mongodb_url: MongoDB connection URL
@@ -993,7 +1414,7 @@ async def seed_permissions(mongodb_url: str, database_name: str) -> Dict[str, An
         dict: Seed result with counts
     """
     try:
-        logger.info("🌱 Starting permission seeding...")
+        logger.info("🌱 Starting permission seeding (v2 - 108 permissions)...")
         
         # Connect to MongoDB
         client = AsyncIOMotorClient(mongodb_url)
@@ -1002,11 +1423,16 @@ async def seed_permissions(mongodb_url: str, database_name: str) -> Dict[str, An
         # Get all permissions
         permissions = get_all_permissions()
         
+        # Verify count
+        if len(permissions) != 108:
+            logger.warning(f"⚠️  Expected 108 permissions, got {len(permissions)}")
+        
         # Check if permissions already exist
         existing_count = await db.permissions.count_documents({})
         
         if existing_count > 0:
             logger.info(f"ℹ️  Found {existing_count} existing permissions. Skipping seed.")
+            logger.info(f"💡 Run migration script to update from 69 to 108 permissions")
             return {
                 "success": True,
                 "message": "Permissions already seeded",
@@ -1023,6 +1449,7 @@ async def seed_permissions(mongodb_url: str, database_name: str) -> Dict[str, An
         await db.permissions.create_index("code", unique=True)
         await db.permissions.create_index("category")
         await db.permissions.create_index("resource")
+        await db.permissions.create_index("action")
         
         logger.info(f"✅ Successfully seeded {inserted_count} permissions")
         
@@ -1033,7 +1460,7 @@ async def seed_permissions(mongodb_url: str, database_name: str) -> Dict[str, An
             categories[cat] = categories.get(cat, 0) + 1
         
         logger.info("📊 Permission breakdown by category:")
-        for cat, count in categories.items():
+        for cat, count in sorted(categories.items()):
             logger.info(f"   - {cat}: {count} permissions")
         
         return {
@@ -1058,7 +1485,7 @@ async def seed_permissions(mongodb_url: str, database_name: str) -> Dict[str, An
 
 async def verify_permissions(mongodb_url: str, database_name: str) -> Dict[str, Any]:
     """
-    Verifies that all 69 permissions exist in database
+    Verifies that all 108 permissions exist in database
     
     Returns:
         dict: Verification result
@@ -1087,14 +1514,20 @@ async def verify_permissions(mongodb_url: str, database_name: str) -> Dict[str, 
             "total_existing": len(existing_codes),
             "missing_count": len(missing),
             "extra_count": len(extra),
-            "missing_permissions": list(missing),
-            "extra_permissions": list(extra)
+            "missing_permissions": sorted(list(missing)),
+            "extra_permissions": sorted(list(extra))
         }
         
         if result["success"]:
             logger.info(f"✅ All {len(expected_codes)} permissions verified")
         else:
-            logger.warning(f"⚠️  Permission verification failed: {len(missing)} missing, {len(extra)} extra")
+            logger.warning(f"⚠️  Permission verification failed:")
+            logger.warning(f"   Missing: {len(missing)} permissions")
+            logger.warning(f"   Extra: {len(extra)} permissions")
+            if missing:
+                logger.warning(f"   Missing list: {sorted(list(missing))[:10]}...")
+            if extra:
+                logger.warning(f"   Extra list: {sorted(list(extra))[:10]}...")
         
         return result
         
@@ -1127,6 +1560,7 @@ async def main():
         return
     
     logger.info(f"📦 Database: {database_name}")
+    logger.info(f"🎯 Target: 108 permissions across 11 categories")
     
     # Seed permissions
     result = await seed_permissions(mongodb_url, database_name)
@@ -1137,11 +1571,13 @@ async def main():
         # Verify
         verification = await verify_permissions(mongodb_url, database_name)
         if verification["success"]:
-            logger.info("✅ All permissions verified")
+            logger.info("✅ All 108 permissions verified")
         else:
             logger.warning("⚠️  Verification found issues:")
-            logger.warning(f"   Missing: {verification.get('missing_permissions', [])}")
-            logger.warning(f"   Extra: {verification.get('extra_permissions', [])}")
+            if verification.get('missing_permissions'):
+                logger.warning(f"   Missing ({len(verification['missing_permissions'])}): {verification['missing_permissions'][:5]}...")
+            if verification.get('extra_permissions'):
+                logger.warning(f"   Extra ({len(verification['extra_permissions'])}): {verification['extra_permissions'][:5]}...")
     else:
         logger.error(f"❌ Permission seeding failed: {result.get('message')}")
 

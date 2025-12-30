@@ -17,7 +17,7 @@ from ..models.batch_enrollment import (
 )
 from ..services.batch_enrollment_service import batch_enrollment_service
 from ..services.batch_service import batch_service
-from ..config.auth import get_current_user, check_permission
+from ..utils.dependencies import get_current_user, get_user_with_permission
 from bson import ObjectId
 
 router = APIRouter(prefix="/enrollments", tags=["Batch Enrollments"])
@@ -60,7 +60,7 @@ def format_enrollment_response(enrollment_doc: Dict[str, Any]) -> Dict[str, Any]
 @router.post("/", status_code=status.HTTP_201_CREATED)
 async def enroll_lead(
     enrollment_data: BatchEnrollmentCreate,
-    current_user: Dict[str, Any] = Depends(check_permission("batch.enroll_students"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("batch.enroll_students"))
 ):
     """
     Enroll a single lead in a batch
@@ -113,7 +113,7 @@ async def enroll_lead(
 @router.post("/bulk", status_code=status.HTTP_201_CREATED)
 async def bulk_enroll_leads(
     bulk_data: BatchBulkEnrollmentCreate,
-    current_user: Dict[str, Any] = Depends(check_permission("batch.enroll_students"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("batch.enroll_students"))
 ):
     """
     Enroll multiple leads in a batch
@@ -153,7 +153,7 @@ async def bulk_enroll_leads(
 async def remove_enrollment(
     enrollment_id: str,
     reason: Optional[str] = Query(None, description="Reason for removing enrollment"),
-    current_user: Dict[str, Any] = Depends(check_permission("batch.remove_students"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("batch.remove_students"))
 ):
     """
     Remove a lead from a batch (mark as dropped)
@@ -319,7 +319,7 @@ async def get_enrollment(
 async def update_enrollment(
     enrollment_id: str,
     update_data: BatchEnrollmentUpdate,
-    current_user: Dict[str, Any] = Depends(check_permission("batch.enroll_students"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("batch.enroll_students"))
 ):
     """
     Update enrollment details (status, dropped reason, etc.)
