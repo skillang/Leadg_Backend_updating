@@ -47,10 +47,6 @@ async def check_lead_access_for_note(lead_id: str, user_email: str, current_user
     - User has note.view_all permission, OR
     - Lead is assigned to user (primary or co-assignee)
     """
-    # Check if user has view_all permission
-    has_view_all = await rbac_service.check_permission(current_user, "note.view_all")
-    if has_view_all:
-        return True
     
     # Check if user has access to the lead
     db = get_database()
@@ -75,10 +71,6 @@ async def check_note_access(note: Dict, user_id: str, current_user: Dict) -> boo
     - Note is public AND user has access to lead, OR
     - Note is private AND created by user
     """
-    # Check if user has view_all permission
-    has_view_all = await rbac_service.check_permission(current_user, "note.view_all")
-    if has_view_all:
-        return True
     
     # Check if note is private
     if note.get("is_private", False):
@@ -200,8 +192,7 @@ async def get_lead_notes(
             )
         
         # Determine role for service layer (backward compatibility)
-        has_view_all = await rbac_service.check_permission(current_user, "note.view_all")
-        effective_role = "admin" if has_view_all else "user"
+        effective_role = current_user.get("role", "user")
         
         # Parse tags
         parsed_tags = None
@@ -273,8 +264,7 @@ async def get_lead_note_stats(
             )
         
         # Determine role for service layer
-        has_view_all = await rbac_service.check_permission(current_user, "note.view_all")
-        effective_role = "admin" if has_view_all else "user"
+        effective_role = current_user.get("role", "user")
         
         stats = await note_service.get_note_stats(
             lead_id, 
@@ -319,8 +309,7 @@ async def get_note(
         logger.info(f"User ID extracted: {user_id}")
         
         # Determine role for service layer
-        has_view_all = await rbac_service.check_permission(current_user, "note.view_all")
-        effective_role = "admin" if has_view_all else "user"
+        effective_role = current_user.get("role", "user")
         
         # Call note service
         logger.info("Calling note_service.get_note_by_id...")
@@ -372,8 +361,8 @@ async def update_note(
         user_id = get_user_id(current_user)
         
         # Check if user has update_all permission
-        has_update_all = await rbac_service.check_permission(current_user, "note.update_all")
-        effective_role = "admin" if has_update_all else "user"
+        effective_role = current_user.get("role", "user")
+
         
         success = await note_service.update_note(
             note_id, 
@@ -432,8 +421,7 @@ async def delete_note(
         user_id = get_user_id(current_user)
         
         # Check if user has delete_all permission
-        has_delete_all = await rbac_service.check_permission(current_user, "note.delete_all")
-        effective_role = "admin" if has_delete_all else "user"
+        effective_role = current_user.get("role", "user")
         
         success = await note_service.delete_note(
             note_id, 
@@ -487,8 +475,7 @@ async def search_notes(
         logger.info(f"Tags filter: {search_request.tags}")
         
         # Determine role for service layer
-        has_view_all = await rbac_service.check_permission(current_user, "note.view_all")
-        effective_role = "admin" if has_view_all else "user"
+        effective_role = current_user.get("role", "user")
         
         result = await note_service.search_notes(
             search_request,
@@ -548,20 +535,17 @@ async def bulk_note_action(
         failed_notes = []
         
         # Determine role for service layer
-        has_update_all = await rbac_service.check_permission(current_user, "note.update_all")
-        has_delete_all = await rbac_service.check_permission(current_user, "note.delete_all")
+        effective_role = current_user.get("role", "user")
         
         for note_id in bulk_action.note_ids:
             try:
                 if bulk_action.action == "delete":
-                    effective_role = "admin" if has_delete_all else "user"
                     success = await note_service.delete_note(
                         note_id, 
                         str(user_id),
                         effective_role
                     )
                 elif bulk_action.action == "add_tag" and bulk_action.tag:
-                    effective_role = "admin" if has_update_all else "user"
                     # Get current note
                     note = await note_service.get_note_by_id(note_id, str(user_id), effective_role)
                     if note:
@@ -578,7 +562,6 @@ async def bulk_note_action(
                     else:
                         success = False
                 elif bulk_action.action == "remove_tag" and bulk_action.tag:
-                    effective_role = "admin" if has_update_all else "user"
                     # Get current note
                     note = await note_service.get_note_by_id(note_id, str(user_id), effective_role)
                     if note:
@@ -595,14 +578,12 @@ async def bulk_note_action(
                     else:
                         success = False
                 elif bulk_action.action == "mark_important":
-                    effective_role = "admin" if has_update_all else "user"
                     from ..models.note import NoteUpdate
                     note_update = NoteUpdate(is_important=bulk_action.value)
                     success = await note_service.update_note(
                         note_id, note_update, str(user_id), effective_role
                     )
                 elif bulk_action.action == "mark_private":
-                    effective_role = "admin" if has_update_all else "user"
                     from ..models.note import NoteUpdate
                     note_update = NoteUpdate(is_private=bulk_action.value)
                     success = await note_service.update_note(
@@ -643,7 +624,7 @@ async def bulk_note_action(
 
 
 # =====================================
-# DEBUG & UTILITY ENDPOINTS
+#  UTILITY ENDPOINTS
 # =====================================
 
 @router.get("/types")
@@ -699,109 +680,3 @@ async def get_note_types():
             "note_types": []
         }
 
-
-@router.get("/debug/simple")
-async def simple_debug():
-    """Simple debug test - No authentication required"""
-    try:
-        from ..services.note_service import note_service
-        from ..models.note import NoteCreate
-        return {
-            "success": True, 
-            "message": "Note imports working",
-            "note_service": str(type(note_service)),
-            "rbac_enabled": True
-        }
-    except Exception as e:
-        import traceback
-        return {
-            "success": False, 
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }
-
-
-@router.get("/debug/available-tags")
-async def debug_available_tags(
-    current_user: dict = Depends(get_current_active_user)
-):
-    """Check available tags across all notes - Basic auth only"""
-    try:
-        db = get_database()
-        
-        # Get all unique tags
-        pipeline = [
-            {"$unwind": "$tags"},
-            {"$group": {"_id": "$tags", "count": {"$sum": 1}}},
-            {"$sort": {"count": -1}}
-        ]
-        
-        result = await db.lead_notes.aggregate(pipeline).to_list(None)
-        
-        return {
-            "success": True,
-            "tags": [{"tag": item["_id"], "count": item["count"]} for item in result]
-        }
-        
-    except Exception as e:
-        import traceback
-        return {
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }
-
-
-@router.post("/debug/test-create/leads/{lead_id}/notes")
-async def debug_test_create_note(
-    lead_id: str,
-    note_data: NoteCreate,
-    current_user: dict = Depends(get_current_active_user)
-):
-    """Test note creation with detailed debugging - Basic auth only"""
-    result = {"steps": []}
-    
-    try:
-        # Step 1: Basic validation
-        result["steps"].append("1. Starting debug test")
-        result["lead_id"] = lead_id
-        result["note_data"] = note_data.dict()
-        result["user"] = current_user.get("email")
-        
-        # Step 2: Database connection
-        result["steps"].append("2. Getting database connection")
-        db = get_database()
-        
-        # Step 3: Check lead exists
-        result["steps"].append("3. Checking if lead exists")
-        lead = await db.leads.find_one({"lead_id": lead_id})
-        if not lead:
-            result["error"] = f"Lead {lead_id} not found"
-            return result
-        
-        result["lead_found"] = True
-        result["lead_name"] = lead.get("name", "N/A")
-        
-        # Step 4: Try to call note service
-        result["steps"].append("4. Calling note service")
-        
-        user_id = get_user_id(current_user)
-        
-        note = await note_service.create_note(
-            lead_id=lead_id,
-            note_data=note_data,
-            created_by=str(user_id)
-        )
-        
-        result["success"] = True
-        result["note_created"] = True
-        result["note_id"] = note.get('id', 'Unknown')
-        return result
-        
-    except Exception as e:
-        result["success"] = False
-        result["error"] = str(e)
-        result["error_type"] = type(e).__name__
-        import traceback
-        result["traceback"] = traceback.format_exc()
-        return result

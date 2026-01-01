@@ -107,7 +107,7 @@ async def build_lead_query_with_rbac(current_user: Dict, db) -> Dict:
     if has_read_all:
         return {}  # No restrictions - can see all leads
     
-    has_read_team = await rbac_service.check_permission(current_user, "lead.read_team")
+    has_read_team = await rbac_service.check_permission(current_user, "lead.view_team")
     if has_read_team:
         # Get team members from same team
         team_members = await get_user_team_members(current_user, db)
@@ -161,7 +161,7 @@ async def check_lead_access(lead: Dict, user_email: str, current_user: Dict) -> 
     🆕 Check if user has access to a specific lead using RBAC
     """
     # Check if user has read_all permission
-    has_read_all = await rbac_service.check_permission(current_user, "lead.read_all")
+    has_read_all = await rbac_service.check_permission(current_user, "lead.view_all")
     if has_read_all:
         return True
     
@@ -1691,11 +1691,11 @@ async def update_lead_universal(
             co_assignees_changed = old_co_assignees != new_co_assignees
         
         if assignment_changed or co_assignees_changed:
-            has_reassign = await rbac_service.check_permission(current_user, "lead.reassign")
+            has_reassign = await rbac_service.check_permission(current_user, "lead.assign")
             if not has_reassign:
                 raise HTTPException(
                     status_code=403,
-                    detail="You don't have permission to reassign leads. Required: lead.reassign"
+                    detail="You don't have permission to reassign leads. Required: lead.assign"
                 )
         
         # AUTOMATION LOGIC - Check if stage is changing
@@ -2313,7 +2313,7 @@ async def get_admin_user_lead_stats(
 
 @router.post("/admin/sync-user-arrays")
 async def sync_user_arrays(
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("system.manage"))  # 🔄 CHANGE THIS LINE
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("role.update"))  # Admin permission for system operations
 ):
     """Sync user arrays with actual lead assignments including multi-assignments"""
     try:
@@ -2705,7 +2705,7 @@ async def refresh_lead_call_count(
 @router.post("/bulk-refresh-call-counts", response_model=BulkCallCountRefreshResponse)
 async def bulk_refresh_call_counts(
     request: BulkCallCountRefreshRequest,
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("system.manage"))  # 🔄 CHANGE THIS LINE
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("role.update"))  # Admin permission for system operations  # 🔄 CHANGE THIS LINE
 ):
     """
     Bulk refresh call counts for multiple leads (Admin only)

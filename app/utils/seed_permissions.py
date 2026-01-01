@@ -393,7 +393,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
     ]
     
     # ========================================
-    # CATEGORY 4: TASK MANAGEMENT (8 permissions)
+    # CATEGORY 4: TASK MANAGEMENT (9 permissions)
     # ========================================
     
     task_permissions = [
@@ -401,6 +401,17 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "code": "task.view",
             "name": "View Own Tasks",
             "description": "Can view own assigned tasks",
+            "category": "task_management",
+            "resource": "task",
+            "action": "view",
+            "scope": "own",
+            "is_system": True,
+            "metadata": {"ui_group": "Task Operations", "icon": "check-square"}
+        },
+          {
+            "code": "task.view_team",
+            "name": "View Team Tasks",
+            "description": "Can view team members' tasks",
             "category": "task_management",
             "resource": "task",
             "action": "view",
@@ -957,7 +968,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "metadata": {"ui_group": "Communication", "icon": "bar-chart"}
         },
         
-        # WhatsApp (4)
+        # WhatsApp (5)
         {
             "code": "whatsapp.send_single",
             "name": "Send Single WhatsApp",
@@ -988,6 +999,17 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "category": "communication",
             "resource": "whatsapp",
             "action": "history_single",
+            "scope": "own",
+            "is_system": True,
+            "metadata": {"ui_group": "Communication", "icon": "clock"}
+        },
+         {
+            "code": "whatsapp.view_all",
+            "name": "View All WhatsApp History",
+            "description": "Can view all WhatsApp message history",
+            "category": "communication",
+            "resource": "whatsapp",
+            "action": "view_all",
             "scope": "own",
             "is_system": True,
             "metadata": {"ui_group": "Communication", "icon": "clock"}
