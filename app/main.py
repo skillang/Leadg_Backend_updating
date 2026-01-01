@@ -1,5 +1,5 @@
 # app/main.py - RBAC-ENABLED
-# 🔄 UPDATED: Complete 108-Permission RBAC System
+# 🔄 FIXED: Using existing seed files (not v2) to fix import errors
 # ✅ Features: Permission seeding, default roles creation, RBAC routers
 
 from fastapi import FastAPI, Request
@@ -160,10 +160,10 @@ async def seed_rbac_permissions():
     - WhatsApp Management (22 permissions)
     """
     try:
-        # 🔄 UPDATED: Import v2 seed file (108 permissions)
-        from app.utils.seed_permissions_v2 import seed_permissions
+        # ✅ FIXED: Using existing seed_permissions file
+        from app.utils.seed_permissions import seed_permissions
         
-        logger.info("🔑 Seeding RBAC permissions (108 permissions)...")
+        logger.info("🔑 Seeding RBAC permissions...")
         
         result = await seed_permissions(
             mongodb_url=settings.mongodb_url,
@@ -186,19 +186,19 @@ async def seed_rbac_permissions():
 
 async def create_default_roles():
     """
-    🔄 UPDATED: Create 3 default system roles for 108-permission system
+    🔄 UPDATED: Create 3 default system roles
     
-    - Super Admin (108/108 permissions) - Full system access
-    - Admin (85/108 permissions) - Most management capabilities
-    - User (28/108 permissions) - Basic user operations
+    - Super Admin - Full system access
+    - Admin - Most management capabilities
+    - User - Basic user operations
     
     This function runs on startup and ensures default roles exist.
     """
     try:
-        # 🔄 UPDATED: Import v2 create roles file (108 permissions)
-        from app.utils.create_default_roles_v2 import create_default_roles as create_roles_func
+        # ✅ FIXED: Using existing create_default_roles file (not v2)
+        from app.utils.create_default_roles import create_default_roles as create_roles_func
         
-        logger.info("🎭 Creating default roles (108-permission system)...")
+        logger.info("🎭 Creating default roles...")
         
         result = await create_roles_func(
             mongodb_url=settings.mongodb_url,
@@ -247,8 +247,8 @@ async def create_super_admin_from_env():
             logger.info("   - SUPER_ADMIN_PASSWORD=SecurePassword123!")
             return
         
-        # 🔄 UPDATED: Import v2 create roles file
-        from app.utils.create_default_roles_v2 import create_super_admin_user
+        # ✅ FIXED: Using existing create_default_roles file (not v2)
+        from app.utils.create_default_roles import create_super_admin_user
         
         logger.info(f"👤 Creating super admin user: {super_admin_email}")
         

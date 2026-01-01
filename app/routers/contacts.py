@@ -215,14 +215,14 @@ async def get_lead_contacts(
 @router.patch("/{contact_id}/primary")
 async def set_primary_contact(
     contact_id: str,
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("contact.update"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("contact.update_own"))
 ):
     """
     🔄 RBAC-ENABLED: Set a contact as the primary contact for their lead
     
-    **Required Permission:** `contact.update`
-    
-    Removes primary status from other contacts for the same lead.
+    **Required Permission:**
+    - `contact.update_own` - Update contacts for assigned leads
+    - `contact.update_all` - Update any contact (admin)
     """
     try:
         db = get_database()
@@ -233,14 +233,18 @@ async def set_primary_contact(
             raise HTTPException(status_code=404, detail="Contact not found")
         
         # Check if user has access to this contact
-        user_email = current_user.get("email")
-        has_access = await check_contact_access(contact, user_email, current_user)
+        has_update_all = await rbac_service.check_permission(current_user, "contact.update_all")
         
-        if not has_access:
-            raise HTTPException(
-                status_code=403,
-                detail="You don't have permission to modify this contact"
-            )
+        if not has_update_all:
+            # Regular user - check if they have access to this contact
+            user_email = current_user.get("email")
+            has_access = await check_contact_access(contact, user_email, current_user)
+            
+            if not has_access:
+                raise HTTPException(
+                    status_code=403,
+                    detail="You don't have permission to modify this contact"
+                )
         
         result = await contact_service.set_primary_contact(contact_id, current_user)
         
@@ -315,7 +319,7 @@ async def get_contact(
 async def update_contact(
     contact_id: str,
     contact_data: ContactUpdate,
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("contact.update"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("contact.update_own"))
 ):
     """
     🔄 RBAC-ENABLED: Update a contact's information
@@ -336,14 +340,18 @@ async def update_contact(
             raise HTTPException(status_code=404, detail="Contact not found")
         
         # Check if user has access to this contact
-        user_email = current_user.get("email")
-        has_access = await check_contact_access(contact, user_email, current_user)
+        has_update_all = await rbac_service.check_permission(current_user, "contact.update_all")
         
-        if not has_access:
-            raise HTTPException(
-                status_code=403,
-                detail="You don't have permission to update this contact"
-            )
+        if not has_update_all:
+            # Regular user - check if they have access to this contact
+            user_email = current_user.get("email")
+            has_access = await check_contact_access(contact, user_email, current_user)
+            
+            if not has_access:
+                raise HTTPException(
+                    status_code=403,
+                    detail="You don't have permission to update this contact"
+                )
         
         result = await contact_service.update_contact(contact_id, contact_data, current_user)
         

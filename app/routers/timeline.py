@@ -48,14 +48,10 @@ async def check_lead_access_for_timeline(lead_id: str, user_email: str, current_
     Check if user has access to a lead (for timeline operations)
     
     Returns True if:
-    - User has timeline.view_all permission, OR
     - Lead is assigned to user (primary or co-assignee)
-    """
-    # Check if user has view_all permission
-    has_view_all = await rbac_service.check_permission(current_user, "timeline.view_all")
-    if has_view_all:
-        return True
     
+    Note: Timeline doesn't have view_all permission - uses lead access only
+    """
     # Check if user has access to the lead
     db = get_database()
     lead = await db.leads.find_one({"lead_id": lead_id})
@@ -68,7 +64,6 @@ async def check_lead_access_for_timeline(lead_id: str, user_email: str, current_
     co_assignees = lead.get("co_assignees", [])
     
     return user_email in ([assigned_to] + co_assignees)
-
 
 def convert_objectid_to_str(obj):
     """Recursively convert ObjectId to string in any data structure"""
