@@ -16,7 +16,7 @@ from ..models.cv_processing import (
     CVProcessingStatus
 )
 from ..services.cv_processing_service import cv_processing_service
-from ..utils.dependencies import get_current_active_user, get_user_with_single_lead_permission, get_user_with_bulk_lead_permission
+from ..utils.dependencies import get_current_active_user, get_user_with_permission, get_user_with_single_lead_permission, get_user_with_bulk_lead_permission
 
 logger = logging.getLogger(__name__)
 
@@ -450,10 +450,12 @@ async def bulk_convert_cvs_to_leads(
 
 @router.get("/stats", response_model=CVProcessingStatsResponse)
 async def get_cv_processing_stats(
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("dashboard.view"))
 ):
     """
-    Get CV processing statistics
+    🔄 RBAC-ENABLED: Get CV processing statistics for dashboard
+    
+    **Required Permission:** `dashboard.view`
     
     **Returns**: Overall system stats and user-specific stats based on permissions
     """

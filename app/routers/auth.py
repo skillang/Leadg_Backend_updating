@@ -51,11 +51,14 @@ router = APIRouter()
 @router.post("/register", response_model=Dict[str, Any], status_code=status.HTTP_201_CREATED)
 async def register_user(
     user_data: UserCreate,
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("user.create"))
 ):
     """
-    Register a new user with RBAC role assignment
-    Admin only endpoint with TATA Call Routing integration
+    🔄 RBAC-ENABLED: Register a new user with RBAC role assignment
+    
+    **Required Permission:** `user.create`
+    
+    With TATA Call Routing integration
     
     🆕 RBAC CHANGES:
     - Assigns default "User" role if no role_id provided
@@ -1444,10 +1447,13 @@ async def deactivate_department(
 @router.delete("/users/{user_id}")
 async def delete_user(
     user_id: str,
-    current_user: Dict[str, Any] = Depends(get_admin_user)  # Admin only
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("user.delete"))
 ):
     """
-    Delete a user (Admin only)
+    🔄 RBAC-ENABLED: Delete a user
+    
+    **Required Permission:** `user.delete`
+    
     - Prevents self-deletion and deleting last admin
     - Reassigns user's leads to the admin performing deletion
     - Updates tasks to maintain data integrity
@@ -1583,10 +1589,13 @@ async def delete_user(
 async def update_user_departments(
     user_id: str,
     departments_data: Dict[str, Union[str, List[str]]],
-    current_user: Dict[str, Any] = Depends(get_admin_user)  # Admin only
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("user.update"))
 ):
     """
-    Update user departments (Admin only)
+    🔄 RBAC-ENABLED: Update user departments
+    
+    **Required Permission:** `user.update`
+    
     Supports both single department (for admin) and multiple departments (for users)
     """
     try:
@@ -1814,145 +1823,6 @@ async def deactivate_department(
         )
     
 # Add this endpoint to app/routers/auth.py
-
-@router.delete("/users/{user_id}")
-async def delete_user(
-    user_id: str,
-    current_user: Dict[str, Any] = Depends(get_admin_user)  # Admin only
-):
-    """
-    Delete a user (Admin only)
-    - Prevents self-deletion and deleting last admin
-    - Reassigns user's leads to the admin performing deletion
-    - Updates tasks to maintain data integrity
-    - Soft deletes user (marks inactive)
-    """
-    try:
-        db = get_database()
-        
-        # Find user by ID or email (flexible lookup)
-        user_query = {"$or": [{"email": user_id}]}
-        if ObjectId.is_valid(user_id):
-            user_query["$or"].append({"_id": ObjectId(user_id)})
-        
-        user_to_delete = await db.users.find_one(user_query)
-        
-        if not user_to_delete:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found"
-            )
-        
-        user_email = user_to_delete["email"]
-        user_name = f"{user_to_delete.get('first_name', '')} {user_to_delete.get('last_name', '')}".strip()
-        current_admin_email = current_user.get("email")
-        
-        # Security checks
-        if user_email == current_admin_email:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="You cannot delete your own account"
-            )
-        
-        # Prevent deletion of last admin
-        if user_to_delete.get("role") == "admin":
-            admin_count = await db.users.count_documents({"role": "admin", "is_active": True})
-            if admin_count <= 1:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Cannot delete the last admin user. Create another admin first."
-                )
-        
-        logger.info(f"Admin {current_admin_email} deleting user: {user_email}")
-        
-        # Step 1: Reassign leads to the deleting admin
-        assigned_leads = await db.leads.count_documents({"assigned_to": user_email})
-        if assigned_leads > 0:
-            await db.leads.update_many(
-                {"assigned_to": user_email},
-                {
-                    "$set": {
-                        "assigned_to": None,  # Set to None for unassigned
-                        "assigned_to_name": None,  # Clear the name as well
-                        "reassignment_reason": f"User {user_email} was deleted - lead unassigned",
-                        "updated_at": datetime.utcnow()
-                    }
-                }
-            )
-            logger.info(f"Reassigned {assigned_leads} leads to {current_admin_email}")
-        
-        # Step 2: Update tasks - preserve data but mark user as deleted
-        tasks_assigned = await db.lead_tasks.count_documents({"assigned_to": user_email})
-        if tasks_assigned > 0:
-            await db.lead_tasks.update_many(
-                {"assigned_to": user_email},
-                {
-                    "$set": {
-                        "assigned_to": None,
-                        "assigned_to_name": f"[Deleted User: {user_name}]",
-                        "updated_at": datetime.utcnow()
-                    }
-                }
-            )
-        
-        tasks_created = await db.lead_tasks.count_documents({"created_by": str(user_to_delete["_id"])})
-        if tasks_created > 0:
-            await db.lead_tasks.update_many(
-                {"created_by": str(user_to_delete["_id"])},
-                {
-                    "$set": {
-                        "created_by_name": f"[Deleted User: {user_name}]",
-                        "updated_at": datetime.utcnow()
-                    }
-                }
-            )
-        
-        # Step 3: Soft delete user (mark as inactive)
-        deletion_result = await db.users.update_one(
-            {"_id": user_to_delete["_id"]},
-            {
-                "$set": {
-                    "is_active": False,
-                    "deleted_at": datetime.utcnow(),
-                    "deleted_by": current_admin_email,
-                    "email_backup": user_email,
-                    "email": f"[DELETED]_{user_email}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
-                }
-            }
-        )
-        
-        if deletion_result.modified_count == 0:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to delete user"
-            )
-        
-        logger.info(f"✅ User {user_email} successfully deleted by {current_admin_email}")
-        
-        return {
-            "success": True,
-            "message": f"User {user_email} has been successfully deleted",
-            "deleted_user": {
-                "email": user_email,
-                "name": user_name,
-                "role": user_to_delete.get("role")
-            },
-            "summary": {
-                "leads_reassigned": assigned_leads,
-                "tasks_updated": tasks_assigned + tasks_created,
-                "reassigned_to": current_admin_email
-            }
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error deleting user {user_id}: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to delete user: {str(e)}"
-        )
-
 
 @router.post("/refresh", response_model=RefreshTokenResponse)
 async def refresh_token(

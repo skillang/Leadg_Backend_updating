@@ -138,12 +138,12 @@ async def create_team(
     team_lead_email: str,
     department: Optional[str] = None,
     description: Optional[str] = None,
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("team.add"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("team.create"))
 ):
     """
     🔄 RBAC-ENABLED: Create a new team
     
-    **Required Permission:** `team.add`
+    **Required Permission:** `team.create`
     
     **Parameters:**
     - name: Team name (must be unique)
@@ -351,12 +351,12 @@ async def update_team(
     description: Optional[str] = None,
     department: Optional[str] = None,
     is_active: Optional[bool] = None,
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("team.update"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("team.edit"))
 ):
     """
     🔄 RBAC-ENABLED: Update team information
     
-    **Required Permission:** `team.update`
+    **Required Permission:** `team.edit`
     
     **Example Request:**
     ```json

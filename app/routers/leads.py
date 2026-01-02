@@ -1378,9 +1378,18 @@ async def filter_leads(
 @convert_dates_to_ist()
 async def get_lead_stats(
     include_multi_assignment_stats: bool = Query(True),
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("lead.view"))  # 🔄 CHANGE THIS LINE
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("dashboard.view"))
 ):
-    """Get lead statistics with enhanced breakdown support"""
+    """
+    🔄 RBAC-ENABLED: Get lead statistics for dashboard
+    
+    **Required Permission:** 
+    - `dashboard.view` - View personal dashboard
+    - `dashboard.view_team` - View team dashboard
+    - `dashboard.view_all` - View organization dashboard
+    
+    Automatically shows data based on permission level
+    """
     try:
         db = get_database()
          # 🆕 Build base query using RBAC

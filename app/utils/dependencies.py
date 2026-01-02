@@ -541,33 +541,31 @@ def has_all_permissions(current_user: Dict[str, Any], permission_codes: List[str
     effective_permissions = current_user.get("effective_permissions", [])
     return all(perm in effective_permissions for perm in permission_codes)
 
-
 # ============================================================================
-# 🆕 CONVENIENCE DEPENDENCIES FOR COMMON USE CASES
+# 🆕 CONVENIENCE DEPENDENCIES FOR COMMON USE CASES (108-Permission System)
 # ============================================================================
 
-# Lead permissions
-get_user_with_lead_create = lambda: get_user_with_permission("leads.create", "You don't have permission to create leads")
-get_user_with_lead_update = lambda: get_user_with_permission("leads.update", "You don't have permission to update leads")
-get_user_with_lead_delete = lambda: get_user_with_permission("leads.delete", "You don't have permission to delete leads")
-get_user_with_lead_read_all = lambda: get_user_with_permission("leads.read_all", "You don't have permission to view all leads")
+# Lead permissions (singular: lead.*)
+get_user_with_lead_create = lambda: get_user_with_permission("lead.create", "You don't have permission to create leads")
+get_user_with_lead_update = lambda: get_user_with_permission("lead.edit", "You don't have permission to update leads")
+get_user_with_lead_delete = lambda: get_user_with_permission("lead.delete", "You don't have permission to delete leads")
+get_user_with_lead_read_all = lambda: get_user_with_permission("lead.view_all", "You don't have permission to view all leads")
 
-# Contact permissions
-get_user_with_contact_create = lambda: get_user_with_permission("contacts.create", "You don't have permission to create contacts")
-get_user_with_contact_update = lambda: get_user_with_permission("contacts.update", "You don't have permission to update contacts")
-get_user_with_contact_delete = lambda: get_user_with_permission("contacts.delete", "You don't have permission to delete contacts")
+# Contact permissions (singular: contact.*)
+get_user_with_contact_create = lambda: get_user_with_permission("contact.create", "You don't have permission to create contacts")
+get_user_with_contact_update = lambda: get_user_with_permission("contact.edit", "You don't have permission to update contacts")
+get_user_with_contact_delete = lambda: get_user_with_permission("contact.delete", "You don't have permission to delete contacts")
 
-# Task permissions
-get_user_with_task_create = lambda: get_user_with_permission("tasks.create", "You don't have permission to create tasks")
-get_user_with_task_update = lambda: get_user_with_permission("tasks.update", "You don't have permission to update tasks")
-get_user_with_task_delete = lambda: get_user_with_permission("tasks.delete", "You don't have permission to delete tasks")
+# Task permissions (singular: task.*)
+get_user_with_task_create = lambda: get_user_with_permission("task.create", "You don't have permission to create tasks")
+get_user_with_task_update = lambda: get_user_with_permission("task.edit", "You don't have permission to update tasks")
+get_user_with_task_delete = lambda: get_user_with_permission("task.delete", "You don't have permission to delete tasks")
 
-# Permission management
-get_user_with_permission_manage = lambda: get_user_with_permission("permissions.manage", "You don't have permission to manage permissions")
-get_user_with_role_manage = lambda: get_user_with_permission("roles.manage", "You don't have permission to manage roles")
+# Permission management (singular: permission.*)
+get_user_with_permission_manage = lambda: get_user_with_permission("permission.manage", "You don't have permission to manage permissions")
+get_user_with_role_manage = lambda: get_user_with_permission("role.edit", "You don't have permission to manage roles")
 
-# User management
-get_user_with_user_create = lambda: get_user_with_permission("users.create", "You don't have permission to create users")
-get_user_with_user_update = lambda: get_user_with_permission("users.update", "You don't have permission to update users")
-get_user_with_user_delete = lambda: get_user_with_permission("users.delete", "You don't have permission to delete users")
-
+# User management (singular: user.*)
+get_user_with_user_create = lambda: get_user_with_permission("user.create", "You don't have permission to create users")
+get_user_with_user_update = lambda: get_user_with_permission("user.update", "You don't have permission to update users")
+get_user_with_user_delete = lambda: get_user_with_permission("user.delete", "You don't have permission to delete users")

@@ -31,12 +31,12 @@ rbac_service = RBACService()
 @router.post("/", response_model=RoleResponse, status_code=status.HTTP_201_CREATED)
 async def create_role(
     role_data: RoleCreate,
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("role.add"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("role.create"))
 ):
     """
     🔄 RBAC-ENABLED: Create a new custom role
     
-    **Required Permission:** `role.add`
+    **Required Permission:** `role.create`
     
     Args:
         role_data: Role creation data including name, permissions, etc.
@@ -159,12 +159,12 @@ async def get_role(
 async def update_role(
     role_id: str,
     role_data: RoleUpdate,
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("role.update"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("role.edit"))
 ):
     """
     🔄 RBAC-ENABLED: Update an existing role
     
-    **Required Permission:** `role.update`
+    **Required Permission:** `role.edit`
     
     Note: Cannot modify system roles (Super Admin, Admin, User)
     
@@ -391,12 +391,12 @@ async def assign_role_to_multiple_users(
 async def clone_role(
     role_id: str,
     request: RoleCloneRequest,
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("role.add"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("role.create"))
 ):
     """
     🔄 RBAC-ENABLED: Clone an existing role to create a new role with same permissions
     
-    **Required Permission:** `role.add`
+    **Required Permission:** `role.create`
     
     Useful for:
     - Creating variations of existing roles
@@ -551,12 +551,12 @@ async def get_role_by_name(
 @router.post("/{role_id}/activate")
 async def activate_role(
     role_id: str,
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("role.update"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("role.edit"))
 ):
     """
     🔄 RBAC-ENABLED: Activate a previously deactivated role
     
-    **Required Permission:** `role.update`
+    **Required Permission:** `role.edit`
     
     Args:
         role_id: Role ObjectId as string
@@ -601,12 +601,12 @@ async def activate_role(
 @router.post("/{role_id}/deactivate")
 async def deactivate_role(
     role_id: str,
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("role.update"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("role.edit"))
 ):
     """
     🔄 RBAC-ENABLED: Deactivate a role (soft delete - doesn't remove from database)
     
-    **Required Permission:** `role.update`
+    **Required Permission:** `role.edit`
     
     Note: 
     - Cannot deactivate system roles (Super Admin, Admin, User)

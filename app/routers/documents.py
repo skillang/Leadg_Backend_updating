@@ -86,10 +86,12 @@ async def get_document_statuses():
 
 @router.get("/admin/dashboard")
 async def get_admin_document_dashboard(
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("document.view_all"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("dashboard.view_all"))
 ):
     """
-    🔄 RBAC-ENABLED: Get document statistics dashboard for admin
+    🔄 RBAC-ENABLED: Get document statistics for organization dashboard
+    
+    **Required Permission:** `dashboard.view_all`
     
     **Required Permission:** `document.view_all`
     

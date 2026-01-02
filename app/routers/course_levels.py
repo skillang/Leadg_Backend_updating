@@ -8,7 +8,7 @@ from bson import ObjectId
 from datetime import datetime
 from ..models.course_level import CourseLevelCreate, CourseLevelUpdate, CourseLevelResponse, CourseLevelListResponse
 from ..services.course_level_service import course_level_service
-from ..utils.dependencies import get_current_active_user, get_admin_user
+from ..utils.dependencies import get_current_active_user, get_admin_user, get_user_with_permission
 
 logger = logging.getLogger(__name__)
 
@@ -22,10 +22,13 @@ router = APIRouter(tags=["course-levels"])
 async def get_all_course_levels(
     include_lead_count: bool = Query(False, description="Include lead count for each course level"),
     active_only: bool = Query(True, description="Only return active course levels"),
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("course_level.view"))
 ):
     """
-    Get all course levels (visible to all authenticated users)
+    🔄 RBAC-ENABLED: Get all course levels
+    
+    **Required Permission:** `course_level.view`
+    
     Used for dropdowns in lead creation/editing
     """
     try:
@@ -58,9 +61,13 @@ async def get_all_course_levels(
 @router.get("/inactive", response_model=CourseLevelListResponse)
 async def get_inactive_course_levels(
     include_lead_count: bool = Query(False, description="Include lead count for each course level"),
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("course_level.view"))
 ):
-    """Get all inactive course levels (Admin view)"""
+    """
+    🔄 RBAC-ENABLED: Get all inactive course levels
+    
+    **Required Permission:** `course_level.view`
+    """
     try:
         logger.info(f"Getting inactive course levels for user: {current_user.get('email')}")
         
@@ -95,10 +102,13 @@ async def get_inactive_course_levels(
 @router.get("/active", response_model=CourseLevelListResponse)
 async def get_active_course_levels(
     include_lead_count: bool = Query(False, description="Include lead count for each course level"),
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("course_level.view"))
 ):
     """
-    Get all active course levels (explicitly active only)
+    🔄 RBAC-ENABLED: Get all active course levels (explicitly active only)
+    
+    **Required Permission:** `course_level.view`
+    
     Useful for lead creation dropdowns
     """
     try:
@@ -135,9 +145,13 @@ async def get_active_course_levels(
 @router.get("/{course_level_id}", response_model=CourseLevelResponse)
 async def get_course_level_by_id(
     course_level_id: str,
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("course_level.view"))
 ):
-    """Get a specific course level by ID"""
+    """
+    🔄 RBAC-ENABLED: Get a specific course level by ID
+    
+    **Required Permission:** `course_level.view`
+    """
     try:
         course_level = await course_level_service.get_course_level_by_id(course_level_id)
         return CourseLevelResponse(**course_level)
@@ -161,9 +175,14 @@ async def get_course_level_by_id(
 @router.post("/", response_model=Dict[str, Any])
 async def create_course_level(
     course_level_data: CourseLevelCreate,
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("course_level.create"))
 ):
-    """Create a new course level (Admin only)"""
+    """
+    🔄 RBAC-ENABLED: Create a new course level
+    
+    **Required Permission:** `course_level.create`
+    """
+   
     try:
         user_email = current_user.get("email", "unknown")
         logger.info(f"Creating course level '{course_level_data.name}' by admin: {user_email}")
@@ -192,9 +211,13 @@ async def create_course_level(
 async def update_course_level(
     course_level_id: str,
     course_level_data: CourseLevelUpdate,
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("course_level.edit"))
 ):
-    """Update an existing course level (Admin only)"""
+    """
+    🔄 RBAC-ENABLED: Update an existing course level
+    
+    **Required Permission:** `course_level.edit`
+    """
     try:
         user_email = current_user.get("email", "unknown")
         logger.info(f"Updating course level {course_level_id} by admin: {user_email}")
@@ -222,9 +245,13 @@ async def update_course_level(
 @router.patch("/{course_level_id}/activate", response_model=Dict[str, Any])
 async def activate_course_level(
     course_level_id: str,
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("course_level.edit"))
 ):
-    """Activate a deactivated course level (Admin only)"""
+    """
+    🔄 RBAC-ENABLED: Activate a deactivated course level
+    
+    **Required Permission:** `course_level.edit`
+    """
     try:
         user_email = current_user.get("email", "unknown")
         logger.info(f"Activating course level {course_level_id} by admin: {user_email}")
@@ -277,9 +304,13 @@ async def activate_course_level(
 @router.patch("/{course_level_id}/deactivate", response_model=Dict[str, Any])
 async def deactivate_course_level(
     course_level_id: str,
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("course_level.edit"))
 ):
-    """Deactivate a course level without deleting it (Admin only)"""
+    """
+    🔄 RBAC-ENABLED: Deactivate a course level without deleting it
+    
+    **Required Permission:** `course_level.edit`
+    """
     try:
         user_email = current_user.get("email", "unknown")
         logger.info(f"Deactivating course level {course_level_id} by admin: {user_email}")
@@ -337,9 +368,13 @@ async def deactivate_course_level(
 @router.delete("/{course_level_id}", response_model=Dict[str, Any])
 async def delete_course_level(
     course_level_id: str,
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("course_level.delete"))
 ):
-    """Delete a course level (Admin only - only if no leads are using it)"""
+    """
+    🔄 RBAC-ENABLED: Delete a course level (only if no leads are using it)
+    
+    **Required Permission:** `course_level.delete`
+    """
     try:
         user_email = current_user.get("email", "unknown")
         logger.info(f"Deleting course level {course_level_id} by admin: {user_email}")
