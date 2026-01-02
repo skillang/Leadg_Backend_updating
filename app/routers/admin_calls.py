@@ -11,17 +11,21 @@ from ..utils.performance_calculator import performance_calculator
 from ..services.tata_admin_service import tata_admin_service
 from ..services.analytics_service import analytics_service
 from ..services.tata_auth_service import tata_auth_service
+from ..services.rbac_service import RBACService
 from ..models.admin_dashboard import (
     AdminDashboardResponse, UserPerformanceResponse, PerformanceRankingResponse,
     RecordingPlayResponse, FilterOptionsResponse, DashboardFilters, PlayRecordingRequest,
     CallStatusFilter, CallDirectionFilter, DashboardError,
     ComprehensivePeakHoursResponse, PeakAnsweredHoursResponse, PeakMissedHoursResponse
 )
-from ..utils.dependencies import get_current_active_user
+from ..utils.dependencies import get_current_active_user, get_user_with_permission
 from ..utils.tata_access_validator import validate_user_tata_access, get_empty_call_response
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# Initialize RBAC service
+rbac_service = RBACService()
 
 # =============================================================================
 # UTILITY FUNCTION FOR ROLE-BASED ACCESS
@@ -82,60 +86,37 @@ async def get_admin_call_dashboard(
     # Pagination for tata teli
     limit: int = Query(2000, ge=1, le=500, description="Records per page"),
     page: int = Query(1, ge=1, description="Page number"),
-    current_user: Dict = Depends(get_current_active_user)
+    current_user: Dict = Depends(get_user_with_permission("report.view"))
 ):
     """
-    OPTIMIZED Admin dashboard using TATA API server-side filtering with role-based access control
-    Removed Python filtering - uses TATA query parameters directly
+    🔄 RBAC-ENABLED: Admin dashboard using TATA API server-side filtering
+    
+    **Required Permission:** `report.view`
+    
+    **Access Levels:**
+    - `report.view` - View own call reports
+    - `report.view_team` - View team reports
+    - `report.view_all` - View all reports (admin)
     """
     try:
-        user_role = current_user.get("role")
+        # Check permission levels
+        has_view_all = await rbac_service.check_permission(current_user, "report.view_all")
+        has_view_team = await rbac_service.check_permission(current_user, "report.view_team")
+        
         current_user_id = str(current_user.get("_id", ""))
         
-        # Role-based access control
-        if user_role != "admin":
-            # Non-admin users can only see their own data
+        # Permission-based access control
+        if not has_view_all and not has_view_team:
+            # Users with only report.view can see their own data
             user_id = current_user_id
             user_ids = current_user_id
             
-            logger.info(f"Non-admin user {current_user.get('email')} accessing own dashboard")
+            logger.info(f"User {current_user.get('email')} accessing own dashboard")
         else:
-            logger.info(f"Admin user {current_user.get('email')} accessing full dashboard")
-        
-        logger.info(f"User {current_user.get('email')} requesting optimized call dashboard - Role: {user_role}")
+            logger.info(f"User {current_user.get('email')} accessing full dashboard - Level: {'all' if has_view_all else 'team'}")
         
         # Initialize agent mapping
         await tata_admin_service.initialize_agent_mapping()
-        if not date_from or not date_to:
-            end_date = datetime.now()
-            start_date = end_date - timedelta(days=7)
-            date_from = start_date.strftime("%Y-%m-%d")
-            date_to = end_date.strftime("%Y-%m-%d")
-    
-            # Format dates for TATA API
-        from_date = f"{date_from} 00:00:00"
-        to_date = f"{date_to} 23:59:59"
-    
-    # Build TATA API query parameters
-        tata_params = {
-                'from_date': from_date,
-                'to_date': to_date,
-                'page': str(page),
-                'limit': str(limit)
-            }
-        individual_user_filter = None
-        if user_id:
-            # Find user's agent for filtering
-            for agent_number, mapping in tata_admin_service.agent_user_mapping.items():
-                if mapping.get("user_id") == user_id:
-                    individual_user_filter = mapping.get("tata_agent_id")
-                    break
-            filter_info = {"applied": False, "scope": "all_users"}
-            if individual_user_filter:
-                tata_params['agents'] = individual_user_filter
-                filter_info["applied"] = True
-                filter_info["scope"] = "individual_user"
-                filter_info["user_id"] = user_id
         
         # Set default date range
         if not date_from or not date_to:
@@ -143,11 +124,11 @@ async def get_admin_call_dashboard(
             start_date = end_date - timedelta(days=7)
             date_from = start_date.strftime("%Y-%m-%d")
             date_to = end_date.strftime("%Y-%m-%d")
-        
+    
         # Format dates for TATA API
         from_date = f"{date_from} 00:00:00"
         to_date = f"{date_to} 23:59:59"
-        
+    
         # Build TATA API query parameters
         tata_params = {
             'from_date': from_date,
@@ -156,18 +137,34 @@ async def get_admin_call_dashboard(
             'limit': str(limit)
         }
         
-                # Convert legacy user_ids to agents parameter with role-based filtering
+        individual_user_filter = None
+        filter_info = {"applied": False, "scope": "all_users"}
+        
+        if user_id:
+            # Find user's agent for filtering
+            for agent_number, mapping in tata_admin_service.agent_user_mapping.items():
+                if mapping.get("user_id") == user_id:
+                    individual_user_filter = mapping.get("tata_agent_id")
+                    break
+            
+            if individual_user_filter:
+                tata_params['agents'] = individual_user_filter
+                filter_info["applied"] = True
+                filter_info["scope"] = "individual_user"
+                filter_info["user_id"] = user_id
+        
+        # Convert legacy user_ids to agents parameter with permission-based filtering
         if user_ids and not agents:
             # Check if user_ids is "0" or "all" which means all users
-            if user_ids in ["0", "all"] and user_role == "admin":
-                # Only admins can see all users
-                logger.info("Admin requested all users, not filtering by agent")
+            if user_ids in ["0", "all"] and has_view_all:
+                # Only users with view_all can see all users
+                logger.info("User with view_all permission requested all users")
             else:
                 # Convert internal user IDs to TATA agent IDs
                 user_id_list = [uid.strip() for uid in user_ids.split(',')]
                 
-                # Apply role-based filtering to user_id_list
-                if user_role != "admin":
+                # Apply permission-based filtering to user_id_list
+                if not has_view_all:
                     user_id_list = [current_user_id]  # Force to current user only
                 
                 tata_agent_ids = []
@@ -182,7 +179,7 @@ async def get_admin_call_dashboard(
                                 break
                 
                 # 🔥 CRITICAL SECURITY FIX: Handle non-TATA users
-                if user_role != "admin" and not tata_agent_ids:
+                if not has_view_all and not tata_agent_ids:
                     # Non-TATA users should see NO call data
                     logger.info(f"Non-TATA user {current_user.get('email')} has no call access")
                     return {
@@ -212,6 +209,7 @@ async def get_admin_call_dashboard(
                     logger.info(f"Converted user IDs {user_ids} to TATA agent IDs: {agents}")
                 else:
                     logger.warning(f"No TATA agent IDs found for user IDs: {user_ids}")
+        
         # Convert legacy call_status to call_type
         if call_status != "all" and not call_type:
             call_type = "c" if call_status == "answered" else "m"
@@ -347,9 +345,9 @@ async def get_admin_call_dashboard(
         # Build optimized response
         response_data = {
             "success": True,
-            "user_role": user_role,
-            "data_scope": "all_users" if user_role == "admin" else "current_user_only",
-            "restricted_to_user": current_user.get("email") if user_role != "admin" else None,
+            "access_level": "admin" if has_view_all else ("team" if has_view_team else "user"),
+            "data_scope": "all_users" if has_view_all else ("team" if has_view_team else "current_user_only"),
+            "restricted_to_user": current_user.get("email") if not has_view_all and not has_view_team else None,
             "total_calls": total_calls,
             "total_count_all_pages": total_count,
             "total_users": len(user_stats_dict),
@@ -380,8 +378,8 @@ async def get_admin_call_dashboard(
                 action="viewed_call_dashboard_optimized",
                 details={
                     "date_range": f"{date_from} to {date_to}",
-                    "user_role": user_role,
-                    "data_scope": "all_users" if user_role == "admin" else "current_user_only",
+                    "access_level": "admin" if has_view_all else ("team" if has_view_team else "user"),
+                    "data_scope": "all_users" if has_view_all else ("team" if has_view_team else "current_user_only"),
                     "total_records": total_calls,
                     "filtering_method": "tata_api_server_side",
                     "filters_used": len([k for k, v in tata_params.items() if k not in ['from_date', 'to_date', 'page', 'limit']])
@@ -408,7 +406,6 @@ async def get_admin_call_dashboard(
             }
         )
 
-
 @router.get("/recent-calls")
 async def get_recent_calls(
     date_from: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
@@ -417,22 +414,29 @@ async def get_recent_calls(
     page: int = Query(1, ge=1, description="Page number"),
     user_ids: Optional[str] = Query(None, description="Comma-separated user IDs"),
     call_status: str = Query("all", description="Call status filter"),
-    current_user: Dict = Depends(get_current_active_user)
+    current_user: Dict = Depends(get_user_with_permission("call.history"))
 ):
     """
-    Get recent call records with pagination and filtering - Role-based access
+    🔄 RBAC-ENABLED: Get recent call records with pagination and filtering
+    
+    **Required Permission:** `call.history`
+    
+    **Access Levels:**
+    - `call.history` - View own call history
+    - `report.view_all` - View all call history
     """
     try:
-        user_role = current_user.get("role")
+        # Check permission level
+        has_view_all = await rbac_service.check_permission(current_user, "report.view_all")
         current_user_id = str(current_user.get("_id", ""))
         
-        # Role-based filtering
-        if user_role != "admin":
+        # Permission-based filtering
+        if not has_view_all:
             # Force non-admin users to see only their own data
             user_ids = current_user_id
-            logger.info(f"Non-admin user {current_user.get('email')} restricted to own recent calls")
+            logger.info(f"User {current_user.get('email')} restricted to own recent calls")
         else:
-            logger.info(f"Admin user {current_user.get('email')} accessing recent calls")
+            logger.info(f"User {current_user.get('email')} accessing all recent calls")
         
         await tata_admin_service.initialize_agent_mapping()
         
@@ -450,13 +454,13 @@ async def get_recent_calls(
             'limit': str(limit)
         }
         
-        # Add filters with role-based restrictions
+        # Add filters with permission-based restrictions
         if user_ids and user_ids != "all":
-            # Convert user IDs to agent IDs (same logic as dashboard)
+            # Convert user IDs to agent IDs
             user_id_list = [uid.strip() for uid in user_ids.split(',')]
             
-            # Apply role-based filtering
-            if user_role != "admin":
+            # Apply permission-based filtering
+            if not has_view_all:
                 user_id_list = [current_user_id]
             
             tata_agent_ids = []
@@ -468,18 +472,21 @@ async def get_recent_calls(
                             tata_agent_ids.append(tata_agent_id)
                         break
 
-            #  Handle non-TATA users
-            if user_role != "admin" and not tata_agent_ids:
+            # Handle non-TATA users
+            if not has_view_all and not tata_agent_ids:
                 # Non-TATA users should see NO call data
                 logger.info(f"Non-TATA user {current_user.get('email')} has no call access")
                 return {
                     "success": True,
                     "message": "Recent calls require TATA integration",
-                    "call_records": [],
-                    "total_count": 0,
-                    "limit": limit,
-                    "page": page,
-                    "user_role": user_role,
+                    "recent_calls": [],
+                    "pagination": {
+                        "current_page": page,
+                        "limit": limit,
+                        "total_pages": 1,
+                        "has_more": False,
+                        "total_records": 0
+                    },
                     "access_level": "non_tata_user",
                     "date_range": f"{date_from} to {date_to}",
                     "retrieved_at": datetime.utcnow()
@@ -518,8 +525,8 @@ async def get_recent_calls(
         
         return {
             "success": True,
-            "user_role": user_role,
-            "data_scope": "all_users" if user_role == "admin" else "current_user_only",
+            "access_level": "admin" if has_view_all else "user",
+            "data_scope": "all_users" if has_view_all else "current_user_only",
             "recent_calls": recent_calls,
             "pagination": {
                 "current_page": page,
@@ -554,25 +561,31 @@ async def get_user_call_performance(
     date_from: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
     date_to: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
     include_day_comparison: bool = Query(True, description="Include day-to-day comparison"),
-    current_user: Dict = Depends(get_current_active_user)
+    current_user: Dict = Depends(get_user_with_permission("report.view"))
 ):
     """
-    User performance analytics with role-based access control
+    🔄 RBAC-ENABLED: User performance analytics
+    
+    **Required Permission:** `report.view`
+    
+    **Access Control:**
+    - Users with `report.view` can view their own performance
+    - Users with `report.view_all` can view any user's performance
     """
     try:
-        # ROLE-BASED ACCESS CONTROL
-        user_role = current_user.get("role", "user")
+        # PERMISSION-BASED ACCESS CONTROL
+        has_view_all = await rbac_service.check_permission(current_user, "report.view_all")
         current_user_id = str(current_user.get("user_id") or current_user.get("_id"))
         
-        # Apply role-based filtering
-        if user_role != "admin":
+        # Apply permission-based filtering
+        if not has_view_all:
             # Non-admin users can only view their own performance
             if user_id != current_user_id:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="You can only view your own performance data"
                 )
-            logger.info(f"Non-admin user {current_user.get('email')} viewing own performance")
+            logger.info(f"User {current_user.get('email')} viewing own performance")
         else:
             logger.info(f"Admin {current_user.get('email')} viewing performance for user: {user_id}")
         
@@ -616,12 +629,12 @@ async def get_user_call_performance(
             date_to=date_to
         )
         
-        # Build stats object (matching your original structure)
+        # Build stats object
         stats = {
             "user_id": user_id,
             "user_name": user_name,
             "agent_number": user_agent_number,
-            "daily_calls": performance_data["total_calls"],  # Map to daily_calls for compatibility
+            "daily_calls": performance_data["total_calls"],
             "daily_answered": performance_data["answered_calls"],
             "daily_missed": performance_data["missed_calls"],
             "success_rate": performance_data["success_rate"],
@@ -647,25 +660,25 @@ async def get_user_call_performance(
                 logger.warning(f"Error parsing call record: {e}")
                 continue
         
-        # Build response matching your original structure
+        # Build response
         response = {
             "success": True,
             "user_id": user_id,
             "user_name": user_name,
             "agent_number": user_agent_number,
-            "viewer_role": user_role,
-            "can_view_others": user_role == "admin",
+            "viewer_access_level": "admin" if has_view_all else "user",
+            "can_view_others": has_view_all,
             "stats": stats,
             "day_comparison": day_comparison,
             "call_records": call_records_parsed,
-            "ranking": None,  # You said to ignore this
+            "ranking": None,
             "period_analyzed": f"Date Range ({date_from} to {date_to})",
             "analysis_date": datetime.utcnow(),
             "optimization_info": {
                 "filtering_method": "tata_api_agent_filter",
                 "user_records_found": len(all_user_records),
                 "agent_number_used": user_agent_number,
-                "access_level": user_role
+                "permission_level": "view_all" if has_view_all else "view_own"
             }
         }
         
@@ -688,25 +701,24 @@ async def get_user_call_performance(
 async def get_weekly_performers(
     week_offset: int = Query(0, description="Weeks back from current week (0=current, 1=last week)"),
     top_n: int = Query(10, description="Number of top performers to return"),
-    current_user: Dict = Depends(get_current_active_user)
+    current_user: Dict = Depends(get_user_with_permission("report.view_team"))
 ):
-    """Get weekly top performers using TATA API filtering - Role-based access"""
+    """
+    🔄 RBAC-ENABLED: Get weekly top performers using TATA API filtering
+    
+    **Required Permission:** `report.view_team` or `report.view_all`
+    """
     try:
-        user_role = current_user.get("role")
-        
-        # Role-based access - only admins can view team rankings
-        if user_role != "admin":
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Only administrators can view team performance rankings"
-            )
+        # Permission check is handled by decorator
+        # Users with report.view_team or report.view_all can access
         
         # Calculate week dates
         today = datetime.now()
         week_start = today - timedelta(days=today.weekday()) - timedelta(weeks=week_offset)
         week_end = week_start + timedelta(days=6)
         
-        # Implementation continues...
+        # Implementation continues with existing logic...
+        # (Keep rest of the function as-is)
         
     except HTTPException:
         raise
@@ -722,18 +734,16 @@ async def get_monthly_performers(
     year: Optional[int] = Query(None, description="Year (defaults to current year)"),
     month: Optional[int] = Query(None, description="Month 1-12 (defaults to current month)"),
     top_n: int = Query(10, description="Number of top performers to return"),
-    current_user: Dict = Depends(get_current_active_user)
+    current_user: Dict = Depends(get_user_with_permission("report.view_team"))
 ):
-    """Get monthly top performers using TATA API filtering - Role-based access"""
+    """
+    🔄 RBAC-ENABLED: Get monthly top performers using TATA API filtering
+    
+    **Required Permission:** `report.view_team` or `report.view_all`
+    """
     try:
-        user_role = current_user.get("role")
-        
-        # Role-based access - only admins can view team rankings
-        if user_role != "admin":
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Only administrators can view team performance rankings"
-            )
+        # Permission check is handled by decorator
+        # Users with report.view_team or report.view_all can access
         
         # Use current month if not specified
         now = datetime.now()
@@ -747,7 +757,8 @@ async def get_monthly_performers(
                 detail="Month must be between 1 and 12"
             )
         
-        # Implementation continues...
+        # Implementation continues with existing logic...
+        # (Keep rest of the function as-is)
         
     except HTTPException:
         raise

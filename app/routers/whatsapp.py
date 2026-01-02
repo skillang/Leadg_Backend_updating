@@ -7,7 +7,7 @@ import httpx
 import logging
 from datetime import datetime
 from app.services.communication_service import CommunicationService
-from ..utils.dependencies import get_current_user
+from ..utils.dependencies import get_current_user, get_user_with_permission
 from ..config.settings import settings
 from ..config.database import get_database
 from ..services.whatsapp_message_service import whatsapp_message_service
@@ -133,42 +133,6 @@ async def fetch_templates_from_cms() -> List[Dict[str, Any]]:
             }
         ]
 
-# ================================
-# 🆕 NEW: WEBHOOK ENDPOINTS (Core Chat Functionality)
-# ================================
-
-# @router.post("/webhook", response_model=WebhookProcessingResponse)
-# async def handle_whatsapp_webhook(
-#     request: Request,
-#     background_tasks: BackgroundTasks
-# ):
-#     """Handle incoming WhatsApp webhook - WITH FCM NOTIFICATIONS"""
-#     try:
-#         # [Your existing webhook logging code...]
-#         webhook_payload = await request.json()
-        
-#         logger.info(f"Received WhatsApp webhook: {webhook_payload}")
-        
-#         # Process webhook asynchronously
-#         background_tasks.add_task(
-#             whatsapp_message_service.process_incoming_webhook,
-#             webhook_payload
-#         )
-        
-#         # 🆕 NEW: FCM notification code (paste the entire snippet from above here)
-        
-#         # Return success response
-#         return WebhookProcessingResponse(
-#             success=True,
-#             processed_messages=0,
-#             processed_statuses=0,
-#             errors=0,
-#             details={"status": "processing_in_background"}
-#         )
-        
-#     except Exception as e:
-#         logger.error(f"Webhook processing error: {str(e)}")
-#         raise HTTPException(status_code=500, detail=f"Webhook processing failed: {str(e)}")
 
 @router.get("/webhook")
 async def verify_webhook(
@@ -202,10 +166,15 @@ async def verify_webhook(
 async def get_active_chats(
     limit: int = 50,
     include_unread_only: bool = False,
-    current_user: Dict[str, Any] = Depends(get_current_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("whatsapp.history_single"))
 ):
     """
     Get list of leads with recent WhatsApp activity
+    
+    **Required Permission:**
+    - `whatsapp.history_single` - View own lead chats
+    - `whatsapp.view_all` - View all chats (admin)
+    
     Users see only their assigned leads, admins see all leads with WhatsApp activity
     """
     try:
@@ -230,10 +199,13 @@ async def get_lead_whatsapp_history(
     limit: int = 50,
     offset: int = 0,
     auto_mark_read: bool = True,  # 🆕 NEW: Auto-mark as read parameter
-    current_user: Dict[str, Any] = Depends(get_current_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("whatsapp.history_single"))
 ):
     """
     🆕 ENHANCED: Get WhatsApp message history with auto-mark-as-read functionality
+    
+    **Required Permission:** `whatsapp.history_single`
+    
     When user opens chat modal, automatically mark messages as read (icon turns grey)
     """
     try:
@@ -269,10 +241,13 @@ async def get_lead_whatsapp_history(
 async def send_message_in_chat(
     lead_id: str,
     request: SendChatMessageRequest,
-    current_user: Dict[str, Any] = Depends(get_current_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("whatsapp.send_single"))
 ):
     """
     Send a message in an existing WhatsApp conversation
+    
+    **Required Permission:** `whatsapp.send_single`
+    
     Message is sent via WhatsApp API and stored in database for chat history
     """
     try:
@@ -294,10 +269,13 @@ async def send_message_in_chat(
 @router.patch("/messages/read", response_model=MarkReadResponse)
 async def mark_messages_as_read(
     request: MarkMessagesReadRequest,
-    current_user: Dict[str, Any] = Depends(get_current_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("whatsapp.history_single"))
 ):
     """
     Mark WhatsApp messages as read and update unread counts
+    
+    **Required Permission:** `whatsapp.history_single`
+    
     This updates the lead's unread message counter
     """
     try:
@@ -344,10 +322,13 @@ async def mark_messages_as_read(
 @router.post("/leads/{lead_id}/mark-read")
 async def mark_lead_as_read(
     lead_id: str,
-    current_user: Dict[str, Any] = Depends(get_current_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("whatsapp.history_single"))
 ):
     """
     🆕 NEW: Mark entire lead conversation as read (for WhatsApp icon state management)
+    
+    **Required Permission:** `whatsapp.history_single`
+    
     Used when user clicks WhatsApp icon or opens modal - icon changes from green to grey
     Triggers real-time update to all connected users
     """
@@ -375,10 +356,13 @@ async def mark_lead_as_read(
 @router.get("/leads/{lead_id}/unread-status")
 async def get_lead_unread_status(
     lead_id: str,
-    current_user: Dict[str, Any] = Depends(get_current_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("whatsapp.history_single"))
 ):
     """
     🆕 NEW: Get unread status for a specific lead (for icon state)
+    
+    **Required Permission:** `whatsapp.history_single`
+    
     Returns whether the lead has unread messages (green/grey icon)
     """
     try:
@@ -421,10 +405,13 @@ async def get_lead_unread_status(
 
 @router.get("/unread-status")
 async def get_all_unread_status(
-    current_user: Dict[str, Any] = Depends(get_current_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("whatsapp.history_single"))
 ):
     """
     🆕 NEW: Get unread status for all leads user can access
+    
+    **Required Permission:** `whatsapp.history_single`
+    
     Used for initial page load to set all WhatsApp icon states
     """
     try:
@@ -494,9 +481,13 @@ async def get_all_unread_status(
 
 @router.get("/stats")
 async def get_whatsapp_statistics(
-    current_user: Dict[str, Any] = Depends(get_current_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("whatsapp.view_all"))
 ):
-    """Get WhatsApp usage statistics for dashboard"""
+    """
+    Get WhatsApp usage statistics for dashboard
+    
+    **Required Permission:** `whatsapp.view_all`
+    """
     try:
         from ..config.database import get_database
         db = get_database()
@@ -574,8 +565,12 @@ async def get_whatsapp_statistics(
 # ================================
 
 @router.get("/account/status")
-async def check_account_status(current_user: Dict[str, Any] = Depends(get_current_user)):
-    """Check WhatsApp account validity"""
+async def check_account_status(current_user: Dict[str, Any] = Depends(get_user_with_permission("whatsapp.send_single"))):
+    """
+    Check WhatsApp account validity
+    
+    **Required Permission:** `whatsapp.send_single`
+    """
     try:
         result = await make_whatsapp_request("accountvalidity.php", {})
         return {
@@ -592,9 +587,13 @@ async def check_account_status(current_user: Dict[str, Any] = Depends(get_curren
 @router.post("/validate-contact")
 async def validate_contact(
     request: ValidateContactRequest,
-    current_user: Dict[str, Any] = Depends(get_current_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("whatsapp.send_single"))
 ):
-    """Check if contact number is valid for WhatsApp"""
+    """
+    Check if contact number is valid for WhatsApp
+    
+    **Required Permission:** `whatsapp.send_single`
+    """
     try:
         result = await make_whatsapp_request("conversationvalidity.php", {
             "Contact": request.contact
@@ -613,8 +612,12 @@ async def validate_contact(
         }
 
 @router.get("/templates")
-async def get_available_templates(current_user: Dict[str, Any] = Depends(get_current_user)):
-    """Get available WhatsApp templates from CMS"""
+async def get_available_templates(current_user: Dict[str, Any] = Depends(get_user_with_permission("whatsapp.send_single"))):
+    """
+    Get available WhatsApp templates from CMS
+    
+    **Required Permission:** `whatsapp.send_single`
+    """
     try:
         templates = await fetch_templates_from_cms()
        
@@ -661,9 +664,13 @@ async def get_available_templates(current_user: Dict[str, Any] = Depends(get_cur
 @router.post("/send-template")
 async def send_template_to_lead(
     request: SendTemplateRequest,
-    current_user: Dict[str, Any] = Depends(get_current_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("whatsapp.send_single"))
 ):
-    """Send WhatsApp template message and store in database for chat history"""
+    """
+    Send WhatsApp template message and store in database for chat history
+    
+    **Required Permission:** `whatsapp.send_single`
+    """
     try:
         # 1. Send template via WhatsApp API (existing code)
         whatsapp_params = {
@@ -714,9 +721,13 @@ async def send_template_to_lead(
 @router.post("/send-text")
 async def send_text_message(
     request: SendTextRequest,
-    current_user: Dict[str, Any] = Depends(get_current_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("whatsapp.send_single"))
 ):
-    """Send WhatsApp text message and store in database for chat history"""
+    """
+    Send WhatsApp text message and store in database for chat history
+    
+    **Required Permission:** `whatsapp.send_single`
+    """
     try:
         # 1. Send text message via WhatsApp API (existing code)
         whatsapp_params = {
@@ -986,61 +997,61 @@ async def handle_whatsapp_webhook(
             status_code=500, 
             detail=f"Webhook processing failed: {str(e)}"
         )
-    """Handle incoming WhatsApp webhook - WITH DETAILED LOGGING"""
-    try:
-        # 🔍 LOG EVERYTHING FROM MYDREAMSTECHNOLOGY
-        raw_body = await request.body()
-        headers = dict(request.headers)
-        
-        # Log raw data
-        logger.info("=" * 60)
-        logger.info("🚀 MYDREAMSTECHNOLOGY WEBHOOK RECEIVED")
-        logger.info(f"📝 Raw Body: {raw_body.decode('utf-8', errors='ignore')}")
-        logger.info(f"🔧 Headers: {headers}")
-        logger.info("=" * 60)
-        
-        # Parse JSON
-        webhook_payload = await request.json()
-        
-        # 🔍 LOG STRUCTURED DATA
-        logger.info("📊 PARSED WEBHOOK DATA:")
-        logger.info(f"   - Root keys: {list(webhook_payload.keys())}")
-        logger.info(f"   - Messages count: {len(webhook_payload.get('messages', []))}")
-        logger.info(f"   - Statuses count: {len(webhook_payload.get('statuses', []))}")
-        
-        # Log each message in detail
-        messages = webhook_payload.get('messages', [])
-        for i, msg in enumerate(messages):
-            logger.info(f"📨 MESSAGE {i+1}:")
-            logger.info(f"   - From: {msg.get('from', 'MISSING')}")
-            logger.info(f"   - ID: {msg.get('id', 'MISSING')}")
-            logger.info(f"   - Type: {msg.get('type', 'MISSING')}")
-            logger.info(f"   - Timestamp: {msg.get('timestamp', 'MISSING')}")
-            if msg.get('type') == 'text':
-                text_body = msg.get('text', {}).get('body', 'NO_TEXT')
-                logger.info(f"   - Text: {text_body}")
-            logger.info(f"   - Full message data: {msg}")
-        
-        logger.info("=" * 60)
-        
-        # Continue with normal processing
-        background_tasks.add_task(
-            whatsapp_message_service.process_incoming_webhook,
-            webhook_payload
-        )
-        
-        return WebhookProcessingResponse(
-            success=True,
-            processed_messages=len(messages),
-            processed_statuses=len(webhook_payload.get('statuses', [])),
-            errors=0,
-            details={"status": "processing_in_background"}
-        )
-        
-    except Exception as e:
-        logger.error(f"❌ WEBHOOK ERROR: {str(e)}")
-        logger.error(f"Raw body was: {raw_body.decode('utf-8', errors='ignore') if 'raw_body' in locals() else 'FAILED_TO_READ'}")
-        raise HTTPException(
-            status_code=500, 
-            detail=f"Webhook processing failed: {str(e)}"
-        )
+        """Handle incoming WhatsApp webhook - WITH DETAILED LOGGING"""
+        try:
+            # 🔍 LOG EVERYTHING FROM MYDREAMSTECHNOLOGY
+            raw_body = await request.body()
+            headers = dict(request.headers)
+            
+            # Log raw data
+            logger.info("=" * 60)
+            logger.info("🚀 MYDREAMSTECHNOLOGY WEBHOOK RECEIVED")
+            logger.info(f"📝 Raw Body: {raw_body.decode('utf-8', errors='ignore')}")
+            logger.info(f"🔧 Headers: {headers}")
+            logger.info("=" * 60)
+            
+            # Parse JSON
+            webhook_payload = await request.json()
+            
+            # 🔍 LOG STRUCTURED DATA
+            logger.info("📊 PARSED WEBHOOK DATA:")
+            logger.info(f"   - Root keys: {list(webhook_payload.keys())}")
+            logger.info(f"   - Messages count: {len(webhook_payload.get('messages', []))}")
+            logger.info(f"   - Statuses count: {len(webhook_payload.get('statuses', []))}")
+            
+            # Log each message in detail
+            messages = webhook_payload.get('messages', [])
+            for i, msg in enumerate(messages):
+                logger.info(f"📨 MESSAGE {i+1}:")
+                logger.info(f"   - From: {msg.get('from', 'MISSING')}")
+                logger.info(f"   - ID: {msg.get('id', 'MISSING')}")
+                logger.info(f"   - Type: {msg.get('type', 'MISSING')}")
+                logger.info(f"   - Timestamp: {msg.get('timestamp', 'MISSING')}")
+                if msg.get('type') == 'text':
+                    text_body = msg.get('text', {}).get('body', 'NO_TEXT')
+                    logger.info(f"   - Text: {text_body}")
+                logger.info(f"   - Full message data: {msg}")
+            
+            logger.info("=" * 60)
+            
+            # Continue with normal processing
+            background_tasks.add_task(
+                whatsapp_message_service.process_incoming_webhook,
+                webhook_payload
+            )
+            
+            return WebhookProcessingResponse(
+                success=True,
+                processed_messages=len(messages),
+                processed_statuses=len(webhook_payload.get('statuses', [])),
+                errors=0,
+                details={"status": "processing_in_background"}
+            )
+            
+        except Exception as e:
+            logger.error(f"❌ WEBHOOK ERROR: {str(e)}")
+            logger.error(f"Raw body was: {raw_body.decode('utf-8', errors='ignore') if 'raw_body' in locals() else 'FAILED_TO_READ'}")
+            raise HTTPException(
+                status_code=500, 
+                detail=f"Webhook processing failed: {str(e)}"
+            )

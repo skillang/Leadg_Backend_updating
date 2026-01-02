@@ -59,12 +59,12 @@ class BulkImportRequest(BaseModel):
 
 @router.get("/test-connection", summary="Test Facebook API connection")
 async def test_facebook_connection(
-    current_user: dict = Depends(get_user_with_permission("facebook_leads.manage"))
+    current_user: dict = Depends(get_user_with_permission("facebook_leads.view"))
 ):
     """
     🔄 RBAC-ENABLED: Test Facebook API connection and permissions
     
-    **Required Permission:** `facebook_leads.manage`
+    **Required Permission:** `facebook_leads.view`
     """
     try:
         result = await facebook_leads_service.verify_facebook_access()
@@ -188,12 +188,12 @@ async def preview_leads_from_form(
 @router.post("/import/single-form", summary="Import leads from single Facebook form")
 async def import_leads_single_form(
     import_request: LeadImportRequest,
-    current_user: dict = Depends(get_user_with_permission("facebook_leads.import"))
+    current_user: dict = Depends(get_user_with_permission("facebook_leads.convert"))
 ):
     """
-    🔄 RBAC-ENABLED: Import leads from a single Facebook form with immediate stats response
+    🔄 RBAC-ENABLED: convert leads from a single Facebook form with immediate stats response
     
-    **Required Permission:** `facebook_leads.import`
+    **Required Permission:** `facebook_leads.convert`
     """
     try:
         # Get form info for category mapping
@@ -375,26 +375,3 @@ async def get_facebook_dashboard(
             detail=f"Failed to get dashboard data: {str(e)}"
         )
 
-
-@router.get("/debug-config", summary="Debug Facebook configuration")
-async def debug_facebook_config(
-    current_user: dict = Depends(get_user_with_permission("facebook_leads.manage"))
-):
-    """
-    🔄 RBAC-ENABLED: Debug what configuration the server is using
-    
-    **Required Permission:** `facebook_leads.manage`
-    """
-    try:
-        result = await facebook_leads_service.verify_facebook_access()
-        token_preview = facebook_leads_service.access_token[:30] + "..." if facebook_leads_service.access_token else "None"
-        
-        return {
-            "server_token_preview": token_preview,
-            "server_page_id": facebook_leads_service.page_id,
-            "connection_test": result,
-            "expected_token_start": "EAALomt4zDXoBPaMjyCJ...",
-            "tokens_match": facebook_leads_service.access_token.startswith("EAALomt4zDXoBPaMjyCJ") if facebook_leads_service.access_token else False
-        }
-    except Exception as e:
-        return {"error": str(e)}

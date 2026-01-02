@@ -77,57 +77,6 @@ def convert_objectid_to_str(obj):
         return obj
 
 
-# =====================================
-# DEBUG ENDPOINTS (No auth required)
-# =====================================
-
-@router.get("/debug/test/{lead_id}")
-async def debug_timeline_data(lead_id: str):
-    """
-    Debug endpoint to test your data structure - No authentication required
-    """
-    try:
-        db = get_database()
-        
-        # Test the exact query
-        query = {"lead_id": lead_id}
-        
-        count = await db.lead_activities.count_documents(query)
-        
-        # Get sample activities and convert ObjectIds to strings
-        sample = []
-        async for activity in db.lead_activities.find(query).limit(3):
-            converted_activity = convert_objectid_to_str(activity)
-            sample.append(converted_activity)
-        
-        # Also test getting one raw activity to see full structure
-        raw_activity = await db.lead_activities.find_one({})
-        converted_raw = convert_objectid_to_str(raw_activity) if raw_activity else None
-        
-        return {
-            "success": True,
-            "lead_id": lead_id,
-            "query_used": query,
-            "count_found": count,
-            "sample_activities": sample,
-            "raw_activity_example": converted_raw,
-            "filtered_activity_types": TIMELINE_CONTENT_ACTIVITIES,
-            "debug_info": {
-                "total_activities_in_db": await db.lead_activities.count_documents({}),
-                "activities_for_this_lead": await db.lead_activities.count_documents({"lead_id": lead_id}),
-                "all_activity_types_for_lead": await get_activity_types_for_lead(db, lead_id)
-            }
-        }
-        
-    except Exception as e:
-        logger.error(f"Debug endpoint error: {str(e)}")
-        return {
-            "success": False,
-            "error": str(e),
-            "lead_id": lead_id,
-            "error_type": type(e).__name__
-        }
-
 
 async def get_activity_types_for_lead(db, lead_id: str):
     """Get all activity types for a specific lead"""

@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 from ..config.database import get_database
 from ..utils.security import security, verify_password, get_password_hash
-from ..utils.dependencies import get_current_active_user, get_admin_user
+from ..utils.dependencies import get_current_active_user, get_admin_user, get_user_with_permission
 from ..schemas.auth import (
     LoginRequest, LoginResponse, RegisterResponse,
     RefreshTokenRequest, RefreshTokenResponse,
@@ -693,195 +693,6 @@ async def get_current_user_info(
             detail="Failed to get user information"
         )
 
-
-
-
-
-
-
-
-
-# =============================================================================
-# EMERGENCY ADMIN AND DEBUG ENDPOINTS - UNCHANGED
-# =============================================================================
-@router.post("/emergency-admin", response_model=Dict[str, Any], status_code=status.HTTP_201_CREATED)
-async def create_emergency_admin(user_data: UserCreate):
-    """
-    🚨 EMERGENCY ENDPOINT: Create super admin when database has no admins
-    
-    🆕 RBAC: Creates user with Super Admin role
-    """
-    try:
-        db = get_database()
-        
-        # Security check: Only allow if NO admin users exist
-        admin_count = await db.users.count_documents({"role": "admin"})
-        if admin_count > 0:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Emergency endpoint disabled - Admin users already exist"
-            )
-        
-        logger.warning("🚨 EMERGENCY ADMIN CREATION INITIATED")
-        
-        existing_user = await db.users.find_one({"email": user_data.email})
-        if existing_user:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="User with this email already exists"
-            )
-        
-        hashed_password = get_password_hash(user_data.password)
-        
-        # 🆕 RBAC: Try to assign Super Admin role
-        super_admin_role = await db.roles.find_one({"name": "super_admin", "type": "system"})
-        
-        if super_admin_role:
-            role_id = super_admin_role["_id"]
-            role_name = "super_admin"
-            is_super_admin = True
-            effective_permissions = [p["permission_code"] for p in super_admin_role.get("permissions", []) if p.get("granted", False)]
-        else:
-            # Fallback if roles not seeded yet
-            role_id = None
-            role_name = "admin"
-            is_super_admin = True
-            effective_permissions = []
-        
-        user_doc = {
-            "email": user_data.email,
-            "username": user_data.username,
-            "first_name": user_data.first_name,
-            "last_name": user_data.last_name,
-            "full_name": f"{user_data.first_name} {user_data.last_name}",
-            "hashed_password": hashed_password,
-            
-            # Legacy
-            "role": "admin",
-            
-            # 🆕 RBAC
-            "role_id": role_id,
-            "role_name": role_name,
-            "is_super_admin": is_super_admin,
-            "effective_permissions": effective_permissions,
-            "permission_overrides": [],
-            "permissions_last_computed": datetime.utcnow(),
-            
-            # Team hierarchy
-            "reports_to": None,
-            "reports_to_email": None,
-            "team_members": [],
-            "team_level": 0,
-            
-            "phone": user_data.phone,
-            "department": user_data.department,
-            "is_active": True,
-            "created_at": datetime.utcnow(),
-            "updated_at": datetime.utcnow(),
-            "created_by": "emergency_system",
-            "failed_login_attempts": 0,
-            "login_count": 0,
-            
-            # Tata fields
-            "calling_enabled": False,
-            "tata_sync_status": "pending",
-            "auto_sync_enabled": True
-        }
-        
-        result = await db.users.insert_one(user_doc)
-        user_id = str(result.inserted_id)
-        
-        logger.warning(f"🚨 EMERGENCY SUPER ADMIN CREATED: {user_data.email}")
-        
-        return {
-            "success": True,
-            "message": "🚨 EMERGENCY SUPER ADMIN CREATED! Remove this endpoint immediately!",
-            "user": {
-                "user_id": user_id,
-                "email": user_data.email,
-                "username": user_data.username,
-                "first_name": user_data.first_name,
-                "last_name": user_data.last_name,
-                "role": "admin",
-                "role_name": role_name,
-                "is_super_admin": is_super_admin,
-                "permissions_count": len(effective_permissions),
-                "created_at": user_doc["created_at"]
-            }
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Emergency admin creation failed: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Emergency admin creation failed: {str(e)}"
-        )
-
-        
-@router.get("/debug-admin-users")
-@convert_user_dates()
-async def debug_admin_users():
-    """
-    🔍 TEMPORARY DIAGNOSTIC: Show existing admin users (emails only for security)
-    ⚠️ REMOVE THIS ENDPOINT AFTER DEBUGGING!
-    """
-    try:
-        db = get_database()
-        
-        # Find all admin users (but only return safe fields)
-        admin_users = await db.users.find(
-            {"role": "admin"}, 
-            {
-                "email": 1, 
-                "username": 1, 
-                "first_name": 1, 
-                "last_name": 1, 
-                "is_active": 1,
-                "created_at": 1,
-                "created_by": 1,
-                "calling_enabled": 1,
-                "tata_sync_status": 1
-            }
-        ).to_list(None)
-        
-        # Count total users by role
-        admin_count = await db.users.count_documents({"role": "admin"})
-        user_count = await db.users.count_documents({"role": "user"})
-        total_count = await db.users.count_documents({})
-        
-        return {
-            "database_status": "connected",
-            "admin_users_found": admin_count,
-            "regular_users_found": user_count,
-            "total_users": total_count,
-            "admin_users": [
-                {
-                    "email": user["email"],
-                    "username": user.get("username", "N/A"),
-                    "name": f"{user.get('first_name', '')} {user.get('last_name', '')}".strip(),
-                    "is_active": user.get("is_active", False),
-                    "calling_enabled": user.get("calling_enabled", False),
-                    "tata_sync_status": user.get("tata_sync_status", "unknown"),
-                    "created_at": user.get("created_at"),
-                    "created_by": user.get("created_by", "unknown")
-                }
-                for user in admin_users
-            ],
-            "next_steps": [
-                "1. Try logging in with one of these admin emails",
-                "2. If you forgot the password, you may need to reset it",
-                "3. Remove this diagnostic endpoint after debugging"
-            ]
-        }
-        
-    except Exception as e:
-        return {
-            "error": str(e),
-            "database_status": "connection_failed"
-        }
-
 # =============================================================================
 # ALL OTHER EXISTING ENDPOINTS REMAIN EXACTLY THE SAME...
 # (Department management, user management, refresh token, etc.)
@@ -1067,11 +878,15 @@ async def get_tata_sync_status(
 @router.get("/departments", response_model=Dict[str, Any])
 async def get_all_departments(
     include_user_count: bool = Query(False, description="Include user count for each department"),
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("department.view"))
 ):
     """
-    Get all available departments (only admin is predefined, rest are custom)
+    🔄 RBAC-ENABLED: Get all available departments
+    
+    **Required Permission:** `department.view`
+    
     Used for dropdowns in user creation and lead assignment
+    Only admin is predefined, rest are custom departments
     """
     try:
         from ..models.user import DepartmentHelper
@@ -1113,10 +928,13 @@ async def get_all_departments(
 @router.post("/departments", response_model=Dict[str, Any], status_code=status.HTTP_201_CREATED)
 async def create_department(
     department_data: DepartmentCreate,
-    current_user: Dict[str, Any] = Depends(get_admin_user)  # Admin only
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("department.create"))
 ):
     """
-    Create a new custom department (Admin only)
+    🔄 RBAC-ENABLED: Create a new custom department
+    
+    **Required Permission:** `department.create`
+    
     All departments except 'admin' are created this way
     """
     try:
@@ -1202,10 +1020,13 @@ async def create_department(
 @router.post("/departments/bulk", response_model=Dict[str, Any], status_code=status.HTTP_201_CREATED)
 async def create_departments_bulk(
     departments_list: List[DepartmentCreate],
-    current_user: Dict[str, Any] = Depends(get_admin_user)  # Admin only
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("department.create"))
 ):
     """
-    Create multiple departments at once (Admin only)
+    🔄 RBAC-ENABLED: Create multiple departments at once
+    
+    **Required Permission:** `department.create`
+    
     Useful for initial setup or migrating from other systems
     """
     try:
@@ -1278,10 +1099,13 @@ async def create_departments_bulk(
 
 @router.post("/departments/setup-starter", response_model=Dict[str, Any])
 async def setup_starter_departments(
-    current_user: Dict[str, Any] = Depends(get_admin_user)  # Admin only
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("department.create"))
 ):
     """
-    Create a basic set of common departments for new installations
+    🔄 RBAC-ENABLED: Create a basic set of common departments for new installations
+    
+    **Required Permission:** `department.create`
+    
     Only works if no custom departments exist yet
     """
     try:
@@ -1376,10 +1200,13 @@ async def setup_starter_departments(
 async def update_user_departments(
     user_id: str,
     departments_data: Dict[str, Union[str, List[str]]],
-    current_user: Dict[str, Any] = Depends(get_admin_user)  # Admin only
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("department.edit"))
 ):
     """
-    Update user departments (Admin only)
+    🔄 RBAC-ENABLED: Update user departments
+    
+    **Required Permission:** `department.edit`
+    
     Supports both single department (for admin) and multiple departments (for users)
     """
     try:
@@ -1473,10 +1300,12 @@ async def update_user_departments(
 @convert_user_dates()
 async def get_department_users(
     department_name: str,
-    current_user: Dict[str, Any] = Depends(get_admin_user)  # Admin only
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("department.view"))
 ):
     """
-    Get all users in a specific department (Admin only)
+    🔄 RBAC-ENABLED: Get all users in a specific department
+    
+    **Required Permission:** `department.view`
     """
     try:
         from ..models.user import DepartmentHelper
@@ -1542,10 +1371,13 @@ async def get_department_users(
 @router.delete("/departments/{department_id}", response_model=Dict[str, Any])
 async def deactivate_department(
     department_id: str,
-    current_user: Dict[str, Any] = Depends(get_admin_user)  # Admin only
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("department.delete"))
 ):
     """
-    Deactivate a custom department (Admin only)
+    🔄 RBAC-ENABLED: Deactivate a custom department
+    
+    **Required Permission:** `department.delete`
+    
     Note: Cannot delete predefined departments, only custom ones
     """
     try:

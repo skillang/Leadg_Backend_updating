@@ -6,7 +6,7 @@ import logging
 
 from ..models.lead_status import StatusCreate, StatusUpdate, StatusResponse, StatusListResponse
 from ..services.status_service import status_service
-from ..utils.dependencies import get_current_active_user, get_admin_user
+from ..utils.dependencies import get_current_active_user, get_admin_user, get_user_with_permission
 
 logger = logging.getLogger(__name__)
 
@@ -20,10 +20,13 @@ router = APIRouter(tags=["statuses"])
 async def get_all_statuses(
     include_lead_count: bool = Query(False, description="Include lead count for each status"),
     active_only: bool = Query(True, description="Only return active statuses"),
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("status.view"))
 ):
     """
-    Get all statuses (visible to all authenticated users)
+    🔄 RBAC-ENABLED: Get all statuses
+    
+    **Required Permission:** `status.view`
+    
     Used for dropdowns in lead creation/editing
     """
     try:
@@ -62,10 +65,13 @@ async def get_all_statuses(
 @router.get("/inactive", response_model=StatusListResponse)
 async def get_inactive_statuses(
     include_lead_count: bool = Query(False, description="Include lead count for each status"),
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("status.view"))
 ):
     """
-    Get all inactive/deactivated statuses that can be reactivated
+    🔄 RBAC-ENABLED: Get all inactive/deactivated statuses that can be reactivated
+    
+    **Required Permission:** `status.view`
+    
     Useful for admin to see what statuses can be restored
     """
     try:
@@ -102,10 +108,13 @@ async def get_inactive_statuses(
 @router.get("/active", response_model=StatusListResponse)
 async def get_active_statuses(
     include_lead_count: bool = Query(False, description="Include lead count for each status"),
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("status.view"))
 ):
     """
-    Get all active statuses (explicitly active only)
+    🔄 RBAC-ENABLED: Get all active statuses (explicitly active only)
+    
+    **Required Permission:** `status.view`
+    
     Useful for lead creation dropdowns
     """
     try:
@@ -142,9 +151,13 @@ async def get_active_statuses(
 @router.get("/{status_id}", response_model=StatusResponse)
 async def get_status_by_id(
     status_id: str,
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("status.view"))
 ):
-    """Get a specific status by ID"""
+    """
+    🔄 RBAC-ENABLED: Get a specific status by ID
+    
+    **Required Permission:** `status.view`
+    """
     try:
         status = await status_service.get_status_by_id(status_id)
         return StatusResponse(**status)
@@ -168,9 +181,13 @@ async def get_status_by_id(
 @router.post("/", response_model=Dict[str, Any])
 async def create_status(
     status_data: StatusCreate,
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("status.create"))
 ):
-    """Create a new status (Admin only)"""
+    """
+    🔄 RBAC-ENABLED: Create a new status
+    
+    **Required Permission:** `status.create`
+    """
     try:
         user_email = current_user.get("email", "unknown")
         logger.info(f"Creating status '{status_data.name}' by admin: {user_email}")
@@ -199,9 +216,13 @@ async def create_status(
 async def update_status(
     status_id: str,
     status_data: StatusUpdate,
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("status.edit"))
 ):
-    """Update an existing status (Admin only)"""
+    """
+    🔄 RBAC-ENABLED: Update an existing status
+    
+    **Required Permission:** `status.edit`
+    """
     try:
         user_email = current_user.get("email", "unknown")
         logger.info(f"Updating status {status_id} by admin: {user_email}")
@@ -229,9 +250,13 @@ async def update_status(
 @router.patch("/{status_id}/activate", response_model=Dict[str, Any])
 async def activate_status(
     status_id: str,
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("status.edit"))
 ):
-    """Activate a deactivated status (Admin only)"""
+    """
+    🔄 RBAC-ENABLED: Activate a deactivated status
+    
+    **Required Permission:** `status.edit`
+    """
     try:
         from ..config.database import get_database
         from bson import ObjectId
@@ -288,9 +313,14 @@ async def activate_status(
 @router.patch("/{status_id}/deactivate", response_model=Dict[str, Any])
 async def deactivate_status(
     status_id: str,
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("status.edit"))
 ):
-    """Deactivate a status without deleting it (Admin only)"""
+    """
+    🔄 RBAC-ENABLED: Deactivate a status without deleting it
+    
+    **Required Permission:** `status.edit`
+    """
+
     try:
         from ..config.database import get_database
         from bson import ObjectId
@@ -353,9 +383,13 @@ async def deactivate_status(
 async def delete_status(
     status_id: str,
     force: bool = Query(False, description="Force delete even if status has leads"),
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("status.delete"))
 ):
-    """Delete a status (Admin only)"""
+    """
+    🔄 RBAC-ENABLED: Delete a status
+    
+    **Required Permission:** `status.delete`
+    """
     try:
         user_email = current_user.get("email", "unknown")
         logger.info(f"Deleting status {status_id} by admin: {user_email} (force={force})")
@@ -384,10 +418,12 @@ async def delete_status(
 @router.patch("/reorder", response_model=Dict[str, Any])
 async def reorder_statuses(
     status_orders: List[Dict[str, Any]],
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("status.edit"))
 ):
     """
-    Reorder statuses by updating sort_order (Admin only)
+    🔄 RBAC-ENABLED: Reorder statuses by updating sort_order
+    
+    **Required Permission:** `status.edit`
     
     Request body example:
     [
@@ -421,9 +457,13 @@ async def reorder_statuses(
 
 @router.get("/default/name")
 async def get_default_status_name(
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("status.view"))
 ):
-    """Get the default status name for new leads"""
+    """
+    🔄 RBAC-ENABLED: Get the default status name for new leads
+    
+    **Required Permission:** `status.view`
+    """
     try:
         from ..models.lead_status import StatusHelper
         
@@ -443,9 +483,13 @@ async def get_default_status_name(
 
 @router.post("/setup/defaults")
 async def setup_default_statuses(
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("status.create"))
 ):
-    """Setup default statuses if none exist (Admin only)"""
+    """
+    🔄 RBAC-ENABLED: Setup default statuses if none exist
+    
+    **Required Permission:** `status.create`
+    """
     try:
         from ..models.lead_status import StatusHelper
         

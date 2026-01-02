@@ -84,24 +84,6 @@ async def get_document_statuses():
     return {"statuses": [{"value": ds.value, "label": ds.value} for ds in DocumentStatus]}
 
 
-@router.get("/debug/test")
-@convert_dates_to_ist()
-async def debug_test():
-    """Test endpoint to verify router is working - No auth required"""
-    return {"message": "Document router is working!", "timestamp": datetime.utcnow(), "rbac_enabled": True}
-
-
-@router.get("/debug/gridfs-test")
-async def debug_gridfs():
-    """Test GridFS connection - No auth required"""
-    try:
-        bucket = get_document_service().fs_bucket
-        files_count = await bucket._collection.count_documents({})
-        return {"gridfs_connected": True, "files_count": files_count}
-    except Exception as e:
-        return {"gridfs_connected": False, "error": str(e)}
-
-
 @router.get("/admin/dashboard")
 async def get_admin_document_dashboard(
     current_user: Dict[str, Any] = Depends(get_user_with_permission("document.view_all"))

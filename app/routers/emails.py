@@ -10,7 +10,7 @@ from fastapi import status as http_status
 
 from ..config.database import get_database
 from ..config.settings import settings
-from ..utils.dependencies import get_current_active_user, get_admin_user
+from ..utils.dependencies import get_current_active_user, get_admin_user, get_user_with_permission
 from ..models.email import (
     EmailRequest, BulkEmailRequest, EmailResponse,
     EmailHistoryResponse, EmailHistoryItem,
@@ -31,10 +31,13 @@ router = APIRouter(tags=["emails"])
 
 @router.get("/templates")
 async def get_email_templates(
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("email.send_single"))
 ):
     """
     Fetch email templates from CMS
+    
+    **Required Permission:** `email.send_single`
+    
     Returns available templates for dropdown selection
     """
     try:
@@ -99,65 +102,17 @@ async def get_email_templates(
             detail=f"Failed to fetch email templates: {str(e)}"
         )
 
-@router.get("/templates/test")
-async def test_cms_connection(
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
-):
-    """
-    Test CMS connection for email templates
-    Debug endpoint to check CMS connectivity
-    """
-    try:
-        import aiohttp
-        cms_url = f"{settings.cms_base_url}/{settings.email_templates_endpoint}"
-        
-        logger.info(f"Testing CMS connection to: {cms_url}")
-        
-        async with aiohttp.ClientSession() as session:
-            try:
-                async with session.get(cms_url, timeout=aiohttp.ClientTimeout(total=10)) as response:
-                    response_text = await response.text()
-                    
-                    return {
-                        "success": True,
-                        "cms_url": cms_url,
-                        "status_code": response.status,
-                        "response_preview": response_text[:500] + "..." if len(response_text) > 500 else response_text,
-                        "headers": dict(response.headers),
-                        "message": f"CMS connection test completed with status {response.status}"
-                    }
-                    
-            except asyncio.TimeoutError:
-                return {
-                    "success": False,
-                    "cms_url": cms_url,
-                    "error": "Connection timeout (10 seconds)",
-                    "message": "CMS server is not responding"
-                }
-            except aiohttp.ClientError as e:
-                return {
-                    "success": False,
-                    "cms_url": cms_url,
-                    "error": f"Network error: {str(e)}",
-                    "message": "Failed to connect to CMS"
-                }
-                
-    except Exception as e:
-        logger.error(f"Error testing CMS connection: {e}")
-        return {
-            "success": False,
-            "error": str(e),
-            "message": "CMS connection test failed"
-        }
-
 @router.post("/leads/{lead_id}/send")
 async def send_email_to_lead(
     lead_id: str,
     email_request: EmailRequest,
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("email.send_single"))
 ):
     """
     Send email to a single lead
+    
+    **Required Permission:** `email.send_single`
+    
     Users can only email leads assigned to them, admins can email any lead
     """
     try:
@@ -203,10 +158,13 @@ async def send_email_to_lead(
 @router.post("/bulk-send")
 async def send_bulk_email(
     bulk_request: BulkEmailRequest,
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("email.send_bulk"))
 ):
     """
     Send bulk email to multiple leads
+    
+    **Required Permission:** `email.send_bulk`
+    
     Users can send to assigned leads, admins can send to any leads
     """
     try:
@@ -263,10 +221,13 @@ async def get_lead_email_history(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(10, ge=1, le=50, description="Items per page"),
     status: Optional[str] = Query(None, description="Filter by status: sent, failed, pending, cancelled"),
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("email.single_history"))
 ):
     """
     Get email history for a specific lead
+    
+    **Required Permission:** `email.single_history`
+    
     Users can only see history for assigned leads, admins see all
     """
     try:
@@ -372,10 +333,13 @@ async def get_scheduled_emails(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(20, ge=1, le=100, description="Items per page"),
     status: str = Query("pending", description="Filter by status: pending, sent, failed, cancelled"),
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("email.bulk_history"))
 ):
     """
     Get scheduled emails
+    
+    **Required Permission:** `email.bulk_history`
+    
     Users see only their scheduled emails, admins see all
     """
     try:
@@ -445,10 +409,13 @@ async def get_scheduled_emails(
 @router.delete("/scheduled/{email_id}")
 async def cancel_scheduled_email(
     email_id: str,
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("email.send_bulk"))
 ):
     """
     Cancel a scheduled email
+    
+    **Required Permission:** `email.send_bulk`
+    
     Users can only cancel their own emails, admins can cancel any
     """
     try:
@@ -521,10 +488,13 @@ async def cancel_scheduled_email(
 
 @router.get("/stats")
 async def get_email_statistics(
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("email.bulk_history"))
 ):
     """
     Get email usage statistics
+    
+    **Required Permission:** `email.bulk_history`
+    
     Users see their stats, admins see global stats
     """
     try:
@@ -611,14 +581,16 @@ async def get_bulk_email_history(
     limit: int = Query(20, ge=1, le=100, description="Items per page"),
     status_filter: Optional[str] = Query(None, alias="status", description="Filter by status: sent, failed, pending, cancelled"),
     search: Optional[str] = Query(None, description="Search by template name or email ID"),
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("email.bulk_history"))
 ):
     """
     Get ALL bulk email history - SAME pattern as WhatsApp bulk jobs
     
+    **Required Permission:** `email.bulk_history`
+    
     Permission Rules (IDENTICAL to WhatsApp):
-    - Admin: Can see all bulk email jobs
-    - User: Can only see bulk email jobs they created
+    - email.bulk_history: Can see bulk email jobs they created
+    - Admins with broader access: Can see all bulk email jobs
     """
     try:
         db = get_database()
@@ -724,68 +696,3 @@ async def get_bulk_email_history(
             status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,  # ✅ Fix: Use http_status
             detail=f"Failed to get bulk email history: {str(e)}"
         )
-
-# ============================================================================
-# SYSTEM ENDPOINTS
-# ============================================================================
-
-@router.get("/scheduler/status")
-async def get_scheduler_status(
-    current_user: Dict[str, Any] = Depends(get_admin_user)  # Admin only
-):
-    """
-    Get email scheduler status and statistics (Admin only)
-    """
-    try:
-        from ..services.email_scheduler import email_scheduler
-        status = await email_scheduler.get_scheduler_status()
-        
-        return {
-            "success": True,
-            "scheduler": status,
-            "timestamp": datetime.utcnow()
-        }
-        
-    except Exception as e:
-        logger.error(f"Error getting scheduler status: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get scheduler status: {str(e)}"
-        )
-
-@router.get("/test-connection")
-async def test_email_connection(
-    current_user: Dict[str, Any] = Depends(get_admin_user)  # Admin only
-):
-    """
-    Test ZeptoMail API connection (Admin only)
-    """
-    try:
-        result = await test_zepto_connection()
-        
-        return {
-            "success": result["success"],
-            "message": result["message"],
-            "zepto_configured": result.get("authenticated", False),
-            "timestamp": datetime.utcnow()
-        }
-        
-    except Exception as e:
-        logger.error(f"Error testing email connection: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to test connection: {str(e)}"
-        )
-
-# ============================================================================
-# DEBUG ENDPOINTS (Development only)
-# ============================================================================
-
-@router.get("/debug/test")
-async def debug_email_router():
-    """Debug endpoint to test email router is working"""
-    return {
-        "message": "Email router is working!",
-        "timestamp": datetime.utcnow(),
-                    "zepto_configured": get_email_service().zepto_client.is_configured()
-    }

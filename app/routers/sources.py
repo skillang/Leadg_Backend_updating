@@ -10,7 +10,7 @@ from bson import ObjectId
 from datetime import datetime
 from ..models.source import SourceCreate, SourceUpdate, SourceResponse, SourceListResponse, SourceHelper
 from ..services.source_service import source_service
-from ..utils.dependencies import get_current_active_user, get_admin_user
+from ..utils.dependencies import get_current_active_user, get_admin_user, get_user_with_permission
 
 logger = logging.getLogger(__name__)
 
@@ -25,10 +25,13 @@ router = APIRouter(tags=["sources"])
 async def get_all_sources(
     include_lead_count: bool = Query(False, description="Include lead count for each source"),
     active_only: bool = Query(True, description="Only return active sources"),
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("source.view"))
 ):
     """
-    Get all sources (visible to all authenticated users)
+    🔄 RBAC-ENABLED: Get all sources
+    
+    **Required Permission:** `source.view`
+    
     Used for dropdowns in lead creation/editing
     Now includes short_form field for display
     """
@@ -63,11 +66,14 @@ async def get_all_sources(
 @convert_dates_to_ist()
 async def get_source_suggestions(
     partial_name: str = Query("", description="Partial name to filter suggestions"),
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("source.view"))
 ):
     """
-    Get pre-defined source suggestions with short forms (Admin only)
-    Helps admin create common sources quickly
+    🔄 RBAC-ENABLED: Get pre-defined source suggestions with short forms
+    
+    **Required Permission:** `source.view`
+    
+    Helps users create common sources quickly
     """
     try:
         logger.info(f"Getting source suggestions for admin: {current_user.get('email')}")
@@ -92,10 +98,13 @@ async def get_source_suggestions(
 async def validate_short_form(
     short_form: str,
     exclude_id: str = Query(None, description="Source ID to exclude from validation"),
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("source.create"))
 ):
     """
-    Validate if short form is available (Admin only)
+    🔄 RBAC-ENABLED: Validate if short form is available
+    
+    **Required Permission:** `source.create` (also works with `source.edit`)
+    
     Used during source creation/editing
     """
     try:
@@ -129,9 +138,13 @@ async def validate_short_form(
 @router.get("/inactive", response_model=SourceListResponse)
 async def get_inactive_sources(
     include_lead_count: bool = Query(False, description="Include lead count for each source"),
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("source.view"))
 ):
-    """Get all inactive sources (Admin view)"""
+    """
+    🔄 RBAC-ENABLED: Get all inactive sources
+    
+    **Required Permission:** `source.view`
+    """
     try:
         logger.info(f"Getting inactive sources for user: {current_user.get('email')}")
         
@@ -166,10 +179,13 @@ async def get_inactive_sources(
 @router.get("/active", response_model=SourceListResponse)
 async def get_active_sources(
     include_lead_count: bool = Query(False, description="Include lead count for each source"),
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("source.view"))
 ):
     """
-    Get all active sources (explicitly active only)
+    🔄 RBAC-ENABLED: Get all active sources (explicitly active only)
+    
+    **Required Permission:** `source.view`
+    
     Useful for lead creation dropdowns
     """
     try:
@@ -207,9 +223,13 @@ async def get_active_sources(
 @convert_dates_to_ist()
 async def get_source_by_id(
     source_id: str,
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("source.view"))
 ):
-    """Get a specific source by ID"""
+    """
+    🔄 RBAC-ENABLED: Get a specific source by ID
+    
+    **Required Permission:** `source.view`
+    """
     try:
         source = await source_service.get_source_by_id(source_id)
         return SourceResponse(**source)
@@ -233,10 +253,12 @@ async def get_source_by_id(
 @router.post("/", response_model=Dict[str, Any])
 async def create_source(
     source_data: SourceCreate,
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("source.create"))
 ):
     """
-    Create a new source with short form (Admin only)
+    🔄 RBAC-ENABLED: Create a new source with short form
+    
+    **Required Permission:** `source.create`
     
     - **name**: Source name (e.g., "website", "social_media")
     - **short_form**: 2-3 character code for lead IDs (e.g., "WB", "SM", "RF")
@@ -272,10 +294,12 @@ async def create_source(
 async def update_source(
     source_id: str,
     source_data: SourceUpdate,
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("source.edit"))
 ):
     """
-    Update an existing source (Admin only)
+    🔄 RBAC-ENABLED: Update an existing source
+    
+    **Required Permission:** `source.edit`
     
     Note: short_form cannot be updated to maintain lead ID consistency
     """
@@ -307,9 +331,13 @@ async def update_source(
 @router.patch("/{source_id}/activate", response_model=Dict[str, Any])
 async def activate_source(
     source_id: str,
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("source.edit"))
 ):
-    """Activate a deactivated source (Admin only)"""
+    """
+    🔄 RBAC-ENABLED: Activate a deactivated source
+    
+    **Required Permission:** `source.edit`
+    """
     try:
         user_email = current_user.get("email", "unknown")
         logger.info(f"Activating source {source_id} by admin: {user_email}")
@@ -362,9 +390,13 @@ async def activate_source(
 @router.patch("/{source_id}/deactivate", response_model=Dict[str, Any])
 async def deactivate_source(
     source_id: str,
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("source.edit"))
 ):
-    """Deactivate a source without deleting it (Admin only)"""
+    """
+    🔄 RBAC-ENABLED: Deactivate a source without deleting it
+    
+    **Required Permission:** `source.edit`
+    """
     try:
         user_email = current_user.get("email", "unknown")
         logger.info(f"Deactivating source {source_id} by admin: {user_email}")
@@ -422,9 +454,13 @@ async def deactivate_source(
 @router.delete("/{source_id}", response_model=Dict[str, Any])
 async def delete_source(
     source_id: str,
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("source.delete"))
 ):
-    """Delete a source (Admin only - only if no leads are using it)"""
+    """
+    🔄 RBAC-ENABLED: Delete a source (only if no leads are using it)
+    
+    **Required Permission:** `source.delete`
+    """
     try:
         user_email = current_user.get("email", "unknown")
         logger.info(f"Deleting source {source_id} by admin: {user_email}")

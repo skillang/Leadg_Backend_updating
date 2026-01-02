@@ -17,7 +17,7 @@ from app.models.bulk_whatsapp import (
 )
 from app.services.bulk_whatsapp_service import get_bulk_whatsapp_service
 from app.services.bulk_whatsapp_processor import get_bulk_whatsapp_processor
-from app.utils.dependencies import get_current_user, get_admin_user
+from app.utils.dependencies import get_current_user, get_admin_user, get_user_with_permission
 from app.config.database import get_database
 import logging
 
@@ -38,10 +38,12 @@ bulk_processor = get_bulk_whatsapp_processor()
 async def create_bulk_whatsapp_job(
     request: CreateBulkWhatsAppRequest,
     background_tasks: BackgroundTasks,
-    current_user: Dict[str, Any] = Depends(get_current_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("whatsapp.send_bulk"))
 ):
     """
     Create bulk WhatsApp job - SIMPLIFIED like your email system
+    
+    **Required Permission:** `whatsapp.send_bulk`
     
     Request body should contain:
     {
@@ -53,8 +55,8 @@ async def create_bulk_whatsapp_job(
     }
     
     Permission Rules:
-    - Admin: Can send to any leads
-    - User: Can only send to their assigned leads
+    - Users with whatsapp.send_bulk: Can send to assigned leads
+    - Admins with whatsapp.view_all: Can send to any leads
     """
     try:
         logger.info(f"Creating bulk WhatsApp job: {request.job_name} by {current_user.get('email')}")
@@ -82,14 +84,16 @@ async def create_bulk_whatsapp_job(
 @router.get("/jobs/{job_id}", response_model=BulkJobStatusResponse)
 async def get_bulk_job_status(
     job_id: str,
-    current_user: Dict[str, Any] = Depends(get_current_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("whatsapp.history_bulk"))
 ):
     """
     Get bulk job status and progress - SAME as your email status endpoint
     
+    **Required Permission:** `whatsapp.history_bulk`
+    
     Permission Rules:
-    - Admin: Can view any job
-    - User: Can only view jobs they created
+    - whatsapp.history_bulk: Can view jobs they created
+    - whatsapp.view_all: Can view any job (admin)
     """
     try:
         job_data = await bulk_service.get_bulk_job(job_id, current_user)
@@ -120,14 +124,16 @@ async def list_bulk_jobs(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(20, ge=1, le=100, description="Items per page"),
     status: Optional[str] = Query(None, description="Filter by status"),
-    current_user: Dict[str, Any] = Depends(get_current_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("whatsapp.history_bulk"))
 ):
     """
     List bulk jobs with pagination - SAME pattern as your email listing
     
+    **Required Permission:** `whatsapp.history_bulk`
+    
     Permission Rules:
-    - Admin: Can see all jobs
-    - User: Can only see jobs they created
+    - whatsapp.history_bulk: Can see jobs they created
+    - whatsapp.view_all: Can see all jobs (admin)
     """
     try:
         db = get_database()
@@ -215,14 +221,16 @@ async def list_bulk_jobs(
 async def cancel_bulk_job(
     job_id: str,
     request: Optional[CancelBulkJobRequest] = None,
-    current_user: Dict[str, Any] = Depends(get_current_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("whatsapp.send_bulk"))
 ):
     """
     Cancel bulk job - SAME as email cancellation
     
+    **Required Permission:** `whatsapp.send_bulk`
+    
     Permission Rules:
-    - Admin: Can cancel any job
-    - User: Can only cancel jobs they created
+    - whatsapp.send_bulk: Can cancel jobs they created
+    - whatsapp.view_all: Can cancel any job (admin)
     """
     try:
         reason = request.reason if request else None
@@ -245,14 +253,16 @@ async def cancel_bulk_job(
 
 @router.get("/stats", response_model=BulkStatsResponse)
 async def get_bulk_stats(
-    current_user: Dict[str, Any] = Depends(get_current_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("whatsapp.history_bulk"))
 ):
     """
     Get bulk messaging statistics - SAME pattern as email stats
     
+    **Required Permission:** `whatsapp.history_bulk`
+    
     Permission Rules:
-    - Admin: Gets system-wide statistics
-    - User: Gets statistics for their jobs only
+    - whatsapp.history_bulk: Gets statistics for their jobs only
+    - whatsapp.view_all: Gets system-wide statistics (admin)
     """
     try:
         db = get_database()
@@ -365,10 +375,12 @@ async def get_bulk_stats(
 
 @router.get("/active-jobs")
 async def get_active_jobs(
-    current_user: Dict[str, Any] = Depends(get_admin_user)  # Admin only
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("whatsapp.view_all"))
 ):
     """
     Get currently processing jobs - Admin only for monitoring
+    
+    **Required Permission:** `whatsapp.view_all`
     """
     try:
         active_jobs = await bulk_processor.get_active_jobs()
@@ -389,10 +401,12 @@ async def get_active_jobs(
 
 @router.get("/templates")
 async def get_whatsapp_templates(
-    current_user: Dict[str, Any] = Depends(get_current_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("whatsapp.send_bulk"))
 ):
     """
     Get available WhatsApp templates - Reuse existing endpoint logic
+    
+    **Required Permission:** `whatsapp.send_bulk`
     """
     try:
         # Import existing WhatsApp router function
@@ -410,10 +424,12 @@ async def get_whatsapp_templates(
 @router.post("/validate-phone-numbers")
 async def validate_phone_numbers(
     phone_numbers: List[str],
-    current_user: Dict[str, Any] = Depends(get_current_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("whatsapp.send_bulk"))
 ):
     """
     Validate phone numbers for WhatsApp messaging
+    
+    **Required Permission:** `whatsapp.send_bulk`
     """
     try:
         from app.models.bulk_whatsapp import validate_phone_number
@@ -440,37 +456,3 @@ async def validate_phone_numbers(
     except Exception as e:
         logger.error(f"Error validating phone numbers: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to validate phone numbers: {str(e)}")
-
-# ================================
-# HEALTH CHECK ENDPOINTS
-# ================================
-
-@router.get("/health")
-async def health_check():
-    """
-    Health check for bulk WhatsApp service
-    """
-    try:
-        db = get_database()
-        
-        # Test database connection
-        await db.bulk_whatsapp_jobs.find_one()
-        
-        # Get service status
-        active_jobs = await bulk_processor.get_active_jobs()
-        
-        return {
-            "status": "healthy",
-            "timestamp": datetime.utcnow(),
-            "database": "connected",
-            "active_jobs_count": len(active_jobs),
-            "service": "operational"
-        }
-        
-    except Exception as e:
-        logger.error(f"Health check failed: {str(e)}")
-        return {
-            "status": "unhealthy",
-            "timestamp": datetime.utcnow(),
-            "error": str(e)
-        }

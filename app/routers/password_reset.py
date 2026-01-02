@@ -335,63 +335,6 @@ async def get_user_reset_history(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve user reset history"
         )
-
-# ============================================================================
-# UTILITY ENDPOINTS
-# ============================================================================
-
-@router.get("/health")
-async def password_reset_health():
-    """
-    🔓 **PUBLIC ENDPOINT** - Health check for password reset service
-    
-    **Purpose:**
-    - Check if password reset service is operational
-    - Validate email configuration
-    - Monitor service dependencies
-    """
-    try:
-        from ..config.settings import settings
-        from ..services.zepto_client import zepto_client
-        
-        # Check basic service health
-        health_status = {
-            "service": "password_reset",
-            "status": "healthy",
-            "timestamp": datetime.utcnow(),
-            "features": {
-                "user_self_service": True,
-                "admin_reset": True,
-                "email_integration": zepto_client.is_configured(),
-                "rate_limiting": True,
-                "token_cleanup": True
-            }
-        }
-        
-        # Test email service connection (optional)
-        if zepto_client.is_configured():
-            email_test = await zepto_client.test_connection()
-            health_status["email_service"] = {
-                "configured": True,
-                "connection": email_test.get("success", False)
-            }
-        else:
-            health_status["email_service"] = {
-                "configured": False,
-                "connection": False
-            }
-        
-        return health_status
-        
-    except Exception as e:
-        logger.error(f"Password reset health check failed: {e}")
-        return {
-            "service": "password_reset",
-            "status": "unhealthy",
-            "error": str(e),
-            "timestamp": datetime.utcnow()
-        }
-
 # ============================================================================
 # ADVANCED ADMIN ENDPOINTS (Optional - for future enhancement)
 # ============================================================================

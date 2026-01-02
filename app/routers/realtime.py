@@ -584,49 +584,6 @@ async def realtime_health_check():
             "message": f"Health check failed: {str(e)}",
             "timestamp": datetime.utcnow().isoformat()
         }
-
-@router.get("/debug/connections")
-async def debug_connections(current_user: Dict[str, Any] = Depends(get_current_user)):
-    """
-    🆕 Debug endpoint to inspect real-time connections
-    Admin endpoint for troubleshooting
-    """
-    try:
-        # Check admin access
-        user_role = current_user.get("role", "user")
-        if user_role != "admin":
-            raise HTTPException(
-                status_code=403, 
-                detail="Admin access required for debug information"
-            )
-        
-        # Collect debug information
-        debug_info = {
-            "connection_summary": realtime_manager.get_connection_stats(),
-            "user_connections": {},
-            "system_info": {
-                "cleanup_task_running": realtime_manager._cleanup_task and not realtime_manager._cleanup_task.done(),
-                "total_users_tracked": len(realtime_manager.user_unread_leads),
-                "memory_usage": "Not implemented"  # Could add memory monitoring
-            }
-        }
-        
-        # Get detailed connection info for each user
-        for user_email in realtime_manager.user_connections.keys():
-            debug_info["user_connections"][user_email] = realtime_manager.get_user_connection_info(user_email)
-        
-        return {
-            "success": True,
-            "debug_info": debug_info,
-            "timestamp": datetime.utcnow().isoformat()
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Debug connections error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Debug failed: {str(e)}")
-
 # ============================================================================
 # WEBSOCKET ALTERNATIVE (FUTURE EXPANSION)
 # ============================================================================

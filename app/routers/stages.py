@@ -8,7 +8,7 @@ from bson import ObjectId
 from datetime import datetime
 from ..models.lead_stage import StageCreate, StageUpdate, StageResponse, StageListResponse
 from ..services.stage_service import stage_service
-from ..utils.dependencies import get_current_active_user, get_admin_user
+from ..utils.dependencies import get_current_active_user, get_admin_user, get_user_with_permission
 
 logger = logging.getLogger(__name__)
 
@@ -22,10 +22,13 @@ router = APIRouter(tags=["stages"])
 async def get_all_stages(
     include_lead_count: bool = Query(False, description="Include lead count for each stage"),
     active_only: bool = Query(True, description="Only return active stages"),
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("stage.view"))
 ):
     """
-    Get all stages (visible to all authenticated users)
+    🔄 RBAC-ENABLED: Get all stages
+    
+    **Required Permission:** `stage.view`
+    
     Used for dropdowns in lead creation/editing
     """
     try:
@@ -58,10 +61,13 @@ async def get_all_stages(
 @router.get("/inactive", response_model=StageListResponse)
 async def get_inactive_stages(
     include_lead_count: bool = Query(False, description="Include lead count for each stage"),
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("stage.view"))
 ):
     """
-    Get all inactive/deactivated stages that can be reactivated
+    🔄 RBAC-ENABLED: Get all inactive/deactivated stages that can be reactivated
+    
+    **Required Permission:** `stage.view`
+    
     Useful for admin to see what stages can be restored
     """
     try:
@@ -98,10 +104,13 @@ async def get_inactive_stages(
 @router.get("/active", response_model=StageListResponse)
 async def get_active_stages(
     include_lead_count: bool = Query(False, description="Include lead count for each stage"),
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("stage.view"))
 ):
     """
-    Get all active stages (explicitly active only)
+    🔄 RBAC-ENABLED: Get all active stages (explicitly active only)
+    
+    **Required Permission:** `stage.view`
+    
     Useful for lead creation dropdowns
     """
     try:
@@ -138,9 +147,13 @@ async def get_active_stages(
 @router.get("/{stage_id}", response_model=StageResponse)
 async def get_stage_by_id(
     stage_id: str,
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("stage.view"))
 ):
-    """Get a specific stage by ID"""
+    """
+    🔄 RBAC-ENABLED: Get a specific stage by ID
+    
+    **Required Permission:** `stage.view`
+    """
     try:
         stage = await stage_service.get_stage_by_id(stage_id)
         return StageResponse(**stage)
@@ -164,9 +177,13 @@ async def get_stage_by_id(
 @router.post("/", response_model=Dict[str, Any])
 async def create_stage(
     stage_data: StageCreate,
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("stage.create"))
 ):
-    """Create a new stage (Admin only)"""
+    """
+    🔄 RBAC-ENABLED: Create a new stage
+    
+    **Required Permission:** `stage.create`
+    """
     try:
         user_email = current_user.get("email", "unknown")
         logger.info(f"Creating stage '{stage_data.name}' by admin: {user_email}")
@@ -195,9 +212,13 @@ async def create_stage(
 async def update_stage(
     stage_id: str,
     stage_data: StageUpdate,
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("stage.edit"))
 ):
-    """Update an existing stage (Admin only)"""
+    """
+    🔄 RBAC-ENABLED: Update an existing stage
+    
+    **Required Permission:** `stage.edit`
+    """
     try:
         user_email = current_user.get("email", "unknown")
         logger.info(f"Updating stage {stage_id} by admin: {user_email}")
@@ -225,9 +246,13 @@ async def update_stage(
 @router.patch("/{stage_id}/activate", response_model=Dict[str, Any])
 async def activate_stage(
     stage_id: str,
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("stage.edit"))
 ):
-    """Activate a deactivated stage (Admin only)"""
+    """
+    🔄 RBAC-ENABLED: Activate a deactivated stage
+    
+    **Required Permission:** `stage.edit`
+    """
     try:
         user_email = current_user.get("email", "unknown")
         logger.info(f"Activating stage {stage_id} by admin: {user_email}")
@@ -280,9 +305,13 @@ async def activate_stage(
 @router.patch("/{stage_id}/deactivate", response_model=Dict[str, Any])
 async def deactivate_stage(
     stage_id: str,
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("stage.edit"))
 ):
-    """Deactivate a stage without deleting it (Admin only)"""
+    """
+    🔄 RBAC-ENABLED: Deactivate a stage without deleting it
+    
+    **Required Permission:** `stage.edit`
+    """
     try:
         user_email = current_user.get("email", "unknown")
         logger.info(f"Deactivating stage {stage_id} by admin: {user_email}")
@@ -341,9 +370,13 @@ async def deactivate_stage(
 async def delete_stage(
     stage_id: str,
     force: bool = Query(False, description="Force delete even if stage has leads"),
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("stage.delete"))
 ):
-    """Delete a stage (Admin only)"""
+    """
+    🔄 RBAC-ENABLED: Delete a stage
+    
+    **Required Permission:** `stage.delete`
+    """
     try:
         user_email = current_user.get("email", "unknown")
         logger.info(f"Deleting stage {stage_id} by admin: {user_email} (force={force})")
@@ -372,10 +405,12 @@ async def delete_stage(
 @router.patch("/reorder", response_model=Dict[str, Any])
 async def reorder_stages(
     stage_orders: List[Dict[str, Any]],
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("stage.edit"))
 ):
     """
-    Reorder stages by updating sort_order (Admin only)
+    🔄 RBAC-ENABLED: Reorder stages by updating sort_order
+    
+    **Required Permission:** `stage.edit`
     
     Request body example:
     [
@@ -409,9 +444,13 @@ async def reorder_stages(
 
 @router.get("/default/name")
 async def get_default_stage_name(
-    current_user: Dict[str, Any] = Depends(get_current_active_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("stage.view"))
 ):
-    """Get the default stage name for new leads"""
+    """
+    🔄 RBAC-ENABLED: Get the default stage name for new leads
+    
+    **Required Permission:** `stage.view`
+    """
     try:
         from ..models.lead_stage import StageHelper
         
@@ -431,9 +470,13 @@ async def get_default_stage_name(
 
 @router.post("/setup/defaults")
 async def setup_default_stages(
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("stage.create"))
 ):
-    """Setup default stages if none exist (Admin only)"""
+    """
+    🔄 RBAC-ENABLED: Setup default stages if none exist
+    
+    **Required Permission:** `stage.create`
+    """
     try:
         from ..models.lead_stage import StageHelper
         

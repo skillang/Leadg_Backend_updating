@@ -60,7 +60,7 @@ def format_enrollment_response(enrollment_doc: Dict[str, Any]) -> Dict[str, Any]
 @router.post("/", status_code=status.HTTP_201_CREATED)
 async def enroll_lead(
     enrollment_data: BatchEnrollmentCreate,
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("batch.enroll_students"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("batch.update"))
 ):
     """
     Enroll a single lead in a batch
@@ -113,7 +113,7 @@ async def enroll_lead(
 @router.post("/bulk", status_code=status.HTTP_201_CREATED)
 async def bulk_enroll_leads(
     bulk_data: BatchBulkEnrollmentCreate,
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("batch.enroll_students"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("batch.update"))
 ):
     """
     Enroll multiple leads in a batch
@@ -153,7 +153,7 @@ async def bulk_enroll_leads(
 async def remove_enrollment(
     enrollment_id: str,
     reason: Optional[str] = Query(None, description="Reason for removing enrollment"),
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("batch.remove_students"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("batch.update"))
 ):
     """
     Remove a lead from a batch (mark as dropped)
@@ -203,10 +203,12 @@ async def remove_enrollment(
 async def get_batch_students(
     batch_id: str,
     enrollment_status: Optional[EnrollmentStatus] = Query(None, description="Filter by enrollment status"),
-    current_user: Dict[str, Any] = Depends(get_current_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("batch.view"))
 ):
     """
     Get all students enrolled in a batch
+    
+    Required permission: batch.view
     
     By default, returns only active enrollments (not dropped)
     """
@@ -248,10 +250,12 @@ async def get_batch_students(
 async def get_lead_batches(
     lead_id: str,
     enrollment_status: Optional[EnrollmentStatus] = Query(None, description="Filter by enrollment status"),
-    current_user: Dict[str, Any] = Depends(get_current_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("batch.view"))
 ):
     """
     Get all batches a lead is enrolled in
+    
+    Required permission: batch.view
     
     Shows enrollment history with attendance stats
     """
@@ -281,10 +285,12 @@ async def get_lead_batches(
 @router.get("/{enrollment_id}")
 async def get_enrollment(
     enrollment_id: str,
-    current_user: Dict[str, Any] = Depends(get_current_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("batch.view"))
 ):
     """
     Get detailed information about a specific enrollment
+    
+    Required permission: batch.view
     """
     try:
         from ..config.database import get_database
@@ -319,13 +325,14 @@ async def get_enrollment(
 async def update_enrollment(
     enrollment_id: str,
     update_data: BatchEnrollmentUpdate,
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("batch.enroll_students"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("batch.update"))
 ):
     """
     Update enrollment details (status, dropped reason, etc.)
     
-    Required permission: batch.enroll_students
+    Required permission: batch.update
     """
+
     try:
         from ..config.database import get_database
         db = get_database()
