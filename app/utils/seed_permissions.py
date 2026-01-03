@@ -16,20 +16,25 @@ logger = logging.getLogger(__name__)
 
 def get_all_permissions() -> List[Dict[str, Any]]:
     """
-    Returns all 108 permission definitions
-    Organized by 11 categories
+    Returns all 110 permission definitions
+    Organized by 14 categories with subcategories
     
-    Changes from v1 (69 permissions):
-    - Renamed 21 permissions (read → view, create → add)
-    - Removed 25 obsolete permissions
-    - Added 64 new permissions
-    - Reorganized into 11 categories (was 9)
+    Changes from v2 (108 permissions):
+    - Added 'subcategory' field to all permissions
+    - Split Dashboard Reporting into Dashboard and Reporting categories
+    - Added subcategories under Lead Management (lead, lead_group)
+    - Added subcategories under System Configuration (department, lead_category, status, stage, course_level, source)
+    - Added subcategories under Communication (email, whatsapp, call)
+    - Added subcategories under Content Activity (note, timeline, document)
+    - Removed Specialized Modules category
+    - Created separate categories for Facebook Leads, Batch, Notification
+    - Moved Attendance to Content Activity
     """
     
     permissions = []
     
     # ========================================
-    # CATEGORY 1: DASHBOARD & REPORTING (6 permissions)
+    # CATEGORY 1: DASHBOARD (3 permissions)
     # ========================================
     
     dashboard_permissions = [
@@ -37,7 +42,8 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "code": "dashboard.view",
             "name": "View Dashboard",
             "description": "Can view personal dashboard with own stats",
-            "category": "dashboard_reporting",
+            "category": "dashboard",
+            "subcategory": None,
             "resource": "dashboard",
             "action": "view",
             "scope": "own",
@@ -48,7 +54,8 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "code": "dashboard.view_team",
             "name": "View Team Dashboard",
             "description": "Can view team dashboard with team stats",
-            "category": "dashboard_reporting",
+            "category": "dashboard",
+            "subcategory": None,
             "resource": "dashboard",
             "action": "view",
             "scope": "team",
@@ -60,19 +67,28 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "code": "dashboard.view_all",
             "name": "View All Dashboards",
             "description": "Can view organization-wide dashboard and analytics",
-            "category": "dashboard_reporting",
+            "category": "dashboard",
+            "subcategory": None,
             "resource": "dashboard",
             "action": "view",
             "scope": "all",
             "is_system": True,
             "requires_permissions": ["dashboard.view"],
             "metadata": {"ui_group": "Analytics & Reports", "icon": "globe"}
-        },
+        }
+    ]
+    
+    # ========================================
+    # CATEGORY 2: REPORTING (3 permissions)
+    # ========================================
+    
+    reporting_permissions = [
         {
             "code": "report.view",
             "name": "View Own Reports",
             "description": "Can view and generate reports for own data",
-            "category": "dashboard_reporting",
+            "category": "reporting",
+            "subcategory": None,
             "resource": "report",
             "action": "view",
             "scope": "own",
@@ -83,7 +99,8 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "code": "report.view_team",
             "name": "View Team Reports",
             "description": "Can view and generate reports for team data",
-            "category": "dashboard_reporting",
+            "category": "reporting",
+            "subcategory": None,
             "resource": "report",
             "action": "view",
             "scope": "team",
@@ -95,7 +112,8 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "code": "report.view_all",
             "name": "View All Reports",
             "description": "Can view and generate organization-wide reports",
-            "category": "dashboard_reporting",
+            "category": "reporting",
+            "subcategory": None,
             "resource": "report",
             "action": "view",
             "scope": "all",
@@ -106,17 +124,18 @@ def get_all_permissions() -> List[Dict[str, Any]]:
     ]
     
     # ========================================
-    # CATEGORY 2: LEAD MANAGEMENT (17 permissions)
-    # 10 Lead + 7 Lead Group
+    # CATEGORY 3: LEAD MANAGEMENT (17 permissions)
+    # SUBCATEGORIES: lead (10), lead_group (7)
     # ========================================
     
     lead_permissions = [
-        # My Leads (10)
+        # SUBCATEGORY: lead (10 permissions)
         {
             "code": "lead.view",
             "name": "View Own Leads",
             "description": "Can view own assigned leads",
             "category": "lead_management",
+            "subcategory": "lead",
             "resource": "lead",
             "action": "view",
             "scope": "own",
@@ -128,6 +147,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "View Team Leads",
             "description": "Can view team members' leads",
             "category": "lead_management",
+            "subcategory": "lead",
             "resource": "lead",
             "action": "view",
             "scope": "team",
@@ -140,6 +160,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "View All Leads",
             "description": "Can view all leads in the system",
             "category": "lead_management",
+            "subcategory": "lead",
             "resource": "lead",
             "action": "view",
             "scope": "all",
@@ -152,6 +173,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Add Single Lead",
             "description": "Can add individual leads one at a time",
             "category": "lead_management",
+            "subcategory": "lead",
             "resource": "lead",
             "action": "add",
             "scope": "own",
@@ -163,6 +185,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Add Bulk Leads",
             "description": "Can import multiple leads via Excel/CSV bulk upload",
             "category": "lead_management",
+            "subcategory": "lead",
             "resource": "lead",
             "action": "add",
             "scope": "all",
@@ -175,6 +198,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Add Lead from CV",
             "description": "Can create leads by uploading and parsing CV/resume files",
             "category": "lead_management",
+            "subcategory": "lead",
             "resource": "lead",
             "action": "add",
             "scope": "own",
@@ -187,6 +211,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Update Own Leads",
             "description": "Can edit and modify own assigned leads",
             "category": "lead_management",
+            "subcategory": "lead",
             "resource": "lead",
             "action": "update",
             "scope": "own",
@@ -199,6 +224,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Update All Leads",
             "description": "Can edit and modify any lead in the system",
             "category": "lead_management",
+            "subcategory": "lead",
             "resource": "lead",
             "action": "update",
             "scope": "all",
@@ -211,6 +237,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Export Leads",
             "description": "Can export lead data to CSV/Excel files",
             "category": "lead_management",
+            "subcategory": "lead",
             "resource": "lead",
             "action": "export",
             "scope": "all",
@@ -222,6 +249,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Assign Leads",
             "description": "Can assign or reassign leads to other users",
             "category": "lead_management",
+            "subcategory": "lead",
             "resource": "lead",
             "action": "assign",
             "scope": "all",
@@ -230,12 +258,13 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "metadata": {"ui_group": "Lead Operations", "icon": "user-plus"}
         },
         
-        # Lead Groups (7)
+        # SUBCATEGORY: lead_group (7 permissions)
         {
             "code": "lead_group.view",
             "name": "View Own Lead Groups",
             "description": "Can view own created lead groups",
             "category": "lead_management",
+            "subcategory": "lead_group",
             "resource": "lead_group",
             "action": "view",
             "scope": "own",
@@ -247,6 +276,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "View Team Lead Groups",
             "description": "Can view team members' lead groups",
             "category": "lead_management",
+            "subcategory": "lead_group",
             "resource": "lead_group",
             "action": "view",
             "scope": "team",
@@ -259,6 +289,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "View All Lead Groups",
             "description": "Can view all lead groups in the system",
             "category": "lead_management",
+            "subcategory": "lead_group",
             "resource": "lead_group",
             "action": "view",
             "scope": "all",
@@ -271,6 +302,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Create Lead Groups",
             "description": "Can create new lead groups for organizing leads",
             "category": "lead_management",
+            "subcategory": "lead_group",
             "resource": "lead_group",
             "action": "create",
             "scope": "own",
@@ -282,6 +314,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Add Leads to Groups",
             "description": "Can add leads to existing groups",
             "category": "lead_management",
+            "subcategory": "lead_group",
             "resource": "lead_group",
             "action": "add",
             "scope": "own",
@@ -294,6 +327,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Delete Lead Groups",
             "description": "Can delete lead groups",
             "category": "lead_management",
+            "subcategory": "lead_group",
             "resource": "lead_group",
             "action": "delete",
             "scope": "own",
@@ -306,6 +340,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Update Lead Groups",
             "description": "Can modify lead group details and membership",
             "category": "lead_management",
+            "subcategory": "lead_group",
             "resource": "lead_group",
             "action": "update",
             "scope": "own",
@@ -316,7 +351,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
     ]
     
     # ========================================
-    # CATEGORY 3: CONTACT MANAGEMENT (6 permissions)
+    # CATEGORY 4: CONTACT MANAGEMENT (6 permissions)
     # ========================================
     
     contact_permissions = [
@@ -325,6 +360,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "View Own Contacts",
             "description": "Can view contacts for own assigned leads",
             "category": "contact_management",
+            "subcategory": None,
             "resource": "contact",
             "action": "view",
             "scope": "own",
@@ -336,6 +372,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "View All Contacts",
             "description": "Can view all contacts in the system",
             "category": "contact_management",
+            "subcategory": None,
             "resource": "contact",
             "action": "view",
             "scope": "all",
@@ -348,6 +385,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Add Contacts",
             "description": "Can create new contact records",
             "category": "contact_management",
+            "subcategory": None,
             "resource": "contact",
             "action": "add",
             "scope": "own",
@@ -359,6 +397,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Update Own Contacts",
             "description": "Can edit contacts for own assigned leads",
             "category": "contact_management",
+            "subcategory": None,
             "resource": "contact",
             "action": "update",
             "scope": "own",
@@ -371,6 +410,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Update All Contacts",
             "description": "Can edit any contact in the system",
             "category": "contact_management",
+            "subcategory": None,
             "resource": "contact",
             "action": "update",
             "scope": "all",
@@ -383,6 +423,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Delete Contacts",
             "description": "Can delete contact records",
             "category": "contact_management",
+            "subcategory": None,
             "resource": "contact",
             "action": "delete",
             "scope": "all",
@@ -393,7 +434,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
     ]
     
     # ========================================
-    # CATEGORY 4: TASK MANAGEMENT (9 permissions)
+    # CATEGORY 5: TASK MANAGEMENT (9 permissions)
     # ========================================
     
     task_permissions = [
@@ -402,17 +443,19 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "View Own Tasks",
             "description": "Can view own assigned tasks",
             "category": "task_management",
+            "subcategory": None,
             "resource": "task",
             "action": "view",
             "scope": "own",
             "is_system": True,
             "metadata": {"ui_group": "Task Operations", "icon": "check-square"}
         },
-          {
+        {
             "code": "task.view_team",
             "name": "View Team Tasks",
             "description": "Can view team members' tasks",
             "category": "task_management",
+            "subcategory": None,
             "resource": "task",
             "action": "view",
             "scope": "own",
@@ -424,6 +467,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "View All Tasks",
             "description": "Can view all tasks in the system",
             "category": "task_management",
+            "subcategory": None,
             "resource": "task",
             "action": "view",
             "scope": "all",
@@ -436,6 +480,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Add Tasks",
             "description": "Can create new tasks",
             "category": "task_management",
+            "subcategory": None,
             "resource": "task",
             "action": "add",
             "scope": "own",
@@ -447,6 +492,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Update Own Tasks",
             "description": "Can edit own assigned tasks",
             "category": "task_management",
+            "subcategory": None,
             "resource": "task",
             "action": "update",
             "scope": "own",
@@ -459,6 +505,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Update Team Tasks",
             "description": "Can edit team members' tasks",
             "category": "task_management",
+            "subcategory": None,
             "resource": "task",
             "action": "update",
             "scope": "team",
@@ -471,6 +518,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Delete Own Tasks",
             "description": "Can delete own assigned tasks",
             "category": "task_management",
+            "subcategory": None,
             "resource": "task",
             "action": "delete",
             "scope": "own",
@@ -483,6 +531,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Delete Team Tasks",
             "description": "Can delete team members' tasks",
             "category": "task_management",
+            "subcategory": None,
             "resource": "task",
             "action": "delete",
             "scope": "team",
@@ -495,6 +544,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Delete All Tasks",
             "description": "Can delete any task in the system",
             "category": "task_management",
+            "subcategory": None,
             "resource": "task",
             "action": "delete",
             "scope": "all",
@@ -505,7 +555,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
     ]
     
     # ========================================
-    # CATEGORY 5: USER MANAGEMENT (5 permissions)
+    # CATEGORY 6: USER MANAGEMENT (5 permissions)
     # ========================================
     
     user_permissions = [
@@ -514,6 +564,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Create Users",
             "description": "Can create new user accounts",
             "category": "user_management",
+            "subcategory": None,
             "resource": "user",
             "action": "create",
             "scope": "all",
@@ -525,6 +576,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "View Users",
             "description": "Can view user accounts and profiles",
             "category": "user_management",
+            "subcategory": None,
             "resource": "user",
             "action": "view",
             "scope": "all",
@@ -536,6 +588,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Delete Users",
             "description": "Can delete user accounts",
             "category": "user_management",
+            "subcategory": None,
             "resource": "user",
             "action": "delete",
             "scope": "all",
@@ -548,6 +601,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Update Users",
             "description": "Can edit user accounts and profiles",
             "category": "user_management",
+            "subcategory": None,
             "resource": "user",
             "action": "update",
             "scope": "all",
@@ -560,6 +614,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Reset User Passwords",
             "description": "Can reset passwords for other users",
             "category": "user_management",
+            "subcategory": None,
             "resource": "user",
             "action": "reset_password",
             "scope": "all",
@@ -570,7 +625,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
     ]
     
     # ========================================
-    # CATEGORY 6: ROLE & PERMISSION MANAGEMENT (5 permissions)
+    # CATEGORY 7: ROLE & PERMISSION MANAGEMENT (5 permissions)
     # ========================================
     
     role_permissions = [
@@ -579,6 +634,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Create Roles",
             "description": "Can create new custom roles",
             "category": "role_permission_management",
+            "subcategory": None,
             "resource": "role",
             "action": "create",
             "scope": "all",
@@ -590,6 +646,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "View Roles",
             "description": "Can view existing roles and their permissions",
             "category": "role_permission_management",
+            "subcategory": None,
             "resource": "role",
             "action": "read",
             "scope": "all",
@@ -601,6 +658,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Update Roles",
             "description": "Can edit role permissions and settings",
             "category": "role_permission_management",
+            "subcategory": None,
             "resource": "role",
             "action": "update",
             "scope": "all",
@@ -613,6 +671,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Delete Roles",
             "description": "Can delete custom roles",
             "category": "role_permission_management",
+            "subcategory": None,
             "resource": "role",
             "action": "delete",
             "scope": "all",
@@ -625,6 +684,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "View Permissions",
             "description": "Can view all available system permissions",
             "category": "role_permission_management",
+            "subcategory": None,
             "resource": "permission",
             "action": "view",
             "scope": "all",
@@ -634,17 +694,18 @@ def get_all_permissions() -> List[Dict[str, Any]]:
     ]
     
     # ========================================
-    # CATEGORY 7: SYSTEM CONFIGURATION (24 permissions)
-    # 6 modules × 4 actions = 24 total
+    # CATEGORY 8: SYSTEM CONFIGURATION (24 permissions)
+    # SUBCATEGORIES: department (4), lead_category (4), status (4), stage (4), course_level (4), source (4)
     # ========================================
     
     system_config_permissions = [
-        # Department (4)
+        # SUBCATEGORY: department (4 permissions)
         {
             "code": "department.create",
             "name": "Create Departments",
             "description": "Can create new departments",
             "category": "system_configuration",
+            "subcategory": "department",
             "resource": "department",
             "action": "create",
             "scope": "all",
@@ -656,6 +717,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Edit Departments",
             "description": "Can edit existing departments",
             "category": "system_configuration",
+            "subcategory": "department",
             "resource": "department",
             "action": "edit",
             "scope": "all",
@@ -667,6 +729,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "View Departments",
             "description": "Can view department list and details",
             "category": "system_configuration",
+            "subcategory": "department",
             "resource": "department",
             "action": "view",
             "scope": "all",
@@ -678,6 +741,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Delete Departments",
             "description": "Can delete departments",
             "category": "system_configuration",
+            "subcategory": "department",
             "resource": "department",
             "action": "delete",
             "scope": "all",
@@ -685,12 +749,13 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "metadata": {"ui_group": "System Configuration", "icon": "trash", "dangerous": True}
         },
         
-        # Lead Category (4)
+        # SUBCATEGORY: lead_category (4 permissions)
         {
             "code": "lead_category.create",
             "name": "Create Lead Categories",
             "description": "Can create new lead categories",
             "category": "system_configuration",
+            "subcategory": "lead_category",
             "resource": "lead_category",
             "action": "create",
             "scope": "all",
@@ -702,6 +767,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Edit Lead Categories",
             "description": "Can edit existing lead categories",
             "category": "system_configuration",
+            "subcategory": "lead_category",
             "resource": "lead_category",
             "action": "edit",
             "scope": "all",
@@ -713,6 +779,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "View Lead Categories",
             "description": "Can view lead category list and details",
             "category": "system_configuration",
+            "subcategory": "lead_category",
             "resource": "lead_category",
             "action": "view",
             "scope": "all",
@@ -724,6 +791,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Delete Lead Categories",
             "description": "Can delete lead categories",
             "category": "system_configuration",
+            "subcategory": "lead_category",
             "resource": "lead_category",
             "action": "delete",
             "scope": "all",
@@ -731,12 +799,13 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "metadata": {"ui_group": "System Configuration", "icon": "trash", "dangerous": True}
         },
         
-        # Status (4)
+        # SUBCATEGORY: status (4 permissions)
         {
             "code": "status.create",
             "name": "Create Statuses",
             "description": "Can create new lead statuses",
             "category": "system_configuration",
+            "subcategory": "status",
             "resource": "status",
             "action": "create",
             "scope": "all",
@@ -748,6 +817,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Edit Statuses",
             "description": "Can edit existing lead statuses",
             "category": "system_configuration",
+            "subcategory": "status",
             "resource": "status",
             "action": "edit",
             "scope": "all",
@@ -759,6 +829,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "View Statuses",
             "description": "Can view status list and details",
             "category": "system_configuration",
+            "subcategory": "status",
             "resource": "status",
             "action": "view",
             "scope": "all",
@@ -770,6 +841,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Delete Statuses",
             "description": "Can delete lead statuses",
             "category": "system_configuration",
+            "subcategory": "status",
             "resource": "status",
             "action": "delete",
             "scope": "all",
@@ -777,12 +849,13 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "metadata": {"ui_group": "System Configuration", "icon": "trash", "dangerous": True}
         },
         
-        # Stages (4)
+        # SUBCATEGORY: stage (4 permissions)
         {
             "code": "stage.create",
             "name": "Create Stages",
             "description": "Can create new lead stages",
             "category": "system_configuration",
+            "subcategory": "stage",
             "resource": "stage",
             "action": "create",
             "scope": "all",
@@ -794,6 +867,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Edit Stages",
             "description": "Can edit existing lead stages",
             "category": "system_configuration",
+            "subcategory": "stage",
             "resource": "stage",
             "action": "edit",
             "scope": "all",
@@ -805,6 +879,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "View Stages",
             "description": "Can view stage list and details",
             "category": "system_configuration",
+            "subcategory": "stage",
             "resource": "stage",
             "action": "view",
             "scope": "all",
@@ -816,6 +891,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Delete Stages",
             "description": "Can delete lead stages",
             "category": "system_configuration",
+            "subcategory": "stage",
             "resource": "stage",
             "action": "delete",
             "scope": "all",
@@ -823,12 +899,13 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "metadata": {"ui_group": "System Configuration", "icon": "trash", "dangerous": True}
         },
         
-        # Course Level (4)
+        # SUBCATEGORY: course_level (4 permissions)
         {
             "code": "course_level.create",
             "name": "Create Course Levels",
             "description": "Can create new course levels",
             "category": "system_configuration",
+            "subcategory": "course_level",
             "resource": "course_level",
             "action": "create",
             "scope": "all",
@@ -840,6 +917,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Edit Course Levels",
             "description": "Can edit existing course levels",
             "category": "system_configuration",
+            "subcategory": "course_level",
             "resource": "course_level",
             "action": "edit",
             "scope": "all",
@@ -851,6 +929,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "View Course Levels",
             "description": "Can view course level list and details",
             "category": "system_configuration",
+            "subcategory": "course_level",
             "resource": "course_level",
             "action": "view",
             "scope": "all",
@@ -862,6 +941,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Delete Course Levels",
             "description": "Can delete course levels",
             "category": "system_configuration",
+            "subcategory": "course_level",
             "resource": "course_level",
             "action": "delete",
             "scope": "all",
@@ -869,12 +949,13 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "metadata": {"ui_group": "System Configuration", "icon": "trash", "dangerous": True}
         },
         
-        # Lead Source (4)
+        # SUBCATEGORY: source (4 permissions)
         {
             "code": "source.create",
             "name": "Create Lead Sources",
             "description": "Can create new lead sources",
             "category": "system_configuration",
+            "subcategory": "source",
             "resource": "source",
             "action": "create",
             "scope": "all",
@@ -886,6 +967,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Edit Lead Sources",
             "description": "Can edit existing lead sources",
             "category": "system_configuration",
+            "subcategory": "source",
             "resource": "source",
             "action": "edit",
             "scope": "all",
@@ -897,6 +979,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "View Lead Sources",
             "description": "Can view lead source list and details",
             "category": "system_configuration",
+            "subcategory": "source",
             "resource": "source",
             "action": "view",
             "scope": "all",
@@ -908,6 +991,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Delete Lead Sources",
             "description": "Can delete lead sources",
             "category": "system_configuration",
+            "subcategory": "source",
             "resource": "source",
             "action": "delete",
             "scope": "all",
@@ -917,16 +1001,18 @@ def get_all_permissions() -> List[Dict[str, Any]]:
     ]
     
     # ========================================
-    # CATEGORY 8: COMMUNICATION (10 permissions)
+    # CATEGORY 9: COMMUNICATION (11 permissions)
+    # SUBCATEGORIES: email (4), whatsapp (5), call (2)
     # ========================================
     
     communication_permissions = [
-        # Email (4)
+        # SUBCATEGORY: email (4 permissions)
         {
             "code": "email.send_single",
             "name": "Send Single Emails",
             "description": "Can send individual emails to leads/contacts",
             "category": "communication",
+            "subcategory": "email",
             "resource": "email",
             "action": "send_single",
             "scope": "own",
@@ -938,6 +1024,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Send Bulk Emails",
             "description": "Can send bulk email campaigns",
             "category": "communication",
+            "subcategory": "email",
             "resource": "email",
             "action": "send_bulk",
             "scope": "all",
@@ -950,6 +1037,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "View Single Email History",
             "description": "Can view individual email history and logs",
             "category": "communication",
+            "subcategory": "email",
             "resource": "email",
             "action": "single_history",
             "scope": "own",
@@ -961,6 +1049,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "View Bulk Email History",
             "description": "Can view all email campaign history and analytics",
             "category": "communication",
+            "subcategory": "email",
             "resource": "email",
             "action": "bulk_history",
             "scope": "all",
@@ -968,12 +1057,13 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "metadata": {"ui_group": "Communication", "icon": "bar-chart"}
         },
         
-        # WhatsApp (5)
+        # SUBCATEGORY: whatsapp (5 permissions)
         {
             "code": "whatsapp.send_single",
             "name": "Send Single WhatsApp",
             "description": "Can send individual WhatsApp messages",
             "category": "communication",
+            "subcategory": "whatsapp",
             "resource": "whatsapp",
             "action": "send_single",
             "scope": "own",
@@ -985,6 +1075,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Send Bulk WhatsApp",
             "description": "Can send bulk WhatsApp campaigns",
             "category": "communication",
+            "subcategory": "whatsapp",
             "resource": "whatsapp",
             "action": "send_bulk",
             "scope": "all",
@@ -997,17 +1088,19 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "View Single WhatsApp History",
             "description": "Can view individual WhatsApp message history",
             "category": "communication",
+            "subcategory": "whatsapp",
             "resource": "whatsapp",
             "action": "history_single",
             "scope": "own",
             "is_system": True,
             "metadata": {"ui_group": "Communication", "icon": "clock"}
         },
-         {
+        {
             "code": "whatsapp.view_all",
             "name": "View All WhatsApp History",
             "description": "Can view all WhatsApp message history",
             "category": "communication",
+            "subcategory": "whatsapp",
             "resource": "whatsapp",
             "action": "view_all",
             "scope": "own",
@@ -1019,6 +1112,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "View Bulk WhatsApp History",
             "description": "Can view all WhatsApp campaign history and analytics",
             "category": "communication",
+            "subcategory": "whatsapp",
             "resource": "whatsapp",
             "action": "history_bulk",
             "scope": "all",
@@ -1026,12 +1120,13 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "metadata": {"ui_group": "Communication", "icon": "bar-chart"}
         },
         
-        # Call (2)
+        # SUBCATEGORY: call (2 permissions)
         {
             "code": "call.make",
             "name": "Make Calls",
             "description": "Can make calls to leads/contacts via integrated calling",
             "category": "communication",
+            "subcategory": "call",
             "resource": "call",
             "action": "make",
             "scope": "own",
@@ -1043,6 +1138,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "View Call History",
             "description": "Can view call logs and history",
             "category": "communication",
+            "subcategory": "call",
             "resource": "call",
             "action": "history",
             "scope": "own",
@@ -1052,7 +1148,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
     ]
     
     # ========================================
-    # CATEGORY 9: TEAM MANAGEMENT (5 permissions)
+    # CATEGORY 10: TEAM MANAGEMENT (5 permissions)
     # ========================================
     
     team_permissions = [
@@ -1061,6 +1157,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "View Own Team",
             "description": "Can view own team information and members",
             "category": "team_management",
+            "subcategory": None,
             "resource": "team",
             "action": "view",
             "scope": "own",
@@ -1072,6 +1169,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "View All Teams",
             "description": "Can view all teams in the organization",
             "category": "team_management",
+            "subcategory": None,
             "resource": "team",
             "action": "view",
             "scope": "all",
@@ -1084,6 +1182,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Create Teams",
             "description": "Can create new teams",
             "category": "team_management",
+            "subcategory": None,
             "resource": "team",
             "action": "create",
             "scope": "all",
@@ -1095,6 +1194,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Update Teams",
             "description": "Can edit team information, add/remove members, assign team leads",
             "category": "team_management",
+            "subcategory": None,
             "resource": "team",
             "action": "update",
             "scope": "all",
@@ -1107,6 +1207,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Delete Teams",
             "description": "Can delete teams",
             "category": "team_management",
+            "subcategory": None,
             "resource": "team",
             "action": "delete",
             "scope": "all",
@@ -1117,16 +1218,18 @@ def get_all_permissions() -> List[Dict[str, Any]]:
     ]
     
     # ========================================
-    # CATEGORY 10: CONTENT & ACTIVITY (10 permissions)
+    # CATEGORY 11: CONTENT ACTIVITY (14 permissions)
+    # SUBCATEGORIES: note (4), timeline (1), document (5), attendance (4)
     # ========================================
     
     content_permissions = [
-        # Notes (4)
+        # SUBCATEGORY: note (4 permissions)
         {
             "code": "note.view",
             "name": "View Notes",
             "description": "Can view notes on leads",
             "category": "content_activity",
+            "subcategory": "note",
             "resource": "note",
             "action": "view",
             "scope": "own",
@@ -1138,6 +1241,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Add Notes",
             "description": "Can add notes to leads",
             "category": "content_activity",
+            "subcategory": "note",
             "resource": "note",
             "action": "add",
             "scope": "own",
@@ -1149,6 +1253,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Delete Notes",
             "description": "Can delete notes from leads",
             "category": "content_activity",
+            "subcategory": "note",
             "resource": "note",
             "action": "delete",
             "scope": "own",
@@ -1161,6 +1266,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Update Notes",
             "description": "Can edit existing notes",
             "category": "content_activity",
+            "subcategory": "note",
             "resource": "note",
             "action": "update",
             "scope": "own",
@@ -1169,12 +1275,13 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "metadata": {"ui_group": "Content Management", "icon": "edit"}
         },
         
-        # Timeline (1)
+        # SUBCATEGORY: timeline (1 permission)
         {
             "code": "timeline.view",
             "name": "View Activity Timeline",
             "description": "Can view lead activity timeline and history",
             "category": "content_activity",
+            "subcategory": "timeline",
             "resource": "timeline",
             "action": "view",
             "scope": "own",
@@ -1182,12 +1289,13 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "metadata": {"ui_group": "Content Management", "icon": "clock"}
         },
         
-        # Documents (5)
+        # SUBCATEGORY: document (5 permissions)
         {
             "code": "document.view",
             "name": "View Own Documents",
             "description": "Can view documents for own leads",
             "category": "content_activity",
+            "subcategory": "document",
             "resource": "document",
             "action": "view",
             "scope": "own",
@@ -1199,6 +1307,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "View All Documents",
             "description": "Can view all documents in the system",
             "category": "content_activity",
+            "subcategory": "document",
             "resource": "document",
             "action": "view",
             "scope": "all",
@@ -1211,6 +1320,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Add Documents",
             "description": "Can upload documents to leads",
             "category": "content_activity",
+            "subcategory": "document",
             "resource": "document",
             "action": "add",
             "scope": "own",
@@ -1222,6 +1332,7 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Delete Documents",
             "description": "Can delete documents from leads",
             "category": "content_activity",
+            "subcategory": "document",
             "resource": "document",
             "action": "delete",
             "scope": "own",
@@ -1234,26 +1345,22 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "name": "Update Documents",
             "description": "Can update document metadata and details",
             "category": "content_activity",
+            "subcategory": "document",
             "resource": "document",
             "action": "update",
             "scope": "own",
             "is_system": True,
             "requires_permissions": ["document.view"],
             "metadata": {"ui_group": "Content Management", "icon": "edit"}
-        }
-    ]
-    
-    # ========================================
-    # CATEGORY 11: SPECIALIZED MODULES (12 permissions)
-    # ========================================
-    
-    specialized_permissions = [
-        # Attendance (4)
+        },
+        
+        # SUBCATEGORY: attendance (4 permissions - moved from specialized_modules)
         {
             "code": "attendance.view",
             "name": "View Attendance",
             "description": "Can view batch attendance records",
-            "category": "specialized_modules",
+            "category": "content_activity",
+            "subcategory": "attendance",
             "resource": "attendance",
             "action": "view",
             "scope": "own",
@@ -1264,7 +1371,8 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "code": "attendance.add",
             "name": "Mark Attendance",
             "description": "Can mark attendance for batch sessions",
-            "category": "specialized_modules",
+            "category": "content_activity",
+            "subcategory": "attendance",
             "resource": "attendance",
             "action": "add",
             "scope": "own",
@@ -1275,7 +1383,8 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "code": "attendance.delete",
             "name": "Delete Attendance",
             "description": "Can delete attendance records",
-            "category": "specialized_modules",
+            "category": "content_activity",
+            "subcategory": "attendance",
             "resource": "attendance",
             "action": "delete",
             "scope": "own",
@@ -1287,21 +1396,29 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "code": "attendance.update",
             "name": "Update Attendance",
             "description": "Can modify attendance records",
-            "category": "specialized_modules",
+            "category": "content_activity",
+            "subcategory": "attendance",
             "resource": "attendance",
             "action": "update",
             "scope": "own",
             "is_system": True,
             "requires_permissions": ["attendance.view"],
             "metadata": {"ui_group": "Batch Management", "icon": "edit"}
-        },
-        
-        # Facebook Leads (2)
+        }
+    ]
+    
+    # ========================================
+    # CATEGORY 12: FACEBOOK LEADS (2 permissions)
+    # Separated from specialized_modules
+    # ========================================
+    
+    facebook_permissions = [
         {
             "code": "facebook_leads.view",
             "name": "View Facebook Leads",
             "description": "Can view leads imported from Facebook Lead Ads",
-            "category": "specialized_modules",
+            "category": "facebook_leads",
+            "subcategory": None,
             "resource": "facebook_leads",
             "action": "view",
             "scope": "all",
@@ -1312,21 +1429,29 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "code": "facebook_leads.convert",
             "name": "Convert Facebook Leads",
             "description": "Can convert Facebook leads to CRM leads",
-            "category": "specialized_modules",
+            "category": "facebook_leads",
+            "subcategory": None,
             "resource": "facebook_leads",
             "action": "convert",
             "scope": "all",
             "is_system": True,
             "requires_permissions": ["facebook_leads.view", "lead.add_single"],
             "metadata": {"ui_group": "Integrations", "icon": "refresh-cw"}
-        },
-        
-        # Batch (5)
+        }
+    ]
+    
+    # ========================================
+    # CATEGORY 13: BATCH (5 permissions)
+    # Separated from specialized_modules
+    # ========================================
+    
+    batch_permissions = [
         {
             "code": "batch.create",
             "name": "Create Batches",
             "description": "Can create new training batches",
-            "category": "specialized_modules",
+            "category": "batch",
+            "subcategory": None,
             "resource": "batch",
             "action": "create",
             "scope": "all",
@@ -1337,7 +1462,8 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "code": "batch.view",
             "name": "View Batches",
             "description": "Can view batch information and details",
-            "category": "specialized_modules",
+            "category": "batch",
+            "subcategory": None,
             "resource": "batch",
             "action": "view",
             "scope": "all",
@@ -1348,7 +1474,8 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "code": "batch.add",
             "name": "Add Students to Batch",
             "description": "Can enroll students/leads into batches",
-            "category": "specialized_modules",
+            "category": "batch",
+            "subcategory": None,
             "resource": "batch",
             "action": "add",
             "scope": "all",
@@ -1360,7 +1487,8 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "code": "batch.delete",
             "name": "Delete Batches",
             "description": "Can delete training batches",
-            "category": "specialized_modules",
+            "category": "batch",
+            "subcategory": None,
             "resource": "batch",
             "action": "delete",
             "scope": "all",
@@ -1372,21 +1500,29 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "code": "batch.update",
             "name": "Update Batches",
             "description": "Can modify batch information and settings",
-            "category": "specialized_modules",
+            "category": "batch",
+            "subcategory": None,
             "resource": "batch",
             "action": "update",
             "scope": "all",
             "is_system": True,
             "requires_permissions": ["batch.view"],
             "metadata": {"ui_group": "Batch Management", "icon": "edit"}
-        },
-        
-        # Notification (1)
+        }
+    ]
+    
+    # ========================================
+    # CATEGORY 14: NOTIFICATION (1 permission)
+    # Separated from specialized_modules
+    # ========================================
+    
+    notification_permissions = [
         {
             "code": "notification.view",
             "name": "View Notifications",
             "description": "Can view system notifications and alerts",
-            "category": "specialized_modules",
+            "category": "notification",
+            "subcategory": None,
             "resource": "notification",
             "action": "view",
             "scope": "own",
@@ -1399,17 +1535,20 @@ def get_all_permissions() -> List[Dict[str, Any]]:
     # COMBINE ALL PERMISSIONS
     # ========================================
     
-    permissions.extend(dashboard_permissions)          # 6
+    permissions.extend(dashboard_permissions)          # 3
+    permissions.extend(reporting_permissions)          # 3
     permissions.extend(lead_permissions)               # 17
     permissions.extend(contact_permissions)            # 6
-    permissions.extend(task_permissions)               # 8
+    permissions.extend(task_permissions)               # 9
     permissions.extend(user_permissions)               # 5
     permissions.extend(role_permissions)               # 5
     permissions.extend(system_config_permissions)      # 24
-    permissions.extend(communication_permissions)      # 10
+    permissions.extend(communication_permissions)      # 11
     permissions.extend(team_permissions)               # 5
-    permissions.extend(content_permissions)            # 10
-    permissions.extend(specialized_permissions)        # 12
+    permissions.extend(content_permissions)            # 14
+    permissions.extend(facebook_permissions)           # 2
+    permissions.extend(batch_permissions)              # 5
+    permissions.extend(notification_permissions)       # 1
     
     # Add timestamps to all permissions
     now = datetime.utcnow()
@@ -1418,15 +1557,12 @@ def get_all_permissions() -> List[Dict[str, Any]]:
         perm["updated_at"] = now
     
     return permissions
-
-
 # ========================================
 # SEED FUNCTIONS
 # ========================================
-
 async def seed_permissions(mongodb_url: str, database_name: str) -> Dict[str, Any]:
     """
-    Seeds all 108 permissions into MongoDB
+    Seeds all 110 permissions into MongoDB
     
     Args:
         mongodb_url: MongoDB connection URL
@@ -1436,7 +1572,7 @@ async def seed_permissions(mongodb_url: str, database_name: str) -> Dict[str, An
         dict: Seed result with counts
     """
     try:
-        logger.info("🌱 Starting permission seeding (v2 - 108 permissions)...")
+        logger.info("🌱 Starting permission seeding (v3 - 110 permissions with subcategories)...")
         
         # Connect to MongoDB
         client = AsyncIOMotorClient(mongodb_url)
@@ -1446,15 +1582,15 @@ async def seed_permissions(mongodb_url: str, database_name: str) -> Dict[str, An
         permissions = get_all_permissions()
         
         # Verify count
-        if len(permissions) != 108:
-            logger.warning(f"⚠️  Expected 108 permissions, got {len(permissions)}")
+        if len(permissions) != 110:
+            logger.warning(f"⚠️  Expected 110 permissions, got {len(permissions)}")
         
         # Check if permissions already exist
         existing_count = await db.permissions.count_documents({})
         
         if existing_count > 0:
             logger.info(f"ℹ️  Found {existing_count} existing permissions. Skipping seed.")
-            logger.info(f"💡 Run migration script to update from 69 to 108 permissions")
+            logger.info(f"💡 Run migration script to update from 108 to 110 permissions")
             return {
                 "success": True,
                 "message": "Permissions already seeded",
@@ -1467,23 +1603,38 @@ async def seed_permissions(mongodb_url: str, database_name: str) -> Dict[str, An
         result = await db.permissions.insert_many(permissions)
         inserted_count = len(result.inserted_ids)
         
-        # Create unique index on code
+        # Create indexes
         await db.permissions.create_index("code", unique=True)
         await db.permissions.create_index("category")
+        await db.permissions.create_index("subcategory")  # NEW INDEX
         await db.permissions.create_index("resource")
         await db.permissions.create_index("action")
+        await db.permissions.create_index([("category", 1), ("subcategory", 1)])  # COMPOUND INDEX
         
         logger.info(f"✅ Successfully seeded {inserted_count} permissions")
         
         # Log category breakdown
         categories = {}
+        subcategories = {}
+        
         for perm in permissions:
             cat = perm["category"]
+            subcat = perm.get("subcategory")
+            
             categories[cat] = categories.get(cat, 0) + 1
+            
+            if subcat:
+                key = f"{cat}.{subcat}"
+                subcategories[key] = subcategories.get(key, 0) + 1
         
         logger.info("📊 Permission breakdown by category:")
         for cat, count in sorted(categories.items()):
             logger.info(f"   - {cat}: {count} permissions")
+        
+        if subcategories:
+            logger.info("📊 Permission breakdown by subcategory:")
+            for subcat, count in sorted(subcategories.items()):
+                logger.info(f"   - {subcat}: {count} permissions")
         
         return {
             "success": True,
@@ -1491,6 +1642,7 @@ async def seed_permissions(mongodb_url: str, database_name: str) -> Dict[str, An
             "total_permissions": inserted_count,
             "new_permissions": inserted_count,
             "categories": categories,
+            "subcategories": subcategories,
             "skipped": False
         }
         
@@ -1504,10 +1656,9 @@ async def seed_permissions(mongodb_url: str, database_name: str) -> Dict[str, An
     finally:
         client.close()
 
-
 async def verify_permissions(mongodb_url: str, database_name: str) -> Dict[str, Any]:
     """
-    Verifies that all 108 permissions exist in database
+    Verifies that all 110 permissions exist in database
     
     Returns:
         dict: Verification result
@@ -1530,26 +1681,38 @@ async def verify_permissions(mongodb_url: str, database_name: str) -> Dict[str, 
         missing = expected_codes - existing_codes
         extra = existing_codes - expected_codes
         
+        # Verify subcategory structure
+        subcategory_issues = []
+        for perm in existing:
+            if "subcategory" not in perm:
+                subcategory_issues.append(perm.get("code", "unknown"))
+        
         result = {
-            "success": len(missing) == 0,
+            "success": len(missing) == 0 and len(subcategory_issues) == 0,
             "total_expected": len(expected_codes),
             "total_existing": len(existing_codes),
             "missing_count": len(missing),
             "extra_count": len(extra),
+            "subcategory_issues_count": len(subcategory_issues),
             "missing_permissions": sorted(list(missing)),
-            "extra_permissions": sorted(list(extra))
+            "extra_permissions": sorted(list(extra)),
+            "permissions_without_subcategory": subcategory_issues[:10]
         }
         
         if result["success"]:
-            logger.info(f"✅ All {len(expected_codes)} permissions verified")
+            logger.info(f"✅ All {len(expected_codes)} permissions verified with subcategories")
         else:
             logger.warning(f"⚠️  Permission verification failed:")
             logger.warning(f"   Missing: {len(missing)} permissions")
             logger.warning(f"   Extra: {len(extra)} permissions")
+            logger.warning(f"   Missing subcategory field: {len(subcategory_issues)} permissions")
+            
             if missing:
                 logger.warning(f"   Missing list: {sorted(list(missing))[:10]}...")
             if extra:
                 logger.warning(f"   Extra list: {sorted(list(extra))[:10]}...")
+            if subcategory_issues:
+                logger.warning(f"   Without subcategory: {subcategory_issues[:10]}...")
         
         return result
         
@@ -1561,8 +1724,6 @@ async def verify_permissions(mongodb_url: str, database_name: str) -> Dict[str, 
         }
     finally:
         client.close()
-
-
 # ========================================
 # CLI EXECUTION
 # ========================================
@@ -1582,7 +1743,8 @@ async def main():
         return
     
     logger.info(f"📦 Database: {database_name}")
-    logger.info(f"🎯 Target: 108 permissions across 11 categories")
+    logger.info(f"🎯 Target: 110 permissions across 14 categories")
+    logger.info(f"📋 Structure: Categories with subcategories support")
     
     # Seed permissions
     result = await seed_permissions(mongodb_url, database_name)
@@ -1593,13 +1755,15 @@ async def main():
         # Verify
         verification = await verify_permissions(mongodb_url, database_name)
         if verification["success"]:
-            logger.info("✅ All 108 permissions verified")
+            logger.info("✅ All 110 permissions verified with subcategories")
         else:
             logger.warning("⚠️  Verification found issues:")
             if verification.get('missing_permissions'):
                 logger.warning(f"   Missing ({len(verification['missing_permissions'])}): {verification['missing_permissions'][:5]}...")
             if verification.get('extra_permissions'):
                 logger.warning(f"   Extra ({len(verification['extra_permissions'])}): {verification['extra_permissions'][:5]}...")
+            if verification.get('permissions_without_subcategory'):
+                logger.warning(f"   Missing subcategory field ({len(verification['permissions_without_subcategory'])}): {verification['permissions_without_subcategory'][:5]}...")
     else:
         logger.error(f"❌ Permission seeding failed: {result.get('message')}")
 

@@ -28,25 +28,32 @@ class PermissionService:
     
     async def get_all_permissions(self) -> List[Dict[str, Any]]:
         """
-        Get all 69 permissions from database
+        Get all 110 permissions from database
         
         Returns:
-            List of all permission definitions
+            List of all permission definitions with subcategory support
         """
         try:
             logger.info("Fetching all permissions")
             
             db = self._get_db()
             
-            # Get all permissions from database
-            cursor = db.permissions.find({}).sort("category", 1)
+            # Get all permissions from database, sorted by category and subcategory
+            cursor = db.permissions.find({}).sort([
+                ("category", 1),
+                ("subcategory", 1),
+                ("resource", 1)
+            ])
             permissions = await cursor.to_list(None)
             
-            # Convert ObjectId to string
+            # Convert ObjectId to string and ensure subcategory field exists
             for perm in permissions:
                 perm["_id"] = str(perm["_id"])
+                # Ensure subcategory field exists (None for categories without subcategories)
+                if "subcategory" not in perm:
+                    perm["subcategory"] = None
             
-            logger.info(f"Retrieved {len(permissions)} permissions")
+            logger.info(f"Retrieved {len(permissions)} permissions with subcategory support")
             
             return permissions
             
@@ -56,30 +63,47 @@ class PermissionService:
                 status_code=500,
                 detail=f"Failed to fetch permissions: {str(e)}"
             )
-    
-    async def get_permissions_by_category(self, category: str) -> List[Dict[str, Any]]:
+    async def get_permissions_by_category(
+    self, 
+    category: str,
+    subcategory: Optional[str] = None
+) -> List[Dict[str, Any]]:
         """
-        Get permissions filtered by category
+        Get permissions filtered by category and optionally by subcategory
         
         Args:
             category: Permission category (e.g., 'lead_management')
+            subcategory: Optional subcategory filter (e.g., 'lead', 'lead_group')
             
         Returns:
-            List of permissions in the category
+            List of permissions in the category/subcategory
         """
         try:
-            logger.info(f"Fetching permissions for category: {category}")
+            logger.info(f"Fetching permissions for category: {category}" + 
+                    (f", subcategory: {subcategory}" if subcategory else ""))
             
             db = self._get_db()
             
-            cursor = db.permissions.find({"category": category})
+            # Build query
+            query = {"category": category}
+            if subcategory is not None:
+                query["subcategory"] = subcategory
+            
+            cursor = db.permissions.find(query).sort([
+                ("subcategory", 1),
+                ("resource", 1),
+                ("action", 1)
+            ])
             permissions = await cursor.to_list(None)
             
-            # Convert ObjectId to string
+            # Convert ObjectId to string and ensure subcategory field exists
             for perm in permissions:
                 perm["_id"] = str(perm["_id"])
+                if "subcategory" not in perm:
+                    perm["subcategory"] = None
             
-            logger.info(f"Retrieved {len(permissions)} permissions for {category}")
+            logger.info(f"Retrieved {len(permissions)} permissions for {category}" +
+                    (f"/{subcategory}" if subcategory else ""))
             
             return permissions
             
@@ -89,45 +113,70 @@ class PermissionService:
                 status_code=500,
                 detail=f"Failed to fetch permissions: {str(e)}"
             )
-    
+ 
+
     async def get_permission_categories(self) -> List[Dict[str, Any]]:
         """
-        Get all unique permission categories with counts
+        Get all unique permission categories with subcategories and counts
         
         Returns:
-            List of categories with permission counts
+            List of categories with subcategories and permission counts
         """
         try:
-            logger.info("Fetching permission categories")
+            logger.info("Fetching permission categories with subcategories")
             
             db = self._get_db()
             
-            # Aggregate by category
+            # Aggregate by category and subcategory
             pipeline = [
                 {
                     "$group": {
-                        "_id": "$category",
+                        "_id": {
+                            "category": "$category",
+                            "subcategory": "$subcategory"
+                        },
                         "count": {"$sum": 1},
                         "permissions": {"$push": "$code"}
                     }
                 },
-                {"$sort": {"_id": 1}}
+                {"$sort": {"_id.category": 1, "_id.subcategory": 1}}
             ]
             
             cursor = db.permissions.aggregate(pipeline)
-            categories = await cursor.to_list(None)
+            results = await cursor.to_list(None)
             
-            # Format response
-            result = []
-            for cat in categories:
-                result.append({
-                    "category": cat["_id"],
-                    "display_name": cat["_id"].replace("_", " ").title(),
-                    "permission_count": cat["count"],
-                    "permission_codes": cat["permissions"]
-                })
+            # Organize results by category with subcategories
+            category_map = {}
+            for item in results:
+                category = item["_id"]["category"]
+                subcategory = item["_id"]["subcategory"]
+                
+                if category not in category_map:
+                    category_map[category] = {
+                        "category": category,
+                        "display_name": category.replace("_", " ").title(),
+                        "total_permissions": 0,
+                        "subcategories": [],
+                        "has_subcategories": False
+                    }
+                
+                category_map[category]["total_permissions"] += item["count"]
+                
+                if subcategory:
+                    category_map[category]["has_subcategories"] = True
+                    category_map[category]["subcategories"].append({
+                        "name": subcategory,
+                        "display_name": subcategory.replace("_", " ").title(),
+                        "permission_count": item["count"],
+                        "permission_codes": item["permissions"]
+                    })
+                else:
+                    # Category without subcategories
+                    category_map[category]["permission_codes"] = item["permissions"]
             
-            logger.info(f"Retrieved {len(result)} categories")
+            result = list(category_map.values())
+            
+            logger.info(f"Retrieved {len(result)} categories with subcategory structure")
             
             return result
             
@@ -137,7 +186,7 @@ class PermissionService:
                 status_code=500,
                 detail=f"Failed to fetch categories: {str(e)}"
             )
-    
+
     async def get_permission_by_code(self, permission_code: str) -> Optional[Dict[str, Any]]:
         """
         Get a specific permission by its code
@@ -373,42 +422,75 @@ class PermissionService:
     
     async def get_permission_matrix(self) -> Dict[str, Any]:
         """
-        Get permission matrix for UI display (Strapi-style)
+        Get permission matrix for UI display (Strapi-style) with subcategory support
         
         Returns:
-            Structured permission matrix by category
+            Structured permission matrix by category → subcategory → permissions
         """
         try:
-            logger.info("Building permission matrix")
+            logger.info("Building permission matrix with subcategory support")
             
-            # Get all permissions grouped by category
+            # Get all permissions grouped by category and subcategory
             all_permissions = await self.get_all_permissions()
             
-            # Group by category
-            matrix = {}
+            # Group by category first
+            category_map = {}
             for perm in all_permissions:
                 category = perm["category"]
-                if category not in matrix:
-                    matrix[category] = {
+                subcategory = perm.get("subcategory")
+                
+                if category not in category_map:
+                    category_map[category] = {
                         "display_name": category.replace("_", " ").title(),
-                        "permissions": []
+                        "with_subcategory": {},
+                        "without_subcategory": []
                     }
                 
-                matrix[category]["permissions"].append({
-                    "code": perm["code"],
-                    "name": perm["name"],
-                    "description": perm.get("description", ""),
-                    "scope": perm.get("scope", "own"),
-                    "resource": perm.get("resource", ""),
-                    "action": perm.get("action", "")
-                })
+                if subcategory:
+                    if subcategory not in category_map[category]["with_subcategory"]:
+                        category_map[category]["with_subcategory"][subcategory] = {
+                            "display_name": subcategory.replace("_", " ").title(),
+                            "permissions": []
+                        }
+                    category_map[category]["with_subcategory"][subcategory]["permissions"].append({
+                        "code": perm["code"],
+                        "name": perm["name"],
+                        "description": perm.get("description", ""),
+                        "scope": perm.get("scope", "own"),
+                        "resource": perm.get("resource", ""),
+                        "action": perm.get("action", "")
+                    })
+                else:
+                    category_map[category]["without_subcategory"].append({
+                        "code": perm["code"],
+                        "name": perm["name"],
+                        "description": perm.get("description", ""),
+                        "scope": perm.get("scope", "own"),
+                        "resource": perm.get("resource", ""),
+                        "action": perm.get("action", "")
+                    })
             
-            logger.info(f"Built permission matrix with {len(matrix)} categories")
+            # Format for frontend
+            formatted_matrix = {}
+            for category, data in category_map.items():
+                formatted_matrix[category] = {
+                    "display_name": data["display_name"],
+                    "has_subcategories": len(data["with_subcategory"]) > 0
+                }
+                
+                if data["with_subcategory"]:
+                    formatted_matrix[category]["subcategories"] = data["with_subcategory"]
+                
+                if data["without_subcategory"]:
+                    formatted_matrix[category]["permissions"] = data["without_subcategory"]
+            
+            logger.info(f"Built permission matrix with {len(formatted_matrix)} categories")
             
             return {
                 "success": True,
-                "categories": matrix,
-                "total_permissions": len(all_permissions)
+                "categories": formatted_matrix,
+                "total_permissions": len(all_permissions),
+                "total_categories": len(formatted_matrix)
             }
             
         except Exception as e:
@@ -417,7 +499,6 @@ class PermissionService:
                 status_code=500,
                 detail=f"Failed to build permission matrix: {str(e)}"
             )
-    
     # ============================================================================
     # 🔄 OLD METHODS - Kept for backward compatibility with 2-permission system
     # ============================================================================

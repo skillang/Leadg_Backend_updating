@@ -36,32 +36,35 @@ router = APIRouter()
 
 @router.get("/list")
 async def list_all_permissions(
-    category: Optional[str] = Query(None, description="Filter by category (lead_management, user_management, etc.)"),
+    category: Optional[str] = Query(None, description="Filter by category (dashboard, reporting, lead_management, etc.)"),
+    subcategory: Optional[str] = Query(None, description="Filter by subcategory (lead, lead_group, email, whatsapp, etc.)"),
     resource: Optional[str] = Query(None, description="Filter by resource (lead, contact, task, etc.)"),
     action: Optional[str] = Query(None, description="Filter by action (add, view, update, delete, etc.)"),
     current_user: Dict[str, Any] = Depends(get_user_with_permission("permission.view"))
 ):
     """
-    🔄 RBAC-ENABLED: Get list of all 108 system permissions
+    🔄 RBAC-ENABLED: Get list of all 110 system permissions
     
     **Required Permission:** `permission.view`
     
     Returns all available permissions that can be assigned to roles.
-    Can be filtered by category, resource, or action.
+    Can be filtered by category, subcategory, resource, or action.
     
-    **108 Permissions across 12 categories:**
-    - Lead Management (14 permissions)
-    - Contact Management (7 permissions)
+    **110 Permissions across 14 categories:**
+    - Dashboard (3 permissions)
+    - Reporting (3 permissions)
+    - Lead Management (17 permissions) - subcategories: lead, lead_group
+    - Contact Management (6 permissions)
     - Task Management (9 permissions)
-    - Note Management (6 permissions)
-    - Document Management (7 permissions)
-    - User Management (8 permissions)
-    - Role & Permission Management (7 permissions)
-    - Team Management (6 permissions)
-    - Dashboard & Reporting (9 permissions)
-    - System Settings (7 permissions)
-    - Email & Communication (6 permissions)
-    - WhatsApp Management (22 permissions)
+    - User Management (5 permissions)
+    - Role & Permission Management (5 permissions)
+    - System Configuration (24 permissions) - subcategories: department, lead_category, status, stage, course_level, source
+    - Communication (11 permissions) - subcategories: email, whatsapp, call
+    - Team Management (5 permissions)
+    - Content Activity (14 permissions) - subcategories: note, timeline, document, attendance
+    - Facebook Leads (2 permissions)
+    - Batch (5 permissions)
+    - Notification (1 permission)
     """
     try:
         db = get_database()
@@ -70,6 +73,8 @@ async def list_all_permissions(
         query = {"is_system": True}
         if category:
             query["category"] = category
+        if subcategory:
+            query["subcategory"] = subcategory
         if resource:
             query["resource"] = resource
         if action:
@@ -78,7 +83,7 @@ async def list_all_permissions(
         logger.info(f"Listing permissions with filters: {query}")
         
         # Get permissions
-        permissions = await db.permissions.find(query).sort("category", 1).to_list(None)
+        permissions = await db.permissions.find(query).sort([("category", 1), ("subcategory", 1)]).to_list(None)
         
         # Format response
         formatted_permissions = []
@@ -89,6 +94,7 @@ async def list_all_permissions(
                 "name": perm["name"],
                 "description": perm.get("description", ""),
                 "category": perm.get("category", "other"),
+                "subcategory": perm.get("subcategory"),  # NEW FIELD
                 "resource": perm.get("resource", ""),
                 "action": perm.get("action", ""),
                 "scope": perm.get("scope", "own"),
@@ -107,6 +113,7 @@ async def list_all_permissions(
             "filtered_count": len(formatted_permissions),
             "filters_applied": {
                 "category": category,
+                "subcategory": subcategory,  # NEW FILTER
                 "resource": resource,
                 "action": action
             }
@@ -120,113 +127,143 @@ async def list_all_permissions(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to list permissions: {str(e)}"
         )
-
-
 @router.get("/categories")
 async def list_permission_categories(
     current_user: Dict[str, Any] = Depends(get_user_with_permission("permission.view"))
 ):
     """
-    🔄 RBAC-ENABLED: Get all permission categories with counts
+    🔄 RBAC-ENABLED: Get all permission categories with subcategories and counts
     
     **Required Permission:** `permission.view`
     
-    Returns 12 permission categories with metadata (108-permission system).
+    Returns 14 permission categories with their subcategories (110-permission system).
+    Shows hierarchical structure: category → subcategories → permission counts
     """
     try:
         db = get_database()
         
-        # Aggregate permissions by category
+        # Aggregate permissions by category and subcategory
         pipeline = [
             {"$match": {"is_system": True}},
             {
                 "$group": {
-                    "_id": "$category",
+                    "_id": {
+                        "category": "$category",
+                        "subcategory": "$subcategory"
+                    },
                     "permission_count": {"$sum": 1},
                     "permissions": {"$push": "$code"}
                 }
             },
-            {"$sort": {"_id": 1}}
+            {"$sort": {"_id.category": 1, "_id.subcategory": 1}}
         ]
         
         results = await db.permissions.aggregate(pipeline).to_list(None)
         
-        # Category display info (108-permission system)
+        # Category display info (110-permission system with 14 categories)
         category_info = {
+            "dashboard": {
+                "display_name": "Dashboard",
+                "description": "Personal and team dashboard views"
+            },
+            "reporting": {
+                "display_name": "Reporting",
+                "description": "Report generation and analytics"
+            },
             "lead_management": {
                 "display_name": "Lead Management",
-                "description": "Permissions for managing leads and lead lifecycle (14 permissions)"
+                "description": "Manage leads and lead groups",
+                "subcategories": ["lead", "lead_group"]
             },
             "contact_management": {
                 "display_name": "Contact Management",
-                "description": "Permissions for managing contacts and relationships (7 permissions)"
+                "description": "Manage contacts and relationships"
             },
             "task_management": {
                 "display_name": "Task Management",
-                "description": "Permissions for creating and managing tasks (9 permissions)"
-            },
-            "note_management": {
-                "display_name": "Note Management",
-                "description": "Permissions for creating and managing notes (6 permissions)"
-            },
-            "document_management": {
-                "display_name": "Document Management",
-                "description": "Permissions for managing documents and files (7 permissions)"
+                "description": "Create and manage tasks"
             },
             "user_management": {
                 "display_name": "User Management",
-                "description": "Permissions for managing users and accounts (8 permissions)"
+                "description": "Manage users and accounts"
             },
             "role_permission_management": {
                 "display_name": "Role & Permission Management",
-                "description": "Permissions for managing roles and permissions (7 permissions)"
+                "description": "Manage roles and permissions"
+            },
+            "system_configuration": {
+                "display_name": "System Configuration",
+                "description": "System settings and configuration",
+                "subcategories": ["department", "lead_category", "status", "stage", "course_level", "source"]
+            },
+            "communication": {
+                "display_name": "Communication",
+                "description": "Email, WhatsApp, and call management",
+                "subcategories": ["email", "whatsapp", "call"]
             },
             "team_management": {
                 "display_name": "Team Management",
-                "description": "Permissions for managing team hierarchy and structure (6 permissions)"
+                "description": "Manage team hierarchy and structure"
             },
-            "dashboard_reporting": {
-                "display_name": "Dashboard & Reporting",
-                "description": "Permissions for viewing dashboards and reports (9 permissions)"
+            "content_activity": {
+                "display_name": "Content & Activity",
+                "description": "Notes, documents, timeline, and attendance",
+                "subcategories": ["note", "timeline", "document", "attendance"]
             },
-            "system_settings": {
-                "display_name": "System Settings",
-                "description": "Permissions for system configuration and settings (7 permissions)"
+            "facebook_leads": {
+                "display_name": "Facebook Leads",
+                "description": "Facebook lead integration and conversion"
             },
-            "email_communication": {
-                "display_name": "Email & Communication",
-                "description": "Permissions for email and communication features (6 permissions)"
+            "batch": {
+                "display_name": "Batch Management",
+                "description": "Training batch management"
             },
-            "whatsapp_management": {
-                "display_name": "WhatsApp Management",
-                "description": "Permissions for WhatsApp messaging and integration (22 permissions)"
+            "notification": {
+                "display_name": "Notifications",
+                "description": "System notifications and alerts"
             }
         }
         
-        # Format categories
-        categories = []
+        # Organize results by category with subcategories
+        category_map = {}
         for result in results:
-            category_name = result["_id"]
-            info = category_info.get(category_name, {
-                "display_name": category_name.replace("_", " ").title(),
-                "description": f"Permissions for {category_name}"
-            })
+            category_name = result["_id"]["category"]
+            subcategory_name = result["_id"]["subcategory"]
             
-            categories.append({
-                "name": category_name,
-                "display_name": info["display_name"],
-                "description": info["description"],
-                "permission_count": result["permission_count"],
-                "sample_permissions": result["permissions"][:3]
-            })
+            if category_name not in category_map:
+                category_map[category_name] = {
+                    "name": category_name,
+                    "display_name": category_info.get(category_name, {}).get("display_name", category_name.replace("_", " ").title()),
+                    "description": category_info.get(category_name, {}).get("description", f"Permissions for {category_name}"),
+                    "total_permissions": 0,
+                    "subcategories": [],
+                    "has_subcategories": False
+                }
+            
+            category_map[category_name]["total_permissions"] += result["permission_count"]
+            
+            if subcategory_name:
+                category_map[category_name]["has_subcategories"] = True
+                category_map[category_name]["subcategories"].append({
+                    "name": subcategory_name,
+                    "display_name": subcategory_name.replace("_", " ").title(),
+                    "permission_count": result["permission_count"],
+                    "sample_permissions": result["permissions"][:3]
+                })
+            else:
+                # Category without subcategories - store permissions at category level
+                category_map[category_name]["sample_permissions"] = result["permissions"][:3]
         
-        logger.info(f"✅ Retrieved {len(categories)} permission categories")
+        categories = list(category_map.values())
+        
+        logger.info(f"✅ Retrieved {len(categories)} permission categories with subcategories")
         
         return {
             "success": True,
             "categories": categories,
             "total_categories": len(categories),
-            "total_permissions": 108
+            "total_permissions": 110,
+            "categories_with_subcategories": sum(1 for c in categories if c["has_subcategories"])
         }
         
     except HTTPException:
@@ -238,7 +275,6 @@ async def list_permission_categories(
             detail=f"Failed to list categories: {str(e)}"
         )
 
-
 @router.get("/matrix")
 async def get_permission_matrix(
     current_user: Dict[str, Any] = Depends(get_user_with_permission("permission.view"))
@@ -248,16 +284,25 @@ async def get_permission_matrix(
     
     **Required Permission:** `permission.view`
     
-    Returns permissions organized by category → action groups.
+    Returns permissions organized by category → subcategory → action groups.
     Frontend-ready format with no transformation needed.
     
-    **108 Permissions organized by 12 categories.**
+    **110 Permissions organized by 14 categories with subcategory support.**
+    
+    Structure:
+    - Categories without subcategories: category → action_groups
+    - Categories with subcategories: category → subcategories → action_groups
     """
     try:
         db = get_database()
         
         # Get all permissions
-        permissions = await db.permissions.find({"is_system": True}).to_list(None)
+        permissions = await db.permissions.find({"is_system": True}).sort([
+            ("category", 1),
+            ("subcategory", 1),
+            ("resource", 1),
+            ("action", 1)
+        ]).to_list(None)
         
         # Build structured matrix for frontend
         categorized_data = []
@@ -266,44 +311,92 @@ async def get_permission_matrix(
         category_map = {}
         for perm in permissions:
             category = perm.get("category", "other")
+            subcategory = perm.get("subcategory")
+            
             if category not in category_map:
-                category_map[category] = []
-            category_map[category].append(perm)
+                category_map[category] = {
+                    "with_subcategory": {},
+                    "without_subcategory": []
+                }
+            
+            if subcategory:
+                if subcategory not in category_map[category]["with_subcategory"]:
+                    category_map[category]["with_subcategory"][subcategory] = []
+                category_map[category]["with_subcategory"][subcategory].append(perm)
+            else:
+                category_map[category]["without_subcategory"].append(perm)
         
-        # Structure each category with action groups
-        for category_key, category_perms in category_map.items():
+        # Structure each category with subcategories and action groups
+        for category_key, category_data in sorted(category_map.items()):
             # Create category display name
             category_display = category_key.replace("_", " ").title()
             
-            # Group permissions by resource + action
-            action_map = {}
-            for perm in category_perms:
-                resource = perm.get("resource", "general")
-                action = perm.get("action", "unknown")
-                key = f"{resource}:{action}"
-                
-                if key not in action_map:
-                    action_map[key] = {
-                        "action": action,
-                        "action_display": action.replace("_", " ").title(),
-                        "resource": resource,
-                        "permissions": []
-                    }
-                
-                action_map[key]["permissions"].append({
-                    "code": perm["code"],
-                    "name": perm["name"],
-                    "description": perm.get("description", ""),
-                    "scope": perm.get("scope", "own")
-                })
-            
-            categorized_data.append({
+            category_obj = {
                 "category": category_key,
                 "category_display": category_display,
-                "action_groups": list(action_map.values())
-            })
+                "action_groups": []
+            }
+            
+            # Check if category has subcategories
+            has_subcategories = len(category_data["with_subcategory"]) > 0
+            
+            if has_subcategories:
+                # Category with subcategories - group by subcategory first
+                for subcategory_key, subcategory_perms in sorted(category_data["with_subcategory"].items()):
+                    # Group permissions by resource + action within subcategory
+                    action_map = {}
+                    for perm in subcategory_perms:
+                        resource = perm.get("resource", "general")
+                        action = perm.get("action", "unknown")
+                        key = f"{resource}:{action}"
+                        
+                        if key not in action_map:
+                            action_map[key] = {
+                                "action": action,
+                                "action_display": action.replace("_", " ").title(),
+                                "resource": resource,
+                                "subcategory": subcategory_key,  # NEW FIELD
+                                "subcategory_display": subcategory_key.replace("_", " ").title(),  # NEW FIELD
+                                "permissions": []
+                            }
+                        
+                        action_map[key]["permissions"].append({
+                            "code": perm["code"],
+                            "name": perm["name"],
+                            "description": perm.get("description", ""),
+                            "scope": perm.get("scope", "own")
+                        })
+                    
+                    category_obj["action_groups"].extend(list(action_map.values()))
+            else:
+                # Category without subcategories - direct action groups
+                action_map = {}
+                for perm in category_data["without_subcategory"]:
+                    resource = perm.get("resource", "general")
+                    action = perm.get("action", "unknown")
+                    key = f"{resource}:{action}"
+                    
+                    if key not in action_map:
+                        action_map[key] = {
+                            "action": action,
+                            "action_display": action.replace("_", " ").title(),
+                            "resource": resource,
+                            "subcategory": None,  # Explicitly None for categories without subcategories
+                            "permissions": []
+                        }
+                    
+                    action_map[key]["permissions"].append({
+                        "code": perm["code"],
+                        "name": perm["name"],
+                        "description": perm.get("description", ""),
+                        "scope": perm.get("scope", "own")
+                    })
+                
+                category_obj["action_groups"] = list(action_map.values())
+            
+            categorized_data.append(category_obj)
         
-        logger.info(f"✅ Generated structured permission matrix with {len(permissions)} permissions")
+        logger.info(f"✅ Generated structured permission matrix with {len(permissions)} permissions across {len(categorized_data)} categories")
         
         return {
             "success": True,
@@ -320,7 +413,6 @@ async def get_permission_matrix(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to generate matrix: {str(e)}"
         )
-
 
 # ============================================================================
 # RBAC-ENABLED USER PERMISSION MANAGEMENT

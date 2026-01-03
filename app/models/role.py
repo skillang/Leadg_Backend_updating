@@ -19,19 +19,22 @@ from bson import ObjectId
 # ========================================
 # ENUMS
 # ========================================
-
 class PermissionCategory(str, Enum):
-    """Categories for organizing permissions"""
+    """Categories for organizing permissions (14 categories with subcategory support)"""
+    DASHBOARD = "dashboard"
+    REPORTING = "reporting"
     LEAD_MANAGEMENT = "lead_management"
     CONTACT_MANAGEMENT = "contact_management"
     TASK_MANAGEMENT = "task_management"
     USER_MANAGEMENT = "user_management"
     ROLE_PERMISSION_MANAGEMENT = "role_permission_management"
-    DASHBOARD_REPORTING = "dashboard_reporting"
-    SYSTEM_SETTINGS = "system_settings"
-    EMAIL_COMMUNICATION = "email_communication"
+    SYSTEM_CONFIGURATION = "system_configuration"
+    COMMUNICATION = "communication"
     TEAM_MANAGEMENT = "team_management"
-
+    CONTENT_ACTIVITY = "content_activity"
+    FACEBOOK_LEADS = "facebook_leads"
+    BATCH = "batch"
+    NOTIFICATION = "notification"
 
 class PermissionScope(str, Enum):
     """Scope levels for permissions"""
@@ -61,14 +64,15 @@ class RoleAssignmentStatus(str, Enum):
 class Permission(BaseModel):
     """
     Individual permission definition
-    69 permissions total across 9 categories
+    110 permissions total across 14 categories with subcategory support
     """
-    code: str = Field(..., description="Unique permission code (e.g., 'lead.create')")
+    code: str = Field(..., description="Unique permission code (e.g., 'lead.view')")
     name: str = Field(..., description="Display name")
     description: str = Field(..., description="Detailed description")
     category: PermissionCategory = Field(..., description="Permission category")
+    subcategory: Optional[str] = Field(None, description="Optional subcategory (e.g., 'lead', 'lead_group', 'email')")
     resource: str = Field(..., description="Resource type (lead, contact, task, etc.)")
-    action: str = Field(..., description="Action (create, read, update, delete, etc.)")
+    action: str = Field(..., description="Action (view, add, update, delete, etc.)")
     scope: PermissionScope = Field(default=PermissionScope.OWN, description="Permission scope")
     is_system: bool = Field(default=True, description="System permission (cannot be deleted)")
     requires_permissions: List[str] = Field(default_factory=list, description="Dependencies")
@@ -79,16 +83,44 @@ class Permission(BaseModel):
         use_enum_values = True
         json_schema_extra = {
             "example": {
-                "code": "lead.create",
-                "name": "Create Leads",
-                "description": "Ability to create new leads",
+                "code": "lead.view",
+                "name": "View Own Leads",
+                "description": "Can view own assigned leads",
                 "category": "lead_management",
+                "subcategory": "lead",
                 "resource": "lead",
-                "action": "create",
+                "action": "view",
                 "scope": "own",
                 "is_system": True,
                 "requires_permissions": [],
                 "metadata": {"ui_group": "Lead Operations"}
+            }
+        }
+
+
+class PermissionSubcategory(BaseModel):
+    """
+    Subcategory grouping within a permission category
+    Used in permission matrix UI
+    """
+    name: str = Field(..., description="Subcategory identifier (e.g., 'lead', 'email')")
+    display_name: str = Field(..., description="Human-readable name (e.g., 'Lead', 'Email')")
+    permissions: List[Dict[str, Any]] = Field(default_factory=list, description="Permissions in this subcategory")
+    permission_count: int = Field(default=0, description="Number of permissions in subcategory")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "name": "lead",
+                "display_name": "Lead",
+                "permission_count": 10,
+                "permissions": [
+                    {
+                        "code": "lead.view",
+                        "name": "View Own Leads",
+                        "scope": "own"
+                    }
+                ]
             }
         }
 
@@ -508,13 +540,127 @@ class RoleCloneRequest(BaseModel):
 # ========================================
 
 class PermissionMatrixCategory(BaseModel):
-    """Category in permission matrix"""
-    category: str
-    display_name: str
-    permissions: List[Dict[str, Any]]
-
+    """
+    Category in permission matrix with subcategory support
+    
+    Structure:
+    - Categories WITHOUT subcategories: Direct list of permissions
+    - Categories WITH subcategories: List of subcategory objects
+    """
+    category: str = Field(..., description="Category identifier")
+    category_display: str = Field(..., description="Category display name")
+    has_subcategories: bool = Field(default=False, description="Whether this category has subcategories")
+    
+    # For categories WITHOUT subcategories
+    permissions: Optional[List[Dict[str, Any]]] = Field(None, description="Direct permissions (if no subcategories)")
+    
+    # For categories WITH subcategories
+    action_groups: Optional[List[Dict[str, Any]]] = Field(None, description="Action groups with subcategory info")
+    
+    class Config:
+        json_schema_extra = {
+            "examples": [
+                # Category WITHOUT subcategories (e.g., Dashboard)
+                {
+                    "category": "dashboard",
+                    "category_display": "Dashboard",
+                    "has_subcategories": False,
+                    "action_groups": [
+                        {
+                            "action": "view",
+                            "action_display": "View",
+                            "resource": "dashboard",
+                            "subcategory": None,
+                            "permissions": [
+                                {"code": "dashboard.view", "name": "View Dashboard", "scope": "own"}
+                            ]
+                        }
+                    ]
+                },
+                # Category WITH subcategories (e.g., Lead Management)
+                {
+                    "category": "lead_management",
+                    "category_display": "Lead Management",
+                    "has_subcategories": True,
+                    "action_groups": [
+                        {
+                            "action": "view",
+                            "action_display": "View",
+                            "resource": "lead",
+                            "subcategory": "lead",
+                            "subcategory_display": "Lead",
+                            "permissions": [
+                                {"code": "lead.view", "name": "View Own Leads", "scope": "own"}
+                            ]
+                        },
+                        {
+                            "action": "view",
+                            "action_display": "View",
+                            "resource": "lead_group",
+                            "subcategory": "lead_group",
+                            "subcategory_display": "Lead Group",
+                            "permissions": [
+                                {"code": "lead_group.view", "name": "View Own Lead Groups", "scope": "own"}
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
 
 class PermissionMatrixResponse(BaseModel):
+    """
+    Full permission matrix for UI with subcategory support
+    
+    Returns 110 permissions organized by 14 categories
+    Some categories have subcategories, some don't
+    """
+    success: bool = True
+    categories: List[PermissionMatrixCategory] = Field(default_factory=list)
+    total_permissions: int = Field(default=110, description="Total permissions in system")
+    total_categories: int = Field(default=14, description="Total categories")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "success": True,
+                "categories": [
+                    {
+                        "category": "dashboard",
+                        "category_display": "Dashboard",
+                        "has_subcategories": False,
+                        "action_groups": [
+                            {
+                                "action": "view",
+                                "resource": "dashboard",
+                                "subcategory": None,
+                                "permissions": [
+                                    {"code": "dashboard.view", "name": "View Dashboard", "scope": "own"}
+                                ]
+                            }
+                        ]
+                    },
+                    {
+                        "category": "lead_management",
+                        "category_display": "Lead Management",
+                        "has_subcategories": True,
+                        "action_groups": [
+                            {
+                                "action": "view",
+                                "resource": "lead",
+                                "subcategory": "lead",
+                                "subcategory_display": "Lead",
+                                "permissions": [
+                                    {"code": "lead.view", "name": "View Own Leads", "scope": "own"}
+                                ]
+                            }
+                        ]
+                    }
+                ],
+                "total_permissions": 110,
+                "total_categories": 14
+            }
+        }
     """Full permission matrix for UI"""
     success: bool = True
     categories: List[PermissionMatrixCategory]
