@@ -290,8 +290,8 @@ async def get_permission_matrix(
     **110 Permissions organized by 14 categories with subcategory support.**
     
     Structure:
-    - Categories without subcategories: category → action_groups
-    - Categories with subcategories: category → subcategories → action_groups
+    - Categories WITHOUT subcategories: category → action_groups
+    - Categories WITH subcategories: category → subcategories → action_groups
     """
     try:
         db = get_database()
@@ -326,24 +326,24 @@ async def get_permission_matrix(
             else:
                 category_map[category]["without_subcategory"].append(perm)
         
-        # Structure each category with subcategories and action groups
+        # Structure each category with proper nesting
         for category_key, category_data in sorted(category_map.items()):
-            # Create category display name
             category_display = category_key.replace("_", " ").title()
             
             category_obj = {
                 "category": category_key,
-                "category_display": category_display,
-                "action_groups": []
+                "category_display": category_display
             }
             
             # Check if category has subcategories
             has_subcategories = len(category_data["with_subcategory"]) > 0
             
             if has_subcategories:
-                # Category with subcategories - group by subcategory first
+                # NESTED STRUCTURE: category → subcategories → action_groups
+                category_obj["subcategories"] = []
+                
                 for subcategory_key, subcategory_perms in sorted(category_data["with_subcategory"].items()):
-                    # Group permissions by resource + action within subcategory
+                    # Group permissions by action within subcategory
                     action_map = {}
                     for perm in subcategory_perms:
                         resource = perm.get("resource", "general")
@@ -355,8 +355,6 @@ async def get_permission_matrix(
                                 "action": action,
                                 "action_display": action.replace("_", " ").title(),
                                 "resource": resource,
-                                "subcategory": subcategory_key,  # NEW FIELD
-                                "subcategory_display": subcategory_key.replace("_", " ").title(),  # NEW FIELD
                                 "permissions": []
                             }
                         
@@ -367,9 +365,14 @@ async def get_permission_matrix(
                             "scope": perm.get("scope", "own")
                         })
                     
-                    category_obj["action_groups"].extend(list(action_map.values()))
+                    # Add subcategory with its action groups
+                    category_obj["subcategories"].append({
+                        "subcategory": subcategory_key,
+                        "subcategory_display": subcategory_key.replace("_", " ").title(),
+                        "action_groups": list(action_map.values())
+                    })
             else:
-                # Category without subcategories - direct action groups
+                # FLAT STRUCTURE: category → action_groups (no subcategories)
                 action_map = {}
                 for perm in category_data["without_subcategory"]:
                     resource = perm.get("resource", "general")
@@ -381,7 +384,6 @@ async def get_permission_matrix(
                             "action": action,
                             "action_display": action.replace("_", " ").title(),
                             "resource": resource,
-                            "subcategory": None,  # Explicitly None for categories without subcategories
                             "permissions": []
                         }
                     
