@@ -159,7 +159,7 @@ class TeamService:
                 "team_lead_id": team.get("team_lead_id"),
                 "team_lead_email": team.get("team_lead_email"),
                 "team_lead_name": team.get("team_lead_name"),
-                "member_ids": team.get("member_ids", []),
+                "member_ids": [str(mid) for mid in team.get("member_ids", [])],
                 "member_count": team.get("member_count", 0),
                 "is_active": team.get("is_active", True),
                 "created_at": team.get("created_at"),

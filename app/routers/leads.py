@@ -91,7 +91,7 @@ def convert_objectid_to_str(obj):
 
 
 DEFAULT_NEW_LEAD_STATUS = "Initial"
-async def build_lead_query_with_rbac(current_user: Dict, db) -> Dict:
+async def build_lead_query_with_rbac(current_user: Dict, db, visibility: Optional[str] = None  ) -> Dict:
     """
     🔄 UPDATED: Build MongoDB query based on user's RBAC permissions (SIMPLIFIED - NO HIERARCHY)
     
@@ -104,6 +104,52 @@ async def build_lead_query_with_rbac(current_user: Dict, db) -> Dict:
     
     # Check permissions in order of scope (broadest first)
     has_read_all = await rbac_service.check_permission(current_user, "lead.read_all")
+    has_read_team = await rbac_service.check_permission(current_user, "lead.view_team")
+    has_read_own = await rbac_service.check_permission(current_user, "lead.view")
+
+    if visibility:
+        if visibility == "all":
+            # User requested ALL leads - check permission
+            if not has_read_all:
+                raise HTTPException(
+                    status_code=403,
+                    detail="You don't have permission to view all leads. Required: lead.read_all"
+                )
+            logger.info(f"✅ {user_email} viewing ALL leads (visibility=all)")
+            return {}  # No filter - all leads
+        
+        elif visibility == "team":
+            # User requested TEAM leads - check permission
+            if not has_read_team:
+                raise HTTPException(
+                    status_code=403,
+                    detail="You don't have permission to view team leads. Required: lead.view_team"
+                )
+            logger.info(f"✅ {user_email} viewing TEAM leads (visibility=team)")
+            team_members = await get_user_team_members(current_user, db)
+            return {
+                "$or": [
+                    {"assigned_to": user_email},
+                    {"co_assignees": user_email},
+                    {"assigned_to": {"$in": team_members}}
+                ]
+            }
+        
+        elif visibility == "own":
+            # User requested OWN leads - always allowed if they have any read permission
+            if not (has_read_own or has_read_team or has_read_all):
+                raise HTTPException(
+                    status_code=403,
+                    detail="You don't have permission to view leads"
+                )
+            logger.info(f"✅ {user_email} viewing OWN leads (visibility=own)")
+            return {
+                "$or": [
+                    {"assigned_to": user_email},
+                    {"co_assignees": user_email}
+                ]
+            }
+        
     if has_read_all:
         return {}  # No restrictions - can see all leads
     
@@ -1064,6 +1110,7 @@ async def get_my_leads(
     updated_to: Optional[str] = Query(None),      
     last_contacted_from: Optional[str] = Query(None), 
     last_contacted_to: Optional[str] = Query(None),   
+    visibility: Optional[str] = Query(None, regex="^(own|team|all)$"),
     current_user: Dict[str, Any] = Depends(get_current_active_user)
 ):
     """
@@ -1098,7 +1145,8 @@ async def get_my_leads(
         # - Team managers with leads.read_team: See team members' leads
         # - Admins with leads.read_all: See ALL leads
         # - Super admins: Always see ALL leads
-        base_user_query = await build_lead_query_with_rbac(current_user, db)
+        base_user_query = await build_lead_query_with_rbac(current_user, db, visibility)
+
         
         logger.info(f"📋 /my-leads called by {current_user.get('email')} - RBAC query applied")
         
@@ -1240,7 +1288,7 @@ async def filter_leads(
         db = get_database()
         
         # 🆕 Build base query using RBAC
-        query = await build_lead_query_with_rbac(current_user, db)
+        query = await build_lead_query_with_rbac(current_user, db, None)
         
         # Handle stage filter
         if filter_request.stage:
@@ -1377,6 +1425,10 @@ async def filter_leads(
 @router.get("/stats", response_model=LeadStatsResponse)
 @convert_dates_to_ist()
 async def get_lead_stats(
+    visibility: str = Query(
+        "own",
+        description="Data visibility: 'own' (your leads), 'team' (your team's leads), 'org' (all leads)"
+    ),
     include_multi_assignment_stats: bool = Query(True),
     current_user: Dict[str, Any] = Depends(get_user_with_permission("dashboard.view"))
 ):
@@ -1384,18 +1436,110 @@ async def get_lead_stats(
     🔄 RBAC-ENABLED: Get lead statistics for dashboard
     
     **Required Permission:** 
-    - `dashboard.view` - View personal dashboard
-    - `dashboard.view_team` - View team dashboard
-    - `dashboard.view_all` - View organization dashboard
+    - `dashboard.view` - View personal dashboard (own stats)
+    - `dashboard.view_team` - View team dashboard (team stats)
+    - `dashboard.view_all` - View organization dashboard (all stats)
     
-    Automatically shows data based on permission level
+    **Visibility Options:**
+    - `own` - Show only your assigned leads statistics
+    - `team` - Show your team's leads statistics (requires dashboard.view_team)
+    - `org` - Show all organizational leads (requires dashboard.view_all)
+    
+    Statistics automatically filter based on visibility level and permissions.
     """
     try:
         db = get_database()
-         # 🆕 Build base query using RBAC
-        base_query = await build_lead_query_with_rbac(current_user, db)
         
-        # Get total leads
+        # Extract user details
+        user_role = current_user.get("role", "user")
+        user_email = current_user.get("email", "")
+        is_super_admin = current_user.get("is_super_admin", False)
+        
+        # 🆕 VALIDATE VISIBILITY AGAINST PERMISSIONS
+        if visibility not in ["own", "team", "org"]:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid visibility. Must be 'own', 'team', or 'org'"
+            )
+        
+        # Check if user has required permissions for requested visibility
+        has_view_all = await rbac_service.check_permission(current_user, "dashboard.view_all")
+        has_view_team = await rbac_service.check_permission(current_user, "dashboard.view_team")
+        
+        # Permission validation
+        if visibility == "org" and not has_view_all and not is_super_admin:
+            raise HTTPException(
+                status_code=403,
+                detail="You need 'dashboard.view_all' permission to view organizational statistics"
+            )
+        
+        if visibility == "team" and not has_view_team and not has_view_all and not is_super_admin:
+            raise HTTPException(
+                status_code=403,
+                detail="You need 'dashboard.view_team' permission to view team statistics"
+            )
+        
+        # 🆕 BUILD BASE QUERY BASED ON VISIBILITY
+        # IMPORTANT: Visibility takes precedence - even super admins respect visibility setting
+        base_query = {}
+        
+        if visibility == "own":
+            # Show only own leads - ALWAYS, even for super admin
+            logger.info(f"📊 Stats visibility: OWN (user's leads only) - User: {user_email}")
+            base_query = {
+                "$or": [
+                    {"assigned_to": user_email},
+                    {"co_assignees": user_email}
+                ]
+            }
+            
+        elif visibility == "team":
+            # Show team's leads
+            logger.info(f"📊 Stats visibility: TEAM")
+            team_id = current_user.get("team_id")
+            
+            if not team_id:
+                # No team assigned, fallback to own leads
+                logger.warning(f"⚠️ User {user_email} requested team stats but has no team_id - showing own leads")
+                base_query = {
+                    "$or": [
+                        {"assigned_to": user_email},
+                        {"co_assignees": user_email}
+                    ]
+                }
+            else:
+                # Get all team member emails
+                team_members = await db.users.find(
+                    {"team_id": team_id, "is_active": True},
+                    {"email": 1}
+                ).to_list(None)
+                
+                team_emails = [member["email"] for member in team_members]
+                logger.info(f"📋 Team has {len(team_emails)} members")
+                
+                base_query = {
+                    "$or": [
+                        {"assigned_to": {"$in": team_emails}},
+                        {"co_assignees": {"$in": team_emails}}
+                    ]
+                }
+                
+        elif visibility == "org":
+            # Show ALL leads in organization (requires permission)
+            logger.info(f"📊 Stats visibility: ORG (all leads)")
+            base_query = {}
+            
+        else:
+            # Fallback - should never reach here due to validation
+            logger.warning(f"⚠️ Unexpected visibility value: {visibility}, defaulting to own")
+            base_query = {
+                "$or": [
+                    {"assigned_to": user_email},
+                    {"co_assignees": user_email}
+                ]
+            }
+        
+        # Get total leads with visibility filter
         total_leads = await db.leads.count_documents(base_query)
         
         # Get status breakdown
@@ -1423,11 +1567,25 @@ async def get_lead_stats(
         counseled_count = status_breakdown.get("counselled", 0)
         conversion_rate = round((counseled_count / total_leads * 100), 1) if total_leads > 0 else 0.0
         
-        # Calculate my_leads and unassigned_leads
-        if user_role != "admin":
+        # 🆕 Calculate my_leads and unassigned_leads based on visibility
+        if visibility == "own":
+            # For 'own' visibility, my_leads = total_leads
             my_leads = total_leads
-            unassigned_leads = 0
-        else:
+            unassigned_leads = 0  # Not relevant for personal view
+            
+        elif visibility == "team":
+            # For 'team' visibility, show user's own leads count
+            my_leads_count = await db.leads.count_documents({
+                "$or": [
+                    {"assigned_to": user_email},
+                    {"co_assignees": user_email}
+                ]
+            })
+            my_leads = my_leads_count
+            unassigned_leads = 0  # Not relevant for team view
+            
+        else:  # visibility == "org"
+            # For 'org' visibility, show user's leads + unassigned
             if include_multi_assignment_stats:
                 my_leads_count = await db.leads.count_documents({
                     "$or": [
@@ -1453,59 +1611,53 @@ async def get_lead_stats(
             "stage_breakdown": stage_breakdown
         }
         
-        # Add assignment stats for admins
-        if user_role == "admin" and include_multi_assignment_stats:
-            # Get workload distribution with enhanced user details
+        # Add assignment stats for org visibility
+        if visibility == "org" and include_multi_assignment_stats:
+            # Get multi-assigned leads count
+            multi_assigned_count = await db.leads.count_documents({
+                "co_assignees": {"$exists": True, "$ne": []}
+            })
+            
+            # Get workload distribution
             workload_pipeline = [
                 {"$match": {"assigned_to": {"$ne": None}}},
-                {"$group": {"_id": "$assigned_to", "total_leads": {"$sum": 1}}},
-                {"$sort": {"total_leads": -1}}
+                {
+                    "$group": {
+                        "_id": "$assigned_to",
+                        "assigned_count": {"$sum": 1}
+                    }
+                },
+                {"$sort": {"assigned_count": -1}}
             ]
             workload_result = await db.leads.aggregate(workload_pipeline).to_list(None)
             
-            # Enhanced workload distribution array
+            # Enhance workload with user details
             enhanced_workload = []
-            
             for item in workload_result:
-                user_email = item["_id"]
-                total_leads = item["total_leads"]
-                
-                # Get user details
-                user = await db.users.find_one({"email": user_email})
-                user_name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip() if user else user_email.split('@')[0]
-                
-                # Get DNP count for this user from stage breakdown
-                dnp_count = await db.leads.count_documents({
-                    "assigned_to": user_email,
-                    "stage": "dnp"
-                })
-                
-                # Get Counselled count for this user from stage breakdown  
-                counselled_count = await db.leads.count_documents({
-                    "assigned_to": user_email,
-                    "stage": "counselled"
-                })
-                
-                enhanced_workload.append({
-                    "name": user_name,
-                    "email": user_email,
-                    "total_leads": total_leads,
-                    "dnp_count": dnp_count,
-                    "counselled_count": counselled_count
-                })
-            
-            multi_assigned_count = await db.leads.count_documents({"is_multi_assigned": True})
+                user = await db.users.find_one(
+                    {"email": item["_id"]},
+                    {"first_name": 1, "last_name": 1, "role_name": 1, "team_name": 1}
+                )
+                if user:
+                    enhanced_workload.append({
+                        "email": item["_id"],
+                        "name": f"{user.get('first_name', '')} {user.get('last_name', '')}".strip(),
+                        "role": user.get("role_name", "user"),
+                        "team": user.get("team_name"),
+                        "assigned_count": item["assigned_count"]
+                    })
             
             # Calculate balance score
             if workload_result:
-                counts = [item["total_leads"] for item in workload_result]
+                counts = [item["assigned_count"] for item in workload_result]
                 avg_leads = sum(counts) / len(counts)
-                variance = sum((x - avg_leads) ** 2 for x in counts) / len(counts)
-                balance_score = max(0, 100 - (variance / avg_leads * 10)) if avg_leads > 0 else 100
+                max_deviation = max(abs(count - avg_leads) for count in counts)
+                balance_score = 100 - (max_deviation / avg_leads * 100 if avg_leads > 0 else 0)
             else:
                 avg_leads = 0
                 balance_score = 100
             
+            # Add assignment_stats to response
             response_data["assignment_stats"] = {
                 "multi_assigned_leads": multi_assigned_count,
                 "workload_distribution": enhanced_workload,
@@ -1513,10 +1665,16 @@ async def get_lead_stats(
                 "assignment_balance_score": round(balance_score, 1)
             }
         
+        logger.info(f"✅ Stats generated: {total_leads} leads (visibility: {visibility})")
+        
         return LeadStatsResponse(**response_data)
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Get lead stats error: {e}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve lead statistics"
@@ -1539,7 +1697,7 @@ async def get_lead(
         db = get_database()
         
         # 🆕 Build query with RBAC
-        base_query = await build_lead_query_with_rbac(current_user, db)
+        base_query = await build_lead_query_with_rbac(current_user, db, None)
         base_query["lead_id"] = lead_id
         
         lead = await db.leads.find_one(base_query)
@@ -2775,7 +2933,7 @@ async def get_lead_call_stats(
         db = get_database()
         
         # 🆕 Build query with RBAC
-        base_query = await build_lead_query_with_rbac(current_user, db)
+        base_query = await build_lead_query_with_rbac(current_user, db, None)
         base_query["lead_id"] = lead_id
         
         lead = await db.leads.find_one(base_query)

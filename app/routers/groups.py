@@ -28,6 +28,129 @@ rbac_service = RBACService()
 # HELPER FUNCTIONS
 # =====================================
 
+async def build_group_query_with_rbac(
+    current_user: Dict,
+    visibility: Optional[str] = None
+) -> Dict:
+    """
+    🔄 UPDATED: Build MongoDB query for groups based on RBAC permissions + visibility
+    
+    Permission hierarchy:
+    - lead_group.view_all (or group.view_all): See ALL groups in system
+    - lead_group.view_team (or group.view_team): See team members' groups
+    - lead_group.view (or group.view): See only own created groups (default)
+    
+    Visibility parameter:
+    - "own": Force show only own groups
+    - "team": Force show team groups (requires lead_group.view_team permission)
+    - "all": Force show all groups (requires lead_group.view_all permission)
+    - None: Auto-detect based on highest permission
+    """
+    user_id = str(current_user.get("_id"))
+    user_email = current_user.get("email")
+    team_id = current_user.get("team_id")
+    
+    # Check what permissions user has (support both naming conventions)
+    has_view_all = (
+        await rbac_service.check_permission(current_user, "lead_group.view_all") or
+        await rbac_service.check_permission(current_user, "group.view_all")
+    )
+    has_view_team = (
+        await rbac_service.check_permission(current_user, "lead_group.view_team") or
+        await rbac_service.check_permission(current_user, "group.view_team")
+    )
+    has_view = (
+        await rbac_service.check_permission(current_user, "lead_group.view") or
+        await rbac_service.check_permission(current_user, "group.view")
+    )
+    
+    # 🆕 Handle explicit visibility parameter
+    if visibility:
+        if visibility == "all":
+            # User requested ALL groups - check permission
+            if not has_view_all:
+                raise HTTPException(
+                    status_code=403,
+                    detail="You don't have permission to view all groups. Required: lead_group.view_all"
+                )
+            logger.info(f"✅ {user_email} viewing ALL groups (visibility=all)")
+            return {}  # No filter - all groups
+        
+        elif visibility == "team":
+            # User requested TEAM groups - check permission
+            if not has_view_team:
+                raise HTTPException(
+                    status_code=403,
+                    detail="You don't have permission to view team groups. Required: lead_group.view_team"
+                )
+            logger.info(f"✅ {user_email} viewing TEAM groups (visibility=team)")
+            
+            # Get team members from same team
+            if not team_id:
+                logger.warning(f"⚠️ User {user_email} has view_team but no team_id - showing own groups only")
+                return {"created_by": user_id}
+            
+            # Get all team member IDs
+            db = get_database()
+            team_members = await db.users.find(
+                {"team_id": team_id, "is_active": True},
+                {"_id": 1}
+            ).to_list(None)
+            
+            team_member_ids = [str(member["_id"]) for member in team_members]
+            
+            logger.info(f"📋 Team members ({len(team_member_ids)}): {team_member_ids}")
+            
+            return {
+                "$or": [
+                    {"created_by": user_id},  # Own groups
+                    {"created_by": {"$in": team_member_ids}}  # Team members' groups
+                ]
+            }
+        
+        elif visibility == "own":
+            # User requested OWN groups - always allowed if they have any view permission
+            if not (has_view or has_view_team or has_view_all):
+                raise HTTPException(
+                    status_code=403,
+                    detail="You don't have permission to view groups"
+                )
+            logger.info(f"✅ {user_email} viewing OWN groups (visibility=own)")
+            return {"created_by": user_id}
+    
+    # 🔄 Auto-detect based on highest permission (default behavior)
+    if has_view_all:
+        logger.info(f"✅ {user_email} auto-viewing ALL groups (has lead_group.view_all)")
+        return {}
+    
+    if has_view_team:
+        logger.info(f"✅ {user_email} auto-viewing TEAM groups (has lead_group.view_team)")
+        
+        # Get team members from same team
+        if not team_id:
+            logger.warning(f"⚠️ User {user_email} has view_team but no team_id - showing own groups only")
+            return {"created_by": user_id}
+        
+        # Get all team member IDs
+        db = get_database()
+        team_members = await db.users.find(
+            {"team_id": team_id, "is_active": True},
+            {"_id": 1}
+        ).to_list(None)
+        
+        team_member_ids = [str(member["_id"]) for member in team_members]
+        
+        return {
+            "$or": [
+                {"created_by": user_id},  # Own groups
+                {"created_by": {"$in": team_member_ids}}  # Team members' groups
+            ]
+        }
+    
+    # Default: own groups only
+    logger.info(f"✅ {user_email} auto-viewing OWN groups (default)")
+    return {"created_by": user_id}
+
 async def generate_group_id(db) -> str:
     """Generate unique group ID like GRP-001, GRP-002, etc."""
     try:
@@ -186,6 +309,7 @@ async def get_groups(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(20, ge=1, le=100, description="Items per page"),
     search: Optional[str] = Query(None, description="Search by group name"),
+    visibility: Optional[str] = Query(None, regex="^(own|all)$", description="Filter by visibility: 'own' or 'all'"),  # 🆕 NEW
     current_user: Dict[str, Any] = Depends(get_user_with_permission("group.view"))
 ):
     """
@@ -201,12 +325,19 @@ async def get_groups(
     """
     try:
         db = get_database()
-        
+
         # Build match query
-        match_query = {}
+        match_query = await build_group_query_with_rbac(current_user, visibility)
         
         # Check if user has view_all permission
         has_view_all = await rbac_service.check_permission(current_user, "group.view_all")
+        user_id = str(current_user.get("_id"))
+        
+        if not has_view_all and group["created_by"] != user_id:
+            raise HTTPException(
+                status_code=403,
+                detail="You don't have permission to view this group"
+            )
         
         if not has_view_all:
             # Regular users can only see their own groups

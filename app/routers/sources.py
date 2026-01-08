@@ -25,7 +25,7 @@ router = APIRouter(tags=["sources"])
 async def get_all_sources(
     include_lead_count: bool = Query(False, description="Include lead count for each source"),
     active_only: bool = Query(True, description="Only return active sources"),
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("source.view"))
+    current_user: Dict[str, Any] = Depends(get_current_active_user)
 ):
     """
     🔄 RBAC-ENABLED: Get all sources
@@ -60,38 +60,6 @@ async def get_all_sources(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get sources: {str(e)}"
-        )
-
-@router.get("/suggestions", response_model=Dict[str, Any])
-@convert_dates_to_ist()
-async def get_source_suggestions(
-    partial_name: str = Query("", description="Partial name to filter suggestions"),
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("source.view"))
-):
-    """
-    🔄 RBAC-ENABLED: Get pre-defined source suggestions with short forms
-    
-    **Required Permission:** `source.view`
-    
-    Helps users create common sources quickly
-    """
-    try:
-        logger.info(f"Getting source suggestions for admin: {current_user.get('email')}")
-        
-        suggestions = await source_service.get_source_suggestions(partial_name)
-        
-        return {
-            "success": True,
-            "suggestions": suggestions,
-            "count": len(suggestions),
-            "message": "Source suggestions retrieved successfully"
-        }
-        
-    except Exception as e:
-        logger.error(f"Error getting source suggestions: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get source suggestions: {str(e)}"
         )
 
 @router.get("/validate-short-form/{short_form}", response_model=Dict[str, Any])

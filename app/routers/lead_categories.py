@@ -41,7 +41,7 @@ async def create_lead_category(
 @router.get("/", response_model=Dict[str, Any])
 async def get_lead_categories(
     include_inactive: bool = Query(False, description="Include inactive categories"),
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("lead_category.view"))
+    current_user: Dict[str, Any] = Depends(get_current_active_user)
 ):
     """
     🔄 RBAC-ENABLED: Get all lead categories

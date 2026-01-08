@@ -97,25 +97,89 @@ async def check_task_access(task: Dict, user_id: str, current_user: Dict) -> boo
     
     return str(assigned_to) == str(user_id) or str(created_by) == str(user_id)
 
-
-async def build_task_query_with_rbac(current_user: Dict, db, lead_id: Optional[str] = None) -> Dict:
+async def build_task_query_with_rbac(
+    current_user: Dict, 
+    db, 
+    lead_id: Optional[str] = None,
+    visibility: Optional[str] = None  # 🆕 NEW PARAMETER
+) -> Dict:
     """
-    Build MongoDB query for tasks based on user's RBAC permissions
+    🔄 UPDATED: Build MongoDB query for tasks based on RBAC permissions + visibility
     
     Permission hierarchy:
     - task.view_all: See ALL tasks (no restrictions)
     - task.view_team: See team members' tasks
     - task.view: See only assigned tasks (default)
+    
+    Visibility parameter:
+    - "own": Force show only own tasks (assigned/created)
+    - "team": Force show team tasks (requires task.view_team permission)
+    - "all": Force show all tasks (requires task.view_all permission)
+    - None: Auto-detect based on highest permission
     """
     user_id = get_user_id(current_user)
     
-    # Check permissions in order of scope (broadest first)
+    # Check what permissions user has
     has_view_all = await rbac_service.check_permission(current_user, "task.view_all")
-    if has_view_all:
-        base_query = {}
+    has_view_team = await rbac_service.check_permission(current_user, "task.view_team")
+    has_view = await rbac_service.check_permission(current_user, "task.view")
+    
+    # 🆕 Handle explicit visibility parameter
+    if visibility:
+        if visibility == "all":
+            # User requested ALL tasks - check permission
+            if not has_view_all:
+                raise HTTPException(
+                    status_code=403,
+                    detail="You don't have permission to view all tasks. Required: task.view_all"
+                )
+            logger.info(f"✅ {current_user.get('email')} viewing ALL tasks (visibility=all)")
+            base_query = {}
+        
+        elif visibility == "team":
+            # User requested TEAM tasks - check permission
+            if not has_view_team:
+                raise HTTPException(
+                    status_code=403,
+                    detail="You don't have permission to view team tasks. Required: task.view_team"
+                )
+            logger.info(f"✅ {current_user.get('email')} viewing TEAM tasks (visibility=team)")
+            # Get team members
+            team_members = await db.users.find(
+                {"reports_to_email": current_user.get("email")},
+                {"_id": 1}
+            ).to_list(None)
+            team_member_ids = [str(member["_id"]) for member in team_members]
+            
+            base_query = {
+                "$or": [
+                    {"assigned_to": user_id},
+                    {"created_by": user_id},
+                    {"assigned_to": {"$in": team_member_ids}}
+                ]
+            }
+        
+        elif visibility == "own":
+            # User requested OWN tasks - always allowed if they have any view permission
+            if not (has_view or has_view_team or has_view_all):
+                raise HTTPException(
+                    status_code=403,
+                    detail="You don't have permission to view tasks"
+                )
+            logger.info(f"✅ {current_user.get('email')} viewing OWN tasks (visibility=own)")
+            base_query = {
+                "$or": [
+                    {"assigned_to": user_id},
+                    {"created_by": user_id}
+                ]
+            }
     else:
-        has_view_team = await rbac_service.check_permission(current_user, "task.view_team")
-        if has_view_team:
+        # 🔄 Auto-detect based on highest permission (default behavior)
+        if has_view_all:
+            logger.info(f"✅ {current_user.get('email')} auto-viewing ALL tasks (has task.view_all)")
+            base_query = {}
+        elif has_view_team:
+            logger.info(f"✅ {current_user.get('email')} auto-viewing TEAM tasks (has task.view_team)")
             # Get team members
             team_members = await db.users.find(
                 {"reports_to_email": current_user.get("email")},
@@ -132,6 +196,7 @@ async def build_task_query_with_rbac(current_user: Dict, db, lead_id: Optional[s
             }
         else:
             # Default: view - only see assigned or created tasks
+            logger.info(f"✅ {current_user.get('email')} auto-viewing OWN tasks (default)")
             base_query = {
                 "$or": [
                     {"assigned_to": user_id},
@@ -149,7 +214,6 @@ async def build_task_query_with_rbac(current_user: Dict, db, lead_id: Optional[s
             base_query["lead_id"] = lead_id
     
     return base_query
-
 
 # ============================================================================
 # RBAC-ENABLED TASK CRUD OPERATIONS
@@ -223,6 +287,7 @@ async def get_lead_tasks(
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
     status_filter: Optional[str] = Query(None, description="Filter by status: pending, overdue, due_today, completed, all"),
+    visibility: Optional[str] = Query(None, regex="^(own|team|all)$", description="Filter by visibility"),  # 🆕 NEW
     current_user: Dict[str, Any] = Depends(get_user_with_permission("task.view"))
 ):
     """
@@ -254,7 +319,8 @@ async def get_lead_tasks(
             current_user.get("role", "user"), 
             status_filter,
             page,      
-            limit 
+            limit,
+            visibility 
         )
         
         return {
@@ -627,6 +693,7 @@ async def get_my_tasks(
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
     status_filter: Optional[str] = Query(None, description="Filter by status: pending, overdue, due_today, completed, all"),
+    visibility: Optional[str] = Query(None, regex="^(own|team|all)$", description="Filter by visibility: 'own', 'team', or 'all'"),  # 🆕 NEW
     current_user: Dict[str, Any] = Depends(get_user_with_permission("task.view"))
 ):
     """
@@ -640,26 +707,82 @@ async def get_my_tasks(
     - task.view: See only assigned/created tasks (default)
     """
     try:
-        logger.info(f"Getting tasks for user {current_user.get('email')} with RBAC filtering")
+        logger.info(f"Getting tasks for user {current_user.get('email')} with RBAC filtering (visibility={visibility})")
         
         user_id = get_user_id(current_user)
+        db = get_database()
         
-        # Check permissions to determine scope
-        has_view_all = await rbac_service.check_permission(current_user, "task.view_all")
+        # 🆕 Build query using visibility parameter
+        base_query = await build_task_query_with_rbac(current_user, db, lead_id=None, visibility=visibility)
         
-        if has_view_all:
-            # Admin - get ALL tasks
-            result = await task_service.get_all_tasks(status_filter, page, limit)
-            logger.info(f"User {current_user.get('email')} retrieved {result['total']} total tasks (view_all)")
-        else:
-            # Regular user - get only their tasks
-            result = await task_service.get_user_tasks(
-                user_id,
-                status_filter,
-                page,     
-                limit 
-            )
-            logger.info(f"User {current_user.get('email')} retrieved {result['total']} assigned tasks (view)")
+        # Apply status filter if provided
+        if status_filter and status_filter != "all":
+            if status_filter == "overdue":
+                base_query["status"] = "overdue"
+            elif status_filter == "due_today":
+                from datetime import date
+                today = date.today().isoformat()
+                if "$and" in base_query:
+                    base_query["$and"].extend([
+                        {"due_date": today},
+                        {"status": {"$nin": ["completed", "cancelled"]}}
+                    ])
+                else:
+                    base_query["$and"] = [
+                        base_query,
+                        {"due_date": today},
+                        {"status": {"$nin": ["completed", "cancelled"]}}
+                    ]
+            elif status_filter == "pending":
+                base_query["status"] = {"$in": ["pending", "in_progress"]}
+            else:
+                base_query["status"] = status_filter
+        
+        # Get total count
+        total = await db.lead_tasks.count_documents(base_query)
+        
+        # Get paginated tasks
+        skip = (page - 1) * limit
+        tasks_cursor = db.lead_tasks.find(base_query).sort("created_at", -1).skip(skip).limit(limit)
+        tasks = await tasks_cursor.to_list(None)
+        
+        # Populate user names for each task
+        enriched_tasks = []
+        for task in tasks:
+            # Convert ObjectIds to strings
+            task["id"] = str(task["_id"])
+            task["created_by"] = str(task["created_by"]) if task.get("created_by") else ""
+            task["assigned_to"] = str(task["assigned_to"]) if task.get("assigned_to") else None
+            task["lead_object_id"] = str(task["lead_object_id"]) if task.get("lead_object_id") else None
+            
+            # Get creator name
+            if task["created_by"]:
+                creator = await db.users.find_one({"_id": ObjectId(task["created_by"])})
+                if creator:
+                    task["created_by_name"] = f"{creator.get('first_name', '')} {creator.get('last_name', '')}".strip() or creator.get('email', 'Unknown')
+                else:
+                    task["created_by_name"] = "Unknown User"
+            else:
+                task["created_by_name"] = "System"
+            
+            # Get assignee name
+            if task["assigned_to"]:
+                assignee = await db.users.find_one({"_id": ObjectId(task["assigned_to"])})
+                if assignee:
+                    task["assigned_to_name"] = f"{assignee.get('first_name', '')} {assignee.get('last_name', '')}".strip() or assignee.get('email', 'Unknown')
+                else:
+                    task["assigned_to_name"] = "Unknown User"
+            else:
+                task["assigned_to_name"] = None
+            
+            enriched_tasks.append(task)
+        
+        result = {
+            "tasks": enriched_tasks,
+            "total": total
+        }
+        
+        logger.info(f"User {current_user.get('email')} retrieved {total} tasks with visibility={visibility}")
         
         # Calculate stats
         global_stats = await task_service._calculate_global_task_stats(
