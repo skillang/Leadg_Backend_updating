@@ -224,7 +224,7 @@ async def get_user_name_from_id(db, user_id: str) -> str:
 @convert_dates_to_ist()
 async def create_group(
     group_data: GroupCreate,
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("group.add"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("lead_group.create"))
 ):
     """
     🔄 RBAC-ENABLED: Create a new group
@@ -309,8 +309,8 @@ async def get_groups(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(20, ge=1, le=100, description="Items per page"),
     search: Optional[str] = Query(None, description="Search by group name"),
-    visibility: Optional[str] = Query(None, regex="^(own|all)$", description="Filter by visibility: 'own' or 'all'"),  # 🆕 NEW
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("group.view"))
+    visibility: Optional[str] = Query(None, regex="^(own|team|all)$", description="Filter by visibility: 'own', 'team', or 'all'"),  # ✅ CORRECT - allows own|team|all
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("lead_group.view"))
 ):
     """
     🔄 RBAC-ENABLED: Get all groups with pagination and search
@@ -330,7 +330,7 @@ async def get_groups(
         match_query = await build_group_query_with_rbac(current_user, visibility)
         
         # Check if user has view_all permission
-        has_view_all = await rbac_service.check_permission(current_user, "group.view_all")
+        has_view_all = await rbac_service.check_permission(current_user, "lead_group.view_all")
         user_id = str(current_user.get("_id"))
         
         if not has_view_all and group["created_by"] != user_id:
@@ -454,7 +454,7 @@ async def get_groups(
 @convert_dates_to_ist()
 async def get_group_with_leads(
     group_id: str,
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("group.view"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("lead_group.view"))
 ):
     """
     🔄 RBAC-ENABLED: Get group details (without populated lead details)
@@ -479,7 +479,7 @@ async def get_group_with_leads(
             )
         
         # Check if user has view_all permission or owns the group
-        has_view_all = await rbac_service.check_permission(current_user, "group.view_all")
+        has_view_all = await rbac_service.check_permission(current_user, "lead_group.view_all")
         user_id = str(current_user.get("_id"))
         
         if not has_view_all and group["created_by"] != user_id:
@@ -519,7 +519,7 @@ async def get_group_with_leads(
 async def update_group(
     group_id: str,
     group_data: GroupUpdate,
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("group.update"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("lead_group.update"))
 ):
     """
     🔄 RBAC-ENABLED: Update group details
@@ -613,7 +613,7 @@ async def update_group(
 async def add_leads_to_group(
     group_id: str,
     lead_data: GroupAddLeads,
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("group.manage_leads"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("lead_group.add"))
 ):
     """
     🔄 RBAC-ENABLED: Add leads to a group
@@ -643,7 +643,7 @@ async def add_leads_to_group(
             )
         
         # Check if user has view_all permission
-        has_view_all = await rbac_service.check_permission(current_user, "group.view_all")
+        has_view_all = await rbac_service.check_permission(current_user, "lead_group.view_all")
         
         if not has_view_all:
             # Regular users can only add their assigned leads
@@ -733,7 +733,7 @@ async def add_leads_to_group(
 async def remove_leads_from_group(
     group_id: str,
     lead_data: GroupRemoveLeads,
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("group.manage_leads"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("lead_group.add"))
 ):
     """
     🔄 RBAC-ENABLED: Remove leads from a group
@@ -762,7 +762,7 @@ async def remove_leads_from_group(
             )
         
         # Check if user has view_all permission
-        has_view_all = await rbac_service.check_permission(current_user, "group.view_all")
+        has_view_all = await rbac_service.check_permission(current_user, "lead_group.view_all")
         
         if not has_view_all:
             # Regular users can only remove their assigned leads
@@ -840,7 +840,7 @@ async def remove_leads_from_group(
 @router.delete("/{group_id}", response_model=GroupDeleteResponse)
 async def delete_group(
     group_id: str,
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("group.delete"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("lead_group.delete"))
 ):
     """
     🔄 RBAC-ENABLED: Delete a group

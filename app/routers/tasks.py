@@ -746,7 +746,7 @@ async def get_my_tasks(
         tasks_cursor = db.lead_tasks.find(base_query).sort("created_at", -1).skip(skip).limit(limit)
         tasks = await tasks_cursor.to_list(None)
         
-        # Populate user names for each task
+        # Populate user names and lead names for each task
         enriched_tasks = []
         for task in tasks:
             # Convert ObjectIds to strings
@@ -754,6 +754,20 @@ async def get_my_tasks(
             task["created_by"] = str(task["created_by"]) if task.get("created_by") else ""
             task["assigned_to"] = str(task["assigned_to"]) if task.get("assigned_to") else None
             task["lead_object_id"] = str(task["lead_object_id"]) if task.get("lead_object_id") else None
+            
+            # 🆕 Get lead name from leads collection
+            if task.get("lead_object_id"):
+                try:
+                    lead = await db.leads.find_one({"_id": ObjectId(task["lead_object_id"])})
+                    if lead:
+                        task["lead_name"] = lead.get("name", "Unknown Lead")
+                    else:
+                        task["lead_name"] = "Unknown Lead"
+                except Exception as e:
+                    logger.error(f"Error fetching lead for task {task.get('id')}: {e}")
+                    task["lead_name"] = "Unknown Lead"
+            else:
+                task["lead_name"] = "Unknown Lead"
             
             # Get creator name
             if task["created_by"]:
