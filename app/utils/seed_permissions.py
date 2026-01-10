@@ -257,6 +257,32 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "requires_permissions": ["lead.view_all"],
             "metadata": {"ui_group": "Lead Operations", "icon": "user-plus"}
         },
+        {
+            "code": "lead.assign_bulk",
+            "name": "Bulk Assign Leads",
+            "description": "Can bulk assign multiple leads to users at once",
+            "category": "lead_management",
+            "subcategory": "lead",
+            "resource": "lead",
+            "action": "assign_bulk",
+            "scope": "all",
+            "is_system": True,
+            "requires_permissions": ["lead.view_all", "lead.assign"],
+            "metadata": {"ui_group": "Lead Operations", "icon": "users", "dangerous": True}
+        },
+        {
+            "code": "lead.delete_bulk",
+            "name": "Bulk Delete Leads",
+            "description": "Can bulk delete multiple leads at once",
+            "category": "lead_management",
+            "subcategory": "lead",
+            "resource": "lead",
+            "action": "delete_bulk",
+            "scope": "all",
+            "is_system": True,
+            "requires_permissions": ["lead.view_all"],
+            "metadata": {"ui_group": "Lead Operations", "icon": "trash-2", "dangerous": True}
+        },
         
         # SUBCATEGORY: lead_group (7 permissions)
         {
@@ -1353,6 +1379,32 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "requires_permissions": ["document.view"],
             "metadata": {"ui_group": "Content Management", "icon": "edit"}
         },
+        {
+            "code": "document.approve",
+            "name": "Approve Documents",
+            "description": "Can approve or reject document submissions",
+            "category": "content_activity",
+            "subcategory": "document",
+            "resource": "document",
+            "action": "approve",
+            "scope": "all",
+            "is_system": True,
+            "requires_permissions": ["document.view_all"],
+            "metadata": {"ui_group": "Content Management", "icon": "check-circle", "dangerous": True}
+        },
+        {
+            "code": "document.download",
+            "name": "Download Documents",
+            "description": "Can download documents from the system",
+            "category": "content_activity",
+            "subcategory": "document",
+            "resource": "document",
+            "action": "download",
+            "scope": "all",
+            "is_system": True,
+            "requires_permissions": ["document.view"],
+            "metadata": {"ui_group": "Content Management", "icon": "download"}
+        },
         
         # SUBCATEGORY: attendance (4 permissions - moved from specialized_modules)
         {
@@ -1532,12 +1584,56 @@ def get_all_permissions() -> List[Dict[str, Any]]:
     ]
     
     # ========================================
+    # CATEGORY 15: AUTOMATION (3 permissions)
+    # ========================================
+    
+    automation_permissions = [
+        {
+            "code": "automation.create",
+            "name": "Create Automation Campaigns",
+            "description": "Can create new automation campaigns",
+            "category": "automation",
+            "subcategory": None,
+            "resource": "automation",
+            "action": "create",
+            "scope": "all",
+            "is_system": True,
+            "metadata": {"ui_group": "Automation", "icon": "zap"}
+        },
+        {
+            "code": "automation.view",
+            "name": "View Automation Campaigns",
+            "description": "Can view automation campaigns and their status",
+            "category": "automation",
+            "subcategory": None,
+            "resource": "automation",
+            "action": "view",
+            "scope": "all",
+            "is_system": True,
+            "metadata": {"ui_group": "Automation", "icon": "eye"}
+        },
+        {
+            "code": "automation.delete",
+            "name": "Delete Automation Campaigns",
+            "description": "Can delete automation campaigns",
+            "category": "automation",
+            "subcategory": None,
+            "resource": "automation",
+            "action": "delete",
+            "scope": "all",
+            "is_system": True,
+            "requires_permissions": ["automation.view"],
+            "metadata": {"ui_group": "Automation", "icon": "trash", "dangerous": True}
+        }
+    ]
+    
+    # ========================================
     # COMBINE ALL PERMISSIONS
     # ========================================
     
     permissions.extend(dashboard_permissions)          # 3
     permissions.extend(reporting_permissions)          # 3
-    permissions.extend(lead_permissions)               # 17
+    permissions.extend(lead_permissions)               # 19 (was 17, added 2)
     permissions.extend(contact_permissions)            # 6
     permissions.extend(task_permissions)               # 9
     permissions.extend(user_permissions)               # 5
@@ -1545,10 +1641,11 @@ def get_all_permissions() -> List[Dict[str, Any]]:
     permissions.extend(system_config_permissions)      # 24
     permissions.extend(communication_permissions)      # 11
     permissions.extend(team_permissions)               # 5
-    permissions.extend(content_permissions)            # 14
+    permissions.extend(content_permissions)            # 16 (was 14, added 2)
     permissions.extend(facebook_permissions)           # 2
     permissions.extend(batch_permissions)              # 5
     permissions.extend(notification_permissions)       # 1
+    permissions.extend(automation_permissions)         # 3 (NEW)
     
     # Add timestamps to all permissions
     now = datetime.utcnow()
@@ -1582,15 +1679,15 @@ async def seed_permissions(mongodb_url: str, database_name: str) -> Dict[str, An
         permissions = get_all_permissions()
         
         # Verify count
-        if len(permissions) != 110:
-            logger.warning(f"⚠️  Expected 110 permissions, got {len(permissions)}")
+        if len(permissions) != 116:
+            logger.warning(f"⚠️  Expected 116 permissions, got {len(permissions)}")
         
         # Check if permissions already exist
         existing_count = await db.permissions.count_documents({})
         
         if existing_count > 0:
             logger.info(f"ℹ️  Found {existing_count} existing permissions. Skipping seed.")
-            logger.info(f"💡 Run migration script to update from 108 to 110 permissions")
+            logger.info(f"💡 Run migration script to update from 110 to 116 permissions")
             return {
                 "success": True,
                 "message": "Permissions already seeded",
@@ -1743,7 +1840,7 @@ async def main():
         return
     
     logger.info(f"📦 Database: {database_name}")
-    logger.info(f"🎯 Target: 110 permissions across 14 categories")
+    logger.info(f"🎯 Target: 116 permissions across 15 categories")
     logger.info(f"📋 Structure: Categories with subcategories support")
     
     # Seed permissions
@@ -1755,7 +1852,7 @@ async def main():
         # Verify
         verification = await verify_permissions(mongodb_url, database_name)
         if verification["success"]:
-            logger.info("✅ All 110 permissions verified with subcategories")
+            logger.info("✅ All 116 permissions verified with subcategories")
         else:
             logger.warning("⚠️  Verification found issues:")
             if verification.get('missing_permissions'):

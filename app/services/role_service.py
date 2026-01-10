@@ -253,116 +253,129 @@ class RoleService:
     # ========================================
     
     async def update_role(
-        self,
-        role_id: str,
-        role_data: RoleUpdate,
-        updated_by: str
-    ) -> Dict[str, Any]:
-        """
-        Update an existing role
-        
-        Args:
-            role_id: Role ObjectId as string
-            role_data: Updated role data
-            updated_by: Email of admin updating the role
+            self,
+            role_id: str,
+            role_data: RoleUpdate,
+            updated_by: str,
+            is_super_admin: bool = False  # 🆕 NEW PARAMETER
+        ) -> Dict[str, Any]:
+            """
+            Update an existing role
             
-        Returns:
-            dict: Updated role
-        """
-        try:
-            db = self._get_db()
-            
-            # Get existing role
-            role = await db.roles.find_one({"_id": ObjectId(role_id)})
-            if not role:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Role not found"
-                )
-            
-            # Cannot modify system roles
-            if role.get("type") == "system":
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Cannot modify system roles"
-                )
-            
-            # Validate permission codes if provided
-            if role_data.permissions is not None:
-                permission_codes = [p.permission_code for p in role_data.permissions]
-                validation = await rbac_service.validate_permission_codes(permission_codes)
+            Args:
+                role_id: Role ObjectId as string
+                role_data: Updated role data
+                updated_by: Email of admin updating the role
+                is_super_admin: Whether the user is a super admin (can edit system roles)
                 
-                if not validation["all_valid"]:
+            Returns:
+                dict: Updated role
+            """
+            try:
+                db = self._get_db()
+                
+                # Get existing role
+                role = await db.roles.find_one({"_id": ObjectId(role_id)})
+                if not role:
                     raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Invalid permission codes: {validation['invalid']}"
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="Role not found"
                     )
-            
-            # Prepare update document
-            update_doc = {
-                "updated_at": datetime.utcnow(),
-                "updated_by": updated_by
-            }
-            
-            # Only update provided fields
-            if role_data.display_name is not None:
-                update_doc["display_name"] = role_data.display_name
-            if role_data.description is not None:
-                update_doc["description"] = role_data.description
-            if role_data.permissions is not None:
-                update_doc["permissions"] = [p.dict() for p in role_data.permissions]
-            if role_data.can_manage_users is not None:
-                update_doc["can_manage_users"] = role_data.can_manage_users
-            if role_data.can_assign_leads is not None:
-                update_doc["can_assign_leads"] = role_data.can_assign_leads
-            if role_data.can_view_all_data is not None:
-                update_doc["can_view_all_data"] = role_data.can_view_all_data
-            if role_data.can_export_data is not None:
-                update_doc["can_export_data"] = role_data.can_export_data
-            if role_data.max_team_size is not None:
-                update_doc["max_team_size"] = role_data.max_team_size
-            if role_data.is_active is not None:
-                update_doc["is_active"] = role_data.is_active
-            
-            # Update role
-            result = await db.roles.update_one(
-                {"_id": ObjectId(role_id)},
-                {"$set": update_doc}
-            )
-            
-            if result.modified_count == 0:
-                logger.warning(f"No changes made to role {role_id}")
-            
-            # If permissions changed, recompute affected users' permissions
-            if role_data.permissions is not None:
-                await self._recompute_users_with_role(role_id)
-            
-            # Log audit
-            await self._log_audit(
-                action_type="role_updated",
-                entity_id=role_id,
-                entity_name=role.get("name"),
-                performed_by=updated_by,
-                changes={
-                    "before": {k: role.get(k) for k in update_doc.keys() if k in role},
-                    "after": update_doc
+                
+                # ✅ NEW LOGIC: System role editing requires super admin
+                if role.get("type") == "system":
+                    # Check if user is super admin
+                    if not is_super_admin:
+                        raise HTTPException(
+                            status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Only super admins can modify system roles (Super Admin, Admin, User)"
+                        )
+                    
+                    # Additional safety check: Role must be marked as editable
+                    if not role.get("is_editable", False):
+                        raise HTTPException(
+                            status_code=status.HTTP_403_FORBIDDEN,
+                            detail=f"System role '{role.get('display_name')}' is not editable. Contact system administrator."
+                        )
+                    
+                    logger.info(f"🔓 Super admin {updated_by} editing system role '{role.get('name')}'")
+                
+                # Validate permission codes if provided
+                if role_data.permissions is not None:
+                    permission_codes = [p.permission_code for p in role_data.permissions]
+                    validation = await rbac_service.validate_permission_codes(permission_codes)
+                    
+                    if not validation["all_valid"]:
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"Invalid permission codes: {validation['invalid']}"
+                        )
+                
+                # Prepare update document
+                update_doc = {
+                    "updated_at": datetime.utcnow(),
+                    "updated_by": updated_by
                 }
-            )
-            
-            logger.info(f"✅ Updated role '{role.get('name')}' (ID: {role_id}) by {updated_by}")
-            
-            # Get updated role
-            updated_role = await db.roles.find_one({"_id": ObjectId(role_id)})
-            return self._format_role_response(updated_role)
-            
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(f"Error updating role: {e}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=str(e)
-            )
+                
+                # Only update provided fields
+                if role_data.display_name is not None:
+                    update_doc["display_name"] = role_data.display_name
+                if role_data.description is not None:
+                    update_doc["description"] = role_data.description
+                if role_data.permissions is not None:
+                    update_doc["permissions"] = [p.dict() for p in role_data.permissions]
+                if role_data.can_manage_users is not None:
+                    update_doc["can_manage_users"] = role_data.can_manage_users
+                if role_data.can_assign_leads is not None:
+                    update_doc["can_assign_leads"] = role_data.can_assign_leads
+                if role_data.can_view_all_data is not None:
+                    update_doc["can_view_all_data"] = role_data.can_view_all_data
+                if role_data.can_export_data is not None:
+                    update_doc["can_export_data"] = role_data.can_export_data
+                if role_data.max_team_size is not None:
+                    update_doc["max_team_size"] = role_data.max_team_size
+                if role_data.is_active is not None:
+                    update_doc["is_active"] = role_data.is_active
+                
+                # Update role
+                result = await db.roles.update_one(
+                    {"_id": ObjectId(role_id)},
+                    {"$set": update_doc}
+                )
+                
+                if result.modified_count == 0:
+                    logger.warning(f"No changes made to role {role_id}")
+                
+                # If permissions changed, recompute affected users' permissions
+                if role_data.permissions is not None:
+                    await self._recompute_users_with_role(role_id)
+                
+                # Log audit
+                await self._log_audit(
+                    action_type="role_updated",
+                    entity_id=role_id,
+                    entity_name=role.get("name"),
+                    performed_by=updated_by,
+                    changes={
+                        "before": {k: role.get(k) for k in update_doc.keys() if k in role},
+                        "after": update_doc
+                    }
+                )
+                
+                logger.info(f"✅ Updated role '{role.get('name')}' (ID: {role_id}) by {updated_by}")
+                
+                # Get updated role
+                updated_role = await db.roles.find_one({"_id": ObjectId(role_id)})
+                return self._format_role_response(updated_role)
+                
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"Error updating role: {e}")
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=str(e)
+                )
     
     # ========================================
     # DELETE OPERATIONS

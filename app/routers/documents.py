@@ -162,12 +162,12 @@ async def get_admin_document_dashboard(
 async def get_pending_documents_for_approval(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(20, ge=1, le=100, description="Items per page"),
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("document.update"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("document.approve"))
 ):
     """
     🔄 RBAC-ENABLED: Get all pending documents across all leads for admin approval
     
-      **Required Permission:** `document.update`
+    **Required Permission:** `document.approve`
     
     Features:
     - Shows documents with 'Pending' status from all leads
@@ -467,12 +467,12 @@ async def get_my_document_notifications(
 @router.post("/bulk-approve")
 async def bulk_approve_documents(
     bulk_action: dict,
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("document.update"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("document.approve"))
 ):
     """
     🔄 RBAC-ENABLED: Bulk approve multiple documents
     
-      **Required Permission:** `document.update`
+    **Required Permission:** `document.approve`
     
     Features:
     - Approve multiple documents at once
@@ -641,12 +641,12 @@ async def get_document(
 @router.get("/{document_id}/download")
 async def download_document(
     document_id: str,
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("document.view"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("document.download"))
 ):
     """
     🔄 RBAC-ENABLED: Download document file from GridFS
     
-    **Required Permission:** `document.view`
+    **Required Permission:** `document.download`
     
     Users can download from their assigned leads only, admins can download from any lead
     """
@@ -787,12 +787,12 @@ async def delete_document(
 async def approve_document(
     document_id: str,
     approval_data: DocumentApproval,
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("document.update"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("document.approve"))
 ):
     """
     🔄 RBAC-ENABLED: Approve a document
     
-      **Required Permission:** `document.update`
+    **Required Permission:** `document.approve`
     
     Features:
     - Changes status from "Pending" to "Approved"
@@ -819,12 +819,12 @@ async def approve_document(
 async def reject_document(
     document_id: str,
     rejection_data: DocumentApproval,
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("document.update"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("document.approve"))
 ):
     """
     🔄 RBAC-ENABLED: Reject a document
     
-      **Required Permission:** `document.update`
+    **Required Permission:** `document.approve`
     
     Features:
     - Changes status from "Pending" to "Rejected"

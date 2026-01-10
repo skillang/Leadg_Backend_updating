@@ -4,7 +4,7 @@ from typing import Dict, Any, List, Optional
 import logging
 from datetime import datetime
 
-from app.utils.dependencies import get_current_active_user, get_admin_user
+from app.utils.dependencies import get_current_active_user, get_admin_user, get_user_with_permission
 from app.config.database import get_database
 from app.models.automation_campaign import (
     CampaignCreateRequest,
@@ -29,10 +29,12 @@ router = APIRouter()
 @router.post("/create", response_model=CampaignResponse)
 async def create_campaign(
     campaign_data: CampaignCreateRequest,
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("automation.create"))
 ):
     """
-    Create new automation campaign (Admin only)
+    🔄 RBAC-ENABLED: Create new automation campaign
+    
+    **Required Permission:** `automation.create`
     
     - Creates campaign configuration
     - Enrolls matching leads immediately
@@ -84,10 +86,12 @@ async def list_campaigns(
     status: Optional[str] = Query(None, description="Filter by status (active/paused/deleted/completed/cancelled). Shows ALL if not specified."),
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(20, ge=1, le=100, description="Items per page"),
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("automation.view"))
 ):
     """
-    List all campaigns with filtering (Admin only)
+    🔄 RBAC-ENABLED: List all campaigns with filtering
+    
+    **Required Permission:** `automation.view`
     
     ✅ FIXED:
     - Shows ALL campaign statuses by default (active, paused, deleted, completed, cancelled)
@@ -171,9 +175,13 @@ async def list_campaigns(
 @router.get("/{campaign_id}")
 async def get_campaign(
     campaign_id: str,
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("automation.view"))
 ):
-    """Get campaign details by ID (Admin only)"""
+    """
+    🔄 RBAC-ENABLED: Get campaign details by ID
+    
+    **Required Permission:** `automation.view`
+    """
     try:
         campaign = await campaign_service.get_campaign(campaign_id)
         
@@ -205,10 +213,12 @@ async def get_campaign(
 @router.post("/{campaign_id}/pause")
 async def pause_campaign(
     campaign_id: str,
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("automation.create"))
 ):
     """
-    Pause campaign (Admin only)
+    🔄 RBAC-ENABLED: Pause campaign
+    
+    **Required Permission:** `automation.create`
     
     - Stops new enrollments
     - Pending jobs remain but won't execute
@@ -240,10 +250,12 @@ async def pause_campaign(
 @router.post("/{campaign_id}/resume")
 async def resume_campaign(
     campaign_id: str,
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("automation.create"))
 ):
     """
-    Resume paused campaign (Admin only)
+    🔄 RBAC-ENABLED: Resume paused campaign
+    
+    **Required Permission:** `automation.create`
     
     - Resumes enrollments
     - Pending jobs will execute
@@ -275,10 +287,12 @@ async def resume_campaign(
 @router.delete("/{campaign_id}")
 async def delete_campaign(
     campaign_id: str,
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("automation.delete"))
 ):
     """
-    Delete campaign (Admin only)
+    🔄 RBAC-ENABLED: Delete campaign
+    
+    **Required Permission:** `automation.delete`
     
     - Soft delete (marks as deleted)
     - Cancels all pending jobs
@@ -332,10 +346,12 @@ async def delete_campaign(
 @router.get("/{campaign_id}/stats")
 async def get_campaign_stats(
     campaign_id: str,
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("automation.view"))
 ):
     """
-    Get detailed campaign statistics (Admin only)
+    🔄 RBAC-ENABLED: Get detailed campaign statistics
+    
+    **Required Permission:** `automation.view`
     
     - Enrollment counts by status
     - Message delivery statistics
@@ -428,10 +444,12 @@ async def get_enrolled_leads(
     campaign_id: str,
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("automation.view"))
 ):
     """
-    Get list of enrolled leads for campaign (Admin only)
+    🔄 RBAC-ENABLED: Get list of enrolled leads for campaign
+    
+    **Required Permission:** `automation.view`
     
     - Shows enrollment status
     - Messages sent/pending count
@@ -501,10 +519,12 @@ async def get_enrolled_leads(
 @router.post("/preview", response_model=CampaignPreviewResponse)
 async def preview_campaign(
     preview_data: CampaignPreviewRequest,
-    current_user: Dict[str, Any] = Depends(get_admin_user)
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("automation.view"))
 ):
     """
-    Preview campaign before creation (Admin only)
+    🔄 RBAC-ENABLED: Preview campaign before creation
+    
+    **Required Permission:** `automation.view`
     
     - Shows lead count breakdown by source, category, stage
     - Campaign schedule preview

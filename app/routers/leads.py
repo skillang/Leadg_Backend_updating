@@ -225,7 +225,7 @@ async def check_lead_access(lead: Dict, user_email: str, current_user: Dict) -> 
 @router.post("/assignment/bulk-assign-selective", response_model=BulkAssignmentResponse)
 async def bulk_assign_leads_selective(
     request: BulkAssignmentRequest,
-    current_user: dict = Depends(get_user_with_permission("lead.assign"))  # 🔄 CHANGE THIS LINE
+    current_user: dict = Depends(get_user_with_permission("lead.assign_bulk"))  # 🔄 UPDATED
 ):
     """Bulk assign leads using selective round robin or all users (Admin only)"""
     try:
@@ -2585,7 +2585,7 @@ async def get_assignable_users(
 @router.post("/bulk-assign")
 async def bulk_assign_leads(
     bulk_assign: LeadBulkAssign,
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("lead.assign"))  # 🔄 CHANGE THIS LINE
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("lead.assign_bulk"))  # 🔄 UPDATED
 ):
     """Bulk assign multiple leads to users (Admin only)"""
     try:
@@ -2672,6 +2672,119 @@ async def bulk_assign_leads(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to bulk assign leads"
         )
+    
+
+
+@router.post("/bulk-delete")
+async def bulk_delete_leads(
+    lead_ids: List[str],
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("lead.delete_bulk"))
+):
+    """
+    🔄 RBAC-ENABLED: Bulk delete multiple leads
+    
+    **Required Permission:** `lead.delete_bulk`
+    
+    Features:
+    - Delete multiple leads at once
+    - Remove from all assignees' arrays
+    - Log deletion activities
+    - Return success/failure summary
+    """
+    try:
+        db = get_database()
+        admin_email = current_user.get("email")
+        
+        logger.info(f"🗑️ Bulk delete requested by {admin_email} for {len(lead_ids)} leads")
+        
+        results = []
+        successful_deletions = 0
+        failed_deletions = []
+        
+        for lead_id in lead_ids:
+            try:
+                # Get the lead first to know who it's assigned to
+                lead = await db.leads.find_one({"lead_id": lead_id})
+                
+                if not lead:
+                    failed_deletions.append({
+                        "lead_id": lead_id,
+                        "error": "Lead not found"
+                    })
+                    results.append({
+                        "lead_id": lead_id,
+                        "status": "failed",
+                        "error": "Lead not found"
+                    })
+                    continue
+                
+                assigned_to = lead.get("assigned_to")
+                co_assignees = lead.get("co_assignees", [])
+                lead_name = lead.get("name", "Unknown")
+                
+                # Delete the lead
+                delete_result = await db.leads.delete_one({"lead_id": lead_id})
+                
+                if delete_result.deleted_count > 0:
+                    # Remove from all assignees' arrays
+                    try:
+                        if assigned_to:
+                            await user_lead_array_service.remove_lead_from_user_array(assigned_to, lead_id)
+                        
+                        for co_assignee in co_assignees:
+                            await user_lead_array_service.remove_lead_from_user_array(co_assignee, lead_id)
+                    except Exception as array_error:
+                        logger.error(f"Error updating user arrays after deletion of {lead_id}: {str(array_error)}")
+                    
+                    results.append({
+                        "lead_id": lead_id,
+                        "status": "success",
+                        "lead_name": lead_name,
+                        "removed_from_users": [assigned_to] + co_assignees if assigned_to else co_assignees
+                    })
+                    successful_deletions += 1
+                    logger.info(f"✅ Deleted lead {lead_id} ({lead_name})")
+                else:
+                    failed_deletions.append({
+                        "lead_id": lead_id,
+                        "error": "Delete operation failed"
+                    })
+                    results.append({
+                        "lead_id": lead_id,
+                        "status": "failed",
+                        "error": "Delete operation failed"
+                    })
+                    
+            except Exception as e:
+                logger.error(f"Error deleting lead {lead_id}: {str(e)}")
+                failed_deletions.append({
+                    "lead_id": lead_id,
+                    "error": str(e)
+                })
+                results.append({
+                    "lead_id": lead_id,
+                    "status": "failed",
+                    "error": str(e)
+                })
+        
+        logger.info(f"✅ Bulk delete completed: {successful_deletions}/{len(lead_ids)} successful")
+        
+        return {
+            "success": len(failed_deletions) == 0,
+            "message": f"Bulk deletion completed: {successful_deletions} deleted, {len(failed_deletions)} failed",
+            "total_leads": len(lead_ids),
+            "successful_deletions": successful_deletions,
+            "failed_deletions": failed_deletions,
+            "results": results
+        }
+        
+    except Exception as e:
+        logger.error(f"Bulk delete error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to bulk delete leads: {str(e)}"
+        )
+
 
 @router.patch("/{lead_id}/status")
 async def update_lead_status(

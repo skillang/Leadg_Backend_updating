@@ -45,6 +45,7 @@ def get_super_admin_role_definition(all_permissions: List[str]) -> Dict[str, Any
     Full system access with all permissions.
     - Can do EVERYTHING
     - Cannot be deleted
+    - ✅ CAN be edited by super admins (permissions can be modified)
     - Only one super admin recommended
     
     **Permission Count:** 108/108 (100%)
@@ -52,7 +53,7 @@ def get_super_admin_role_definition(all_permissions: List[str]) -> Dict[str, Any
     return {
         "name": "super_admin",
         "display_name": "Super Admin",
-        "description": "Full system access with all 108 permissions. Can manage roles, users, and all system data. Cannot be deleted.",
+        "description": "Full system access with all 108 permissions. Can manage roles, users, and all system data. Cannot be deleted but can be edited by super admins.",
         "type": "system",
         "is_active": True,
         "permissions": [
@@ -70,7 +71,7 @@ def get_super_admin_role_definition(all_permissions: List[str]) -> Dict[str, Any
         
         # System protection
         "is_deletable": False,
-        "is_editable": False,
+        "is_editable": True,  # ✅ CHANGED: Super admins can edit this role
         
         # Audit
         "created_at": datetime.utcnow(),

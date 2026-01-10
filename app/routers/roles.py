@@ -166,29 +166,35 @@ async def update_role(
     
     **Required Permission:** `role.edit`
     
-    Note: Cannot modify system roles (Super Admin, Admin, User)
+    **Note:** 
+    - Super admins can edit system roles (Super Admin, Admin, User)
+    - Regular admins can only edit custom roles
     
     Args:
         role_id: MongoDB ObjectId of the role as string
         role_data: Updated role data (name, permissions, etc.)
-        current_user: Authenticated user with role.update permission
+        current_user: Authenticated user with role.edit permission
         
     Returns:
         RoleResponse: Updated role details
         
     Raises:
-        403: User lacks role.update permission or trying to modify system role
+        403: User lacks role.edit permission or non-super-admin trying to modify system role
         404: Role not found
         500: Server error
     """
     try:
-        logger.info(f"Updating role {role_id} by {current_user.get('email')}")
+        # ✅ Extract super admin status from current user
+        is_super_admin = current_user.get("is_super_admin", False)
         
-        # Update role
+        logger.info(f"Updating role {role_id} by {current_user.get('email')} (super_admin={is_super_admin})")
+        
+        # Update role with super admin flag
         result = await role_service.update_role(
             role_id=role_id,
             role_data=role_data,
-            updated_by=current_user.get("email")
+            updated_by=current_user.get("email"),
+            is_super_admin=is_super_admin  # ✅ NEW PARAMETER
         )
         
         return result
@@ -558,6 +564,8 @@ async def activate_role(
     
     **Required Permission:** `role.edit`
     
+    **Note:** Super admins can activate system roles
+    
     Args:
         role_id: Role ObjectId as string
         current_user: Authenticated user with role.update permission
@@ -571,7 +579,10 @@ async def activate_role(
         500: Server error
     """
     try:
-        logger.info(f"Activating role {role_id} by {current_user.get('email')}")
+        # ✅ Extract super admin status
+        is_super_admin = current_user.get("is_super_admin", False)
+        
+        logger.info(f"Activating role {role_id} by {current_user.get('email')} (super_admin={is_super_admin})")
         
         # Update role
         role_data = RoleUpdate(is_active=True)
@@ -579,7 +590,8 @@ async def activate_role(
         result = await role_service.update_role(
             role_id=role_id,
             role_data=role_data,
-            updated_by=current_user.get("email")
+            updated_by=current_user.get("email"),
+            is_super_admin=is_super_admin  # ✅ NEW PARAMETER
         )
         
         return {
@@ -608,8 +620,9 @@ async def deactivate_role(
     
     **Required Permission:** `role.edit`
     
-    Note: 
-    - Cannot deactivate system roles (Super Admin, Admin, User)
+    **Note:** 
+    - Super admins can deactivate system roles
+    - Regular admins can only deactivate custom roles
     - Users with this role will still have it, but role won't appear in role selection
     
     Args:
@@ -620,12 +633,15 @@ async def deactivate_role(
         dict: Deactivation result with updated role
         
     Raises:
-        403: User lacks role.update permission or trying to deactivate system role
+        403: User lacks role.update permission or non-super-admin trying to deactivate system role
         404: Role not found
         500: Server error
     """
     try:
-        logger.info(f"Deactivating role {role_id} by {current_user.get('email')}")
+        # ✅ Extract super admin status
+        is_super_admin = current_user.get("is_super_admin", False)
+        
+        logger.info(f"Deactivating role {role_id} by {current_user.get('email')} (super_admin={is_super_admin})")
         
         # Update role
         role_data = RoleUpdate(is_active=False)
@@ -633,7 +649,8 @@ async def deactivate_role(
         result = await role_service.update_role(
             role_id=role_id,
             role_data=role_data,
-            updated_by=current_user.get("email")
+            updated_by=current_user.get("email"),
+            is_super_admin=is_super_admin  # ✅ NEW PARAMETER
         )
         
         return {
