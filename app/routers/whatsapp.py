@@ -166,13 +166,13 @@ async def verify_webhook(
 async def get_active_chats(
     limit: int = 50,
     include_unread_only: bool = False,
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("whatsapp.history_single"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("whatsapp.view_single"))
 ):
     """
     Get list of leads with recent WhatsApp activity
     
     **Required Permission:**
-    - `whatsapp.history_single` - View own lead chats
+    - `whatsapp.view_single` - View own lead chats
     - `whatsapp.view_all` - View all chats (admin)
     
     Users see only their assigned leads, admins see all leads with WhatsApp activity
@@ -199,12 +199,12 @@ async def get_lead_whatsapp_history(
     limit: int = 50,
     offset: int = 0,
     auto_mark_read: bool = True,  # 🆕 NEW: Auto-mark as read parameter
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("whatsapp.history_single"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("whatsapp.view_single"))
 ):
     """
     🆕 ENHANCED: Get WhatsApp message history with auto-mark-as-read functionality
     
-    **Required Permission:** `whatsapp.history_single`
+    **Required Permission:** `whatsapp.view_single`
     
     When user opens chat modal, automatically mark messages as read (icon turns grey)
     """
@@ -269,12 +269,12 @@ async def send_message_in_chat(
 @router.patch("/messages/read", response_model=MarkReadResponse)
 async def mark_messages_as_read(
     request: MarkMessagesReadRequest,
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("whatsapp.history_single"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("whatsapp.view_single"))
 ):
     """
     Mark WhatsApp messages as read and update unread counts
     
-    **Required Permission:** `whatsapp.history_single`
+    **Required Permission:** `whatsapp.view_single`
     
     This updates the lead's unread message counter
     """
@@ -322,12 +322,12 @@ async def mark_messages_as_read(
 @router.post("/leads/{lead_id}/mark-read")
 async def mark_lead_as_read(
     lead_id: str,
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("whatsapp.history_single"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("whatsapp.view_single"))
 ):
     """
     🆕 NEW: Mark entire lead conversation as read (for WhatsApp icon state management)
     
-    **Required Permission:** `whatsapp.history_single`
+    **Required Permission:** `whatsapp.view_single`
     
     Used when user clicks WhatsApp icon or opens modal - icon changes from green to grey
     Triggers real-time update to all connected users
@@ -356,12 +356,12 @@ async def mark_lead_as_read(
 @router.get("/leads/{lead_id}/unread-status")
 async def get_lead_unread_status(
     lead_id: str,
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("whatsapp.history_single"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("whatsapp.view_single"))
 ):
     """
     🆕 NEW: Get unread status for a specific lead (for icon state)
     
-    **Required Permission:** `whatsapp.history_single`
+    **Required Permission:** `whatsapp.view_single`
     
     Returns whether the lead has unread messages (green/grey icon)
     """
@@ -405,12 +405,12 @@ async def get_lead_unread_status(
 
 @router.get("/unread-status")
 async def get_all_unread_status(
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("whatsapp.history_single"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("whatsapp.view_single"))
 ):
     """
     🆕 NEW: Get unread status for all leads user can access
     
-    **Required Permission:** `whatsapp.history_single`
+    **Required Permission:** `whatsapp.view_single`
     
     Used for initial page load to set all WhatsApp icon states
     """

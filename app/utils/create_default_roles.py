@@ -201,14 +201,14 @@ def get_admin_role_definition() -> Dict[str, Any]:
         # Email (4)
         "email.send_single",
         "email.send_bulk",
-        "email.single_history",
-        "email.bulk_history",
+        "email.view_single",
+        "email.view_bulk",
         
         # WhatsApp (4)
         "whatsapp.send_single",
         "whatsapp.send_bulk",
-        "whatsapp.history_single",
-        "whatsapp.history_bulk",
+        "whatsapp.view_single",
+        "whatsapp.view_bulk",
         
         # Call (2)
         "call.make",
@@ -347,12 +347,12 @@ def get_user_role_definition() -> Dict[str, Any]:
         # ✅ COMMUNICATION (6/10) - LIMITED
         # Email (2)
         "email.send_single",
-        "email.single_history",
+        "email.view_single",
         # ❌ No bulk email
         
         # WhatsApp (2)
         "whatsapp.send_single",
-        "whatsapp.history_single",
+        "whatsapp.view_single",
         # ❌ No bulk WhatsApp
         
         # Call (2)

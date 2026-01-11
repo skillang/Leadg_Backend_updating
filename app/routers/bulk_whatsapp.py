@@ -84,15 +84,15 @@ async def create_bulk_whatsapp_job(
 @router.get("/jobs/{job_id}", response_model=BulkJobStatusResponse)
 async def get_bulk_job_status(
     job_id: str,
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("whatsapp.history_bulk"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("whatsapp.view_bulk"))
 ):
     """
     Get bulk job status and progress - SAME as your email status endpoint
     
-    **Required Permission:** `whatsapp.history_bulk`
+    **Required Permission:** `whatsapp.view_bulk`
     
     Permission Rules:
-    - whatsapp.history_bulk: Can view jobs they created
+    - whatsapp.view_bulk: Can view jobs they created
     - whatsapp.view_all: Can view any job (admin)
     """
     try:
@@ -124,15 +124,15 @@ async def list_bulk_jobs(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(20, ge=1, le=100, description="Items per page"),
     status: Optional[str] = Query(None, description="Filter by status"),
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("whatsapp.history_bulk"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("whatsapp.view_bulk"))
 ):
     """
     List bulk jobs with pagination - SAME pattern as your email listing
     
-    **Required Permission:** `whatsapp.history_bulk`
+    **Required Permission:** `whatsapp.view_bulk`
     
     Permission Rules:
-    - whatsapp.history_bulk: Can see jobs they created
+    - whatsapp.view_bulk: Can see jobs they created
     - whatsapp.view_all: Can see all jobs (admin)
     """
     try:
@@ -253,15 +253,15 @@ async def cancel_bulk_job(
 
 @router.get("/stats", response_model=BulkStatsResponse)
 async def get_bulk_stats(
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("whatsapp.history_bulk"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("whatsapp.view_bulk"))
 ):
     """
     Get bulk messaging statistics - SAME pattern as email stats
     
-    **Required Permission:** `whatsapp.history_bulk`
+    **Required Permission:** `whatsapp.view_bulk`
     
     Permission Rules:
-    - whatsapp.history_bulk: Gets statistics for their jobs only
+    - whatsapp.view_bulk: Gets statistics for their jobs only
     - whatsapp.view_all: Gets system-wide statistics (admin)
     """
     try:

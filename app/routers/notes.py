@@ -12,7 +12,7 @@ from app.decorators.timezone_decorator import convert_dates_to_ist
 from app.services.rbac_service import RBACService
 
 from ..config.database import get_database
-from ..utils.dependencies import get_current_active_user, get_user_with_permission
+from ..utils.dependencies import get_current_active_user, get_user_with_permission, check_permission
 from ..models.note import (
     NoteCreate, NoteUpdate, NoteResponse, NoteListResponse, 
     NoteStatsResponse, NoteSearchRequest, NoteBulkAction, NoteType
@@ -47,6 +47,9 @@ async def check_lead_access_for_note(lead_id: str, user_email: str, current_user
     - User has note.view_all permission, OR
     - Lead is assigned to user (primary or co-assignee)
     """
+
+    if await check_permission(current_user, "note.view_all"):
+        return True
     
     # Check if user has access to the lead
     db = get_database()

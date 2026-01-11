@@ -221,12 +221,12 @@ async def get_lead_email_history(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(10, ge=1, le=50, description="Items per page"),
     status: Optional[str] = Query(None, description="Filter by status: sent, failed, pending, cancelled"),
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("email.single_history"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("email.view_single"))
 ):
     """
     Get email history for a specific lead
     
-    **Required Permission:** `email.single_history`
+    **Required Permission:** `email.view_single`
     
     Users can only see history for assigned leads, admins see all
     """
@@ -333,12 +333,12 @@ async def get_scheduled_emails(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(20, ge=1, le=100, description="Items per page"),
     status: str = Query("pending", description="Filter by status: pending, sent, failed, cancelled"),
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("email.bulk_history"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("email.view_bulk"))
 ):
     """
     Get scheduled emails
     
-    **Required Permission:** `email.bulk_history`
+    **Required Permission:** `email.view_bulk`
     
     Users see only their scheduled emails, admins see all
     """
@@ -488,12 +488,12 @@ async def cancel_scheduled_email(
 
 @router.get("/stats")
 async def get_email_statistics(
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("email.bulk_history"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("email.view_bulk"))
 ):
     """
     Get email usage statistics
     
-    **Required Permission:** `email.bulk_history`
+    **Required Permission:** `email.view_bulk`
     
     Users see their stats, admins see global stats
     """
@@ -581,15 +581,15 @@ async def get_bulk_email_history(
     limit: int = Query(20, ge=1, le=100, description="Items per page"),
     status_filter: Optional[str] = Query(None, alias="status", description="Filter by status: sent, failed, pending, cancelled"),
     search: Optional[str] = Query(None, description="Search by template name or email ID"),
-    current_user: Dict[str, Any] = Depends(get_user_with_permission("email.bulk_history"))
+    current_user: Dict[str, Any] = Depends(get_user_with_permission("email.view_bulk"))
 ):
     """
     Get ALL bulk email history - SAME pattern as WhatsApp bulk jobs
     
-    **Required Permission:** `email.bulk_history`
+    **Required Permission:** `email.view_bulk`
     
     Permission Rules (IDENTICAL to WhatsApp):
-    - email.bulk_history: Can see bulk email jobs they created
+    - email.view_bulk: Can see bulk email jobs they created
     - Admins with broader access: Can see all bulk email jobs
     """
     try:

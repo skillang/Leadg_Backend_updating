@@ -576,7 +576,7 @@ class TaskService:
         except Exception as e:
             logger.error(f"Error updating task: {str(e)}")
             return False
-    async def get_lead_tasks(self, lead_id: str, user_id: str, user_role: str, status_filter: Optional[str] = None, page: int = 1, limit: int = 20) -> Dict[str, Any]:
+    async def get_lead_tasks(self, lead_id: str, user_id: str, user_role: str, status_filter: Optional[str] = None, page: int = 1, limit: int = 20, visibility: Optional[str] = None) -> Dict[str, Any]:
         """Get all tasks for a lead - FIXED ACCESS CONTROL"""
         try:
             logger.info(f"Getting tasks for lead: {lead_id}, user: {user_id}, role: {user_role}")

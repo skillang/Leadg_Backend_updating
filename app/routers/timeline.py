@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta
 from app.decorators.timezone_decorator import convert_activity_dates, convert_dates_to_ist
-from app.utils.dependencies import get_current_active_user, get_user_with_permission
+from app.utils.dependencies import get_current_active_user, get_user_with_permission, check_permission
 from app.services.rbac_service import RBACService
 from app.config.database import get_database
 from bson import ObjectId
@@ -52,6 +52,10 @@ async def check_lead_access_for_timeline(lead_id: str, user_email: str, current_
     
     Note: Timeline doesn't have view_all permission - uses lead access only
     """
+
+    if await check_permission(current_user, "timeline.view_all"):
+        return True
+    
     # Check if user has access to the lead
     db = get_database()
     lead = await db.leads.find_one({"lead_id": lead_id})

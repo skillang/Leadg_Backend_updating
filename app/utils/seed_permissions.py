@@ -1059,31 +1059,31 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "metadata": {"ui_group": "Communication", "icon": "send"}
         },
         {
-            "code": "email.single_history",
+            "code": "email.view_single",  
             "name": "View Single Email History",
             "description": "Can view individual email history and logs",
             "category": "communication",
             "subcategory": "email",
             "resource": "email",
-            "action": "single_history",
+            "action": "view_single",  
             "scope": "own",
             "is_system": True,
             "metadata": {"ui_group": "Communication", "icon": "clock"}
         },
         {
-            "code": "email.bulk_history",
+            "code": "email.view_bulk",  
             "name": "View Bulk Email History",
             "description": "Can view all email campaign history and analytics",
             "category": "communication",
             "subcategory": "email",
             "resource": "email",
-            "action": "bulk_history",
+            "action": "view_bulk",  
             "scope": "all",
             "is_system": True,
             "metadata": {"ui_group": "Communication", "icon": "bar-chart"}
         },
-        
-        # SUBCATEGORY: whatsapp (5 permissions)
+       
+       # SUBCATEGORY: whatsapp (5 permissions)
         {
             "code": "whatsapp.send_single",
             "name": "Send Single WhatsApp",
@@ -1110,37 +1110,37 @@ def get_all_permissions() -> List[Dict[str, Any]]:
             "metadata": {"ui_group": "Communication", "icon": "send"}
         },
         {
-            "code": "whatsapp.history_single",
+            "code": "whatsapp.view_single",  
             "name": "View Single WhatsApp History",
             "description": "Can view individual WhatsApp message history",
             "category": "communication",
             "subcategory": "whatsapp",
             "resource": "whatsapp",
-            "action": "history_single",
+            "action": "view_single",  
             "scope": "own",
             "is_system": True,
             "metadata": {"ui_group": "Communication", "icon": "clock"}
         },
         {
-            "code": "whatsapp.view_all",
-            "name": "View All WhatsApp History",
-            "description": "Can view all WhatsApp message history",
+            "code": "whatsapp.view_all",  
+            "name": "View All WhatsApp Conversations",   
+            "description": "Can view all WhatsApp conversations in dedicated UI component",  
             "category": "communication",
             "subcategory": "whatsapp",
             "resource": "whatsapp",
             "action": "view_all",
-            "scope": "own",
+            "scope": "all",  
             "is_system": True,
-            "metadata": {"ui_group": "Communication", "icon": "clock"}
+            "metadata": {"ui_group": "Communication", "icon": "message-square"}  
         },
         {
-            "code": "whatsapp.history_bulk",
-            "name": "View Bulk WhatsApp History",
-            "description": "Can view all WhatsApp campaign history and analytics",
+            "code": "whatsapp.view_bulk",  
+            "name": "View Bulk WhatsApp Campaign History",   
+            "description": "Can view bulk WhatsApp campaign history and analytics",
             "category": "communication",
             "subcategory": "whatsapp",
             "resource": "whatsapp",
-            "action": "history_bulk",
+            "action": "view_bulk",  
             "scope": "all",
             "is_system": True,
             "metadata": {"ui_group": "Communication", "icon": "bar-chart"}
